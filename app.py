@@ -114,10 +114,15 @@ with tab1:
             box = st_cropper(img, box_color='#00FF00', aspect_ratio=None, key=f"cropper{i}")
 
             if box:
-            # Nếu là dict
-            if isinstance(box, dict):
-                box = (box["left"], box["top"], box["width"], box["height"])
-            left, top, width, height = box
+                # Nếu trả về dict
+                if isinstance(box, dict):
+                    left, top, width, height = box["left"], box["top"], box["width"], box["height"]
+                # Nếu trả về tuple/list
+                elif isinstance(box, (tuple, list)):
+                    left, top, width, height = box
+                else:
+                    st.warning("Không nhận diện được vùng crop!")
+                     continue
             cropped = img.crop((left, top, left + width, top + height))
             st.image(cropped, caption=f"Hình minh họa đã cắt (Trang {i+1})", use_column_width=True)
             colbt1, colbt2 = st.columns(2)
