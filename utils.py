@@ -4,7 +4,7 @@ import io
 from PIL import Image
 import fitz  # PyMuPDF
 
-# ⚠️ Nhập đúng API KEY từ https://api.sv2.llm.ai.vn
+# ✅ Thay bằng API KEY thật của bạn từ https://api.sv2.llm.ai.vn
 openai.api_key = "sk-j4DkzI7htsVqEZqC272d3b58B0Fb49A183573dD2Fc04F71d"
 openai.api_base = "https://api.sv2.llm.ai.vn/v1"
 
@@ -20,12 +20,12 @@ def call_gpt4o_ai_vn(image):
         messages=[
             {
                 "role": "system",
-                "content": "Bạn là trợ lý AI chuyên đọc ảnh đề thi và chuyển sang định dạng LaTeX hoặc Word. Nếu có ảnh minh họa, hãy sử dụng \\includegraphics."
+                "content": "Bạn là trợ lý AI chuyên đọc đề thi từ ảnh và chuyển sang định dạng LaTeX hoặc Word. Nếu có hình ảnh minh họa, hãy sử dụng \\includegraphics."
             },
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Hãy chuyển ảnh sau thành định dạng LaTeX hoặc Word:"},
+                    {"type": "text", "text": "Hãy chuyển ảnh sau thành đề thi định dạng LaTeX hoặc Word:"},
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_image}"}}
                 ]
             }
