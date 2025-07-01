@@ -1,40 +1,36 @@
 import streamlit as st
-from PIL import Image
 import fitz
-import io
-import os
-import base64
+from PIL import Image
+import io, os, base64
 import requests
 from docx import Document
 
-# === Config ===
-st.set_page_config(page_title="PDF/Ảnh ➔ Word/LaTeX (Gemini + Mistral)", layout="wide")
-st.title("📄 Chuyển PDF/Ảnh sang Word hoặc LaTeX (auto cắt hình minh họa bằng Gemini, định dạng Mistral)")
+st.set_page_config(page_title="PDF/Ảnh sang LaTeX/Word (ChatGPT-4o AI.VN)", layout="wide")
+st.title("🪄 Chuyển PDF/Ảnh sang LaTeX hoặc Word bằng ChatGPT-4o (AI.VN)")
 
-# === API Keys ===
-gemini_api_key = st.sidebar.text_input("Gemini API Key (Google Cloud)", type="password")
-mistral_api_key = st.sidebar.text_input("Mistral AI Key", type="password")
+api_key = st.sidebar.text_input("AI.VN API Key (GPT-4o)", type="password")
+api_url = "https://api.sv2.llm.ai.vn/v1/chat/completions"  # endpoint AI.VN cho GPT-4o
 
-# === PROMPT GEN ===
+# ---- Prompt Generator ----
 def getPrompt(mode):
     if mode == "latex":
         return """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
 QUY TẮC ĐỊNH DẠNG VĂN BẢN VÀ CÔNG THỨC:
 1. Với câu hỏi trắc nghiệm không lời giải (bắt đầu bằng 'Câu X:' hoặc 'Câu X.'): 
-   - Thay 'Câu X:' bằng \begin{ex}
-   - Thêm \choice trước phương án A
+   - Thay 'Câu X:' bằng \\begin{ex}
+   - Thêm \\choice trước phương án A
    - Đặt mỗi phương án trong cặp dấy {}, ví dụ A. $x^2+2x+1.$ sẽ thành {$x^2+2x+1$}, bỏ phần A., B., C., D. và dấu . cuối phương án
-   - Kết thúc bằng \end{ex}
+   - Kết thúc bằng \\end{ex}
 2. Với câu hỏi trắc nghiệm có lời giải:
-   - Thêm \True trước phương án đúng
-   - Đặt lời giải trong \loigiai{}
+   - Thêm \\True trước phương án đúng
+   - Đặt lời giải trong \\loigiai{}
 3. Với bài tập tự luận (bắt đầu bằng 'Bài X:' hoặc 'Bài X.'):
-   - Thay 'Bài X:' bằng \begin{bt}
-   - Đặt lời giải trong \loigiai{}
-   - Kết thúc bằng \end{bt}
+   - Thay 'Bài X:' bằng \\begin{bt}
+   - Đặt lời giải trong \\loigiai{}
+   - Kết thúc bằng \\end{bt}
 4. Với danh sách (a), b), c)...):
-   - Bọc trong \begin{enumerate} và \end{enumerate}
-   - Thay mỗi chữ cái bằng \item
+   - Bọc trong \\begin{enumerate} và \\end{enumerate}
+   - Thay mỗi chữ cái bằng \\item
 5. Công thức toán học: Giữ nguyên định dạng LaTeX như $...$ hoặc $$...$$
 KHÔNG thêm giải thích hay bình luận gì thêm. Trả về văn bản đã được định dạng LaTeX."""
     else:
@@ -42,10 +38,10 @@ KHÔNG thêm giải thích hay bình luận gì thêm. Trả về văn bản đ�
 YÊU CẦU:
 1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh
 2. Giữ nguyên cấu trúc đoạn văn và xuống dòng
-3. Với công thức toán học: gõ lại chính xác, tất cả công thức Toán dưới dạng \${...}\$
-   - Inline: \${x^2 + 2x + 1}\$
-   - Hệ: \$\begin{cases} ... \end{cases}\$
-   - Ký hiệu: các từ đặt tên cho tên bằng chữ A,B,C... hoặc các cụm từ AB, CD, Oxyz,... hoặc các số 1,2,3,..., tỉ lệ phần trăm 1%,0.1% , 0,1%,.... ví dụ \${Oxyz}\$, \${A}\$, \${AB}\$, \${0{,}1\%}\$, \${CD}\$, \${1}\$,\${Oxyz}\$, \${S.ABCD}\$.....
+3. Với công thức toán học: gõ lại chính xác, tất cả công thức Toán dưới dạng \\${...}\\$
+   - Inline: \\${x^2 + 2x + 1}\\$
+   - Hệ: \\$\\begin{cases} ... \\end{cases}\\$
+   - Ký hiệu: các từ đặt tên cho tên bằng chữ A,B,C... hoặc các cụm từ AB, CD, Oxyz,... hoặc các số 1,2,3,..., tỉ lệ phần trăm 1%,0.1% , 0,1%,.... ví dụ \\${Oxyz}\\$, \\${A}\\$, \\${AB}\\$, \\${0{,}1\\%}\\$, \\${CD}\\$, \\${1}\\$,...
 4. Với bảng biểu: dùng markdown nếu có thể
 5. Dạng bài:
    - Trắc nghiệm:
@@ -56,12 +52,9 @@ YÊU CẦU:
      D. Đáp án D
    - Đúng/Sai: a), b), c)...
    - Tự luận: Câu X: ... (Lời giải...)
-✅ Gợi ý thêm:
-- Nếu ảnh dài hoặc nhiều trang, chia nhỏ xử lý từng ảnh để tránh thiếu trang.
-- Khi lưu kết quả, nên xuất file Word định dạng .docx để hiển thị tiếng Việt chuẩn và hỗ trợ tốt Unicode.
 KHÔNG giải thích. KHÔNG bịa thêm. Trả về văn bản gốc."""
 
-# === PDF sang ảnh ===
+# ---- PDF sang ảnh ----
 def pdf_to_images(pdf_bytes):
     images = []
     with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
@@ -71,65 +64,45 @@ def pdf_to_images(pdf_bytes):
             images.append(img)
     return images
 
-# === Gemini crop tự động hình minh họa ===
-def gemini_auto_crop(image, api_key):
-    buffered = io.BytesIO()
-    image.save(buffered, format="PNG")
-    img_bytes = buffered.getvalue()
-    img_b64 = base64.b64encode(img_bytes).decode()
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-    # Yêu cầu Gemini trả về tọa độ vùng hình minh họa
-    prompt = "Hãy trả về duy nhất một danh sách các vùng hình minh họa (biểu đồ, hình vẽ, hình học, đồ thị) dưới dạng [(left,top,width,height),...]. Nếu không có thì trả về []."
-    data = {
-        "contents": [{
-            "parts": [
-                {"inlineData": {"mimeType": "image/png", "data": img_b64}},
-                {"text": prompt}
-            ]
-        }]
-    }
-    headers = {"Content-Type": "application/json"}
-    resp = requests.post(api_url, headers=headers, json=data)
-    result = resp.json()
-    st.write("DEBUG Gemini crop:", result)
-    if "candidates" in result and result["candidates"]:
-        answer = result["candidates"][0]["content"]["parts"][0]["text"]
-        try:
-            # Parse list vùng crop trả về dạng Python list
-            return eval(answer)
-        except:
-            return []
-    else:
-        return []
-
-# === Gọi Mistral AI ===
-def mistral_ocr(image, mistral_api_key, mode="latex"):
+# ---- Gửi ảnh sang GPT-4o để OCR + định dạng ----
+def gpt4o_ocr_format(image, api_key, mode="latex"):
     buffered = io.BytesIO()
     image.save(buffered, format="PNG")
     img_bytes = buffered.getvalue()
     img_b64 = base64.b64encode(img_bytes).decode()
     prompt = getPrompt(mode)
-    full_prompt = f"{prompt}\nĐây là ảnh base64:\n{img_b64}\n"
-    url = "https://api.mistral.ai/v1/chat/completions"
+    payload = {
+        "model": "openai:gpt-4o",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}}
+                ]
+            }
+        ],
+        "max_tokens": 2048,
+        "temperature": 0.0
+    }
     headers = {
-        "Authorization": f"Bearer {mistral_api_key}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
-    payload = {
-        "model": "mistral-large-latest",
-        "messages": [{"role": "user", "content": full_prompt}]
-    }
-    response = requests.post(url, headers=headers, json=payload)
-    data = response.json()
-    st.write("DEBUG Mistral:", data)
-    if 'choices' in data and data['choices']:
-        return data['choices'][0]['message']['content']
-    elif 'error' in data:
-        return f"[Lỗi Mistral: {data['error']}]"
-    else:
-        return f"[Lỗi Mistral: Không có dữ liệu trả về | {data}]"
+    try:
+        resp = requests.post(api_url, headers=headers, json=payload, timeout=180)
+        data = resp.json()
+        st.write("DEBUG GPT-4o:", data)
+        if "choices" in data and data["choices"]:
+            return data["choices"][0]["message"]["content"]
+        elif "error" in data:
+            return f"[Lỗi GPT-4o: {data['error'].get('message', str(data['error']))}]"
+        else:
+            return f"[Lỗi GPT-4o: Không có dữ liệu trả về | {data}]"
+    except Exception as e:
+        return f"[Lỗi gọi GPT-4o: {e}]"
 
-# === Lưu Word với hình ===
+# ---- Lưu Word với hình ----
 def save_word(doc_text, images, output_path="output_word.docx"):
     doc = Document()
     doc.add_paragraph(doc_text)
@@ -140,14 +113,12 @@ def save_word(doc_text, images, output_path="output_word.docx"):
         doc.add_picture(img_stream, width=docx.shared.Inches(4))
     doc.save(output_path)
 
-# === GIAO DIỆN ===
-
+# ---- GIAO DIỆN ----
 uploaded = st.file_uploader("Chọn file PDF hoặc ảnh", type=["pdf", "png", "jpg", "jpeg"])
 mode = st.radio("Chọn chế độ xuất", ["latex", "word"])
-st.info("Gemini sẽ tự động cắt ảnh minh họa (auto), Mistral sẽ OCR từng trang/ảnh và chuyển sang LaTeX hoặc Word đúng format prompt.")
+st.info("Sử dụng GPT-4o (AI.VN) để nhận diện nội dung và định dạng LaTeX/Word. Hỗ trợ crop ảnh thủ công.")
 
-if uploaded and gemini_api_key and mistral_api_key:
-    # Tách ảnh
+if uploaded and api_key:
     if uploaded.name.lower().endswith(".pdf"):
         images = pdf_to_images(uploaded.read())
         st.success(f"Đã tách {len(images)} trang từ PDF.")
@@ -157,44 +128,32 @@ if uploaded and gemini_api_key and mistral_api_key:
 
     all_results = []
     all_cropped_imgs = []
-
     for idx, img in enumerate(images):
         st.markdown(f"---\n### Trang {idx+1}")
         st.image(img, caption=f"Trang {idx+1}", use_column_width=True)
-
-        # 1. Cắt hình minh họa tự động bằng Gemini
-        if st.button(f"Gemini crop tự động hình minh họa trang {idx+1}", key=f"autocrop{idx}"):
-            with st.spinner("Gemini đang phân tích vùng hình minh họa..."):
-                crop_boxes = gemini_auto_crop(img, gemini_api_key)
-                st.write(f"Gemini trả về vùng crop: {crop_boxes}")
-                cropped_imgs = []
-                for j, box in enumerate(crop_boxes):
-                    try:
-                        left, top, width, height = box
-                        cropped_img = img.crop((left, top, left + width, top + height))
-                        st.image(cropped_img, caption=f"Hình minh họa {j+1} trang {idx+1}", use_column_width=True)
-                        cropped_imgs.append(cropped_img)
-                    except Exception as e:
-                        st.warning(f"Lỗi crop: {e}")
-                all_cropped_imgs.extend(cropped_imgs)
-                st.session_state[f"cropped_imgs_{idx}"] = cropped_imgs
+        st.write("Cắt vùng hình minh họa bằng chuột (nếu cần, không bắt buộc):")
+        # ---- Crop bằng Pillow trực tiếp (nếu có nhu cầu) ----
+        left = st.number_input(f"left_{idx}", 0, img.width, 0, 1)
+        top = st.number_input(f"top_{idx}", 0, img.height, 0, 1)
+        width = st.number_input(f"width_{idx}", 1, img.width, img.width, 1)
+        height = st.number_input(f"height_{idx}", 1, img.height, img.height, 1)
+        if st.button(f"Crop hình minh họa trang {idx+1}", key=f"crop{idx}"):
+            cropped_img = img.crop((left, top, left + width, top + height))
+            st.image(cropped_img, caption=f"Hình minh họa đã cắt Trang {idx+1}", use_column_width=True)
+            all_cropped_imgs.append(cropped_img)
         else:
-            # Cho phép crop lại hoặc bỏ qua
-            cropped_imgs = st.session_state.get(f"cropped_imgs_{idx}", [])
-            for j, cropped_img in enumerate(cropped_imgs):
-                st.image(cropped_img, caption=f"Hình minh họa {j+1} trang {idx+1}", use_column_width=True)
+            all_cropped_imgs.append(img)  # Nếu không crop thì lấy nguyên ảnh
 
-        # 2. Gửi trang ảnh này sang Mistral để nhận kết quả OCR định dạng
-        if st.button(f"Chuyển ảnh trang {idx+1} sang {'LaTeX' if mode=='latex' else 'Word'} với Mistral", key=f"ocr{idx}"):
-            with st.spinner("Mistral AI đang xử lý..."):
-                result = mistral_ocr(img, mistral_api_key, mode)
-                st.code(result, language="latex" if mode=="latex" else "markdown")
+        if st.button(f"Nhận diện và định dạng trang {idx+1} bằng GPT-4o", key=f"ocr{idx}"):
+            with st.spinner("GPT-4o đang xử lý..."):
+                result = gpt4o_ocr_format(img, api_key, mode)
+                st.code(result, language="latex" if mode == "latex" else "markdown")
                 all_results.append(result)
                 st.session_state[f"ocr_{idx}"] = result
         else:
             old_result = st.session_state.get(f"ocr_{idx}")
             if old_result:
-                st.code(old_result, language="latex" if mode=="latex" else "markdown")
+                st.code(old_result, language="latex" if mode == "latex" else "markdown")
                 all_results.append(old_result)
 
     # Kết hợp và xuất file cuối cùng
@@ -210,7 +169,7 @@ if uploaded and gemini_api_key and mistral_api_key:
                 f.write(full_text)
             with open(latex_file, "rb") as f:
                 st.download_button("Tải file LaTeX", f, latex_file)
-        # Tải từng hình minh họa
+        # Tải từng hình minh họa đã crop
         for idx, img in enumerate(all_cropped_imgs):
             img_path = f"img_{idx+1}.png"
             img.save(img_path)
