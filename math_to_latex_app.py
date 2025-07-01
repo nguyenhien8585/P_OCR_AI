@@ -47,7 +47,7 @@ def ask_gpt4o_with_image(pil_img, prompt, client):
         }
     ]
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model="openai:gpt-4o",
         messages=messages,
         max_tokens=4096,
         temperature=0.1
