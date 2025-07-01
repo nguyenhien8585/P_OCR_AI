@@ -1,4 +1,5 @@
 streamlit
-pillow
-openai
-PyMuPDF
+pymupdf
+python-docx
+Pillow
+requests
