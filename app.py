@@ -110,21 +110,22 @@ with tab1:
             st.markdown(f"---\n#### Trang {i+1}")
             st.image(img, caption=f"Trang {i+1}", use_column_width=True)
             st.write("**Chọn vùng hình minh họa bằng chuột (nếu có):**")
-            # -- Cropper trả về box, crop thủ công bằng Pillow
             box = st_cropper(img, box_color='#00FF00', aspect_ratio=None, key=f"cropper{i}")
 
+            cropped = None
             if box:
-                # Nếu trả về dict
+                # Kiểm tra kiểu trả về của box (dict hoặc tuple/list)
                 if isinstance(box, dict):
                     left, top, width, height = box["left"], box["top"], box["width"], box["height"]
-                # Nếu trả về tuple/list
                 elif isinstance(box, (tuple, list)):
                     left, top, width, height = box
                 else:
                     st.warning("Không nhận diện được vùng crop!")
-                     continue
-            cropped = img.crop((left, top, left + width, top + height))
-            st.image(cropped, caption=f"Hình minh họa đã cắt (Trang {i+1})", use_column_width=True)
+                    cropped = None
+                # Kiểm tra đã có toạ độ chưa
+                if all(var is not None for var in [left, top, width, height]):
+                    cropped = img.crop((left, top, left + width, top + height))
+                    st.image(cropped, caption=f"Hình minh họa đã cắt (Trang {i+1})", use_column_width=True)
             colbt1, colbt2 = st.columns(2)
             with colbt1:
                 if st.button(f"OCR văn bản + công thức (trang {i+1})", key=f"btnocr-{i}"):
@@ -166,9 +167,16 @@ with tab2:
         box = st_cropper(img, box_color='#FF0000', aspect_ratio=None, key="imgcropper")
         cropped_img = None
         if box:
-            left, top, width, height = box["left"], box["top"], box["width"], box["height"]
-            cropped_img = img.crop((left, top, left + width, top + height))
-            st.image(cropped_img, caption="Ảnh đã cắt", use_column_width=True)
+            if isinstance(box, dict):
+                left, top, width, height = box["left"], box["top"], box["width"], box["height"]
+            elif isinstance(box, (tuple, list)):
+                left, top, width, height = box
+            else:
+                st.warning("Không nhận diện được vùng crop!")
+                cropped_img = None
+            if all(var is not None for var in [left, top, width, height]):
+                cropped_img = img.crop((left, top, left + width, top + height))
+                st.image(cropped_img, caption="Ảnh đã cắt", use_column_width=True)
         col1, col2 = st.columns(2)
         with col1:
             if st.button("OCR nội dung ảnh"):
