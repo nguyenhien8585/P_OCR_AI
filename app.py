@@ -112,11 +112,14 @@ with tab1:
             st.write("**Chọn vùng hình minh họa bằng chuột (nếu có):**")
             # -- Cropper trả về box, crop thủ công bằng Pillow
             box = st_cropper(img, box_color='#00FF00', aspect_ratio=None, key=f"cropper{i}")
-            cropped = None
+
             if box:
-                left, top, width, height = box["left"], box["top"], box["width"], box["height"]
-                cropped = img.crop((left, top, left + width, top + height))
-                st.image(cropped, caption=f"Hình minh họa đã cắt (Trang {i+1})", use_column_width=True)
+            # Nếu là dict
+            if isinstance(box, dict):
+                box = (box["left"], box["top"], box["width"], box["height"])
+            left, top, width, height = box
+            cropped = img.crop((left, top, left + width, top + height))
+            st.image(cropped, caption=f"Hình minh họa đã cắt (Trang {i+1})", use_column_width=True)
             colbt1, colbt2 = st.columns(2)
             with colbt1:
                 if st.button(f"OCR văn bản + công thức (trang {i+1})", key=f"btnocr-{i}"):
