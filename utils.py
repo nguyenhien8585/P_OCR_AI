@@ -3,8 +3,9 @@ import openai
 import base64
 import io
 
+# ⚠️ Thay bằng API Key thực của bạn ở đây
 openai.api_key = "sk-j4DkzI7htsVqEZqC272d3b58B0Fb49A183573dD2Fc04F71d"
-openai.api_base = "https://api.sv2.llm.ai.vn/v1"  # hoặc bỏ /v1 nếu không tương thích
+openai.api_base = "https://api.sv2.llm.ai.vn/v1"  # hoặc bỏ /v1 nếu Streamlit Cloud lỗi
 
 def extract_text_ocr(image):
     return pytesseract.image_to_string(image, lang="vie+eng")
@@ -23,9 +24,7 @@ def call_gpt4o_ai_vn(image, raw_text):
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": f"Nội dung OCR:
-{raw_text}
-Hãy chuyển sang LaTeX chuẩn kèm hướng dẫn chèn ảnh."},
+                    {"type": "text", "text": f"Nội dung OCR:\n{raw_text}\nHãy chuyển sang LaTeX chuẩn kèm hướng dẫn chèn ảnh."},
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_image}"}}
                 ]
             }
