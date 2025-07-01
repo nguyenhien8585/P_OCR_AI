@@ -5,6 +5,7 @@ import io
 from PIL import Image
 import fitz  # PyMuPDF
 
+# ⚠️ Nhớ thay YOUR_API_KEY thành API thực tế
 openai.api_key = "sk-j4DkzI7htsVqEZqC272d3b58B0Fb49A183573dD2Fc04F71d"
 openai.api_base = "https://api.sv2.llm.ai.vn/v1"
 
@@ -25,9 +26,7 @@ def call_gpt4o_ai_vn(image, raw_text):
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": f"Nội dung OCR:
-{raw_text}
-Hãy chuyển sang LaTeX chuẩn kèm hướng dẫn chèn ảnh."},
+                    {"type": "text", "text": f"Nội dung OCR:\n{raw_text}\nHãy chuyển sang LaTeX chuẩn kèm hướng dẫn chèn ảnh."},
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_image}"}}
                 ]
             }
