@@ -1,42 +1,66 @@
 import streamlit as st
-from PIL import Image
 import fitz
+from PIL import Image
 import io, os, base64
 import requests
 from docx import Document
 from streamlit_cropper import st_cropper
 
-# ==== Cấu hình API ====
-API_ENDPOINT = "https://api.sv2.llm.ai.vn/v1/chat/completions"
-API_KEY = "sk-j4DkzI7htsVqEZqC272d3b58B0Fb49A183573dD2Fc04F71d"  # <-- Đổi bằng API KEY AI.VN của bạn
+# === API Keys ===
+st.set_page_config(page_title="Gemini Vision + Mistral AI", layout="wide")
+st.title("🎯 Chuyển đề Toán PDF/Ảnh sang LaTeX hoặc Word, giữ hình minh họa")
 
-def gemini_image_to_text(image, latex=True):
+gemini_api_key = st.sidebar.text_input("Gemini API Key (Google Cloud)", type="password")
+mistral_api_key = st.sidebar.text_input("Mistral AI Key", type="password")
+
+# ==== Hàm gọi Gemini Flash cho ảnh ====
+def gemini_flash_vision(image, api_key, prompt="Mô tả hình vẽ/ảnh minh họa."):
     buffered = io.BytesIO()
     image.save(buffered, format="PNG")
     img_bytes = buffered.getvalue()
     img_b64 = base64.b64encode(img_bytes).decode()
-    prompt = "Nhận diện toàn bộ nội dung, chuyển công thức toán thành LaTeX." if latex else "Mô tả hình minh họa."
-    payload = {
-        "model": "gemini-2.5-pro-preview-0605",
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt,
-                "images": [img_b64]
-            }
-        ]
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    data = {
+        "contents": [{
+            "parts": [
+                {"inlineData": {"mimeType": "image/png", "data": img_b64}},
+                {"text": prompt}
+            ]
+        }]
     }
+    headers = {"Content-Type": "application/json"}
+    resp = requests.post(api_url, headers=headers, json=data)
+    result = resp.json()
+    st.write("🟦 Gemini API trả về:", result) # debug
+    if "candidates" in result and result["candidates"]:
+        return result["candidates"][0]["content"]["parts"][0]["text"]
+    elif "error" in result:
+        return f"[Lỗi Gemini: {result['error'].get('message', str(result['error']))}]"
+    else:
+        return f"[Lỗi Gemini: Không có dữ liệu trả về | {result}]"
+
+# ==== Hàm gọi Mistral AI để chuyển văn bản sang LaTeX/Word ====
+def mistral_convert(prompt, mistral_api_key):
+    url = "https://api.mistral.ai/v1/chat/completions"
     headers = {
-        "Authorization": f"Bearer {API_KEY}",
+        "Authorization": f"Bearer {mistral_api_key}",
         "Content-Type": "application/json"
     }
-    try:
-        resp = requests.post(API_ENDPOINT, headers=headers, json=payload, timeout=120)
-        data = resp.json()
+    payload = {
+        "model": "mistral-large-latest",
+        "messages": [{"role": "user", "content": prompt}]
+    }
+    response = requests.post(url, headers=headers, json=payload)
+    data = response.json()
+    st.write("🟦 Mistral API trả về:", data)  # debug
+    if 'choices' in data and data['choices']:
         return data['choices'][0]['message']['content']
-    except Exception as e:
-        return f"[Lỗi API: {e}]"
+    elif 'error' in data:
+        return f"[Lỗi Mistral: {data['error']}]"
+    else:
+        return f"[Lỗi Mistral: Không có dữ liệu trả về | {data}]"
 
+# ==== PDF sang ảnh ====
 def pdf_to_images(pdf_bytes):
     images = []
     with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
@@ -46,76 +70,50 @@ def pdf_to_images(pdf_bytes):
             images.append(img)
     return images
 
-def save_word(text_list, images, captions, output_path):
+# ==== Lưu Word với hình ====
+def save_word(doc_text, images, captions, outpath="output_word.docx"):
     doc = Document()
-    for i, txt in enumerate(text_list):
-        doc.add_paragraph(txt)
-        if i < len(images):
-            img_stream = io.BytesIO()
-            images[i].save(img_stream, format="PNG")
-            img_stream.seek(0)
-            doc.add_picture(img_stream, width=docx.shared.Inches(4))
-            if captions and i < len(captions):
-                doc.add_paragraph(captions[i], style='Caption')
-    doc.save(output_path)
+    doc.add_paragraph(doc_text)
+    for idx, img in enumerate(images):
+        img_stream = io.BytesIO()
+        img.save(img_stream, format="PNG")
+        img_stream.seek(0)
+        doc.add_picture(img_stream, width=docx.shared.Inches(4))
+        if captions and idx < len(captions):
+            doc.add_paragraph(captions[idx], style='Caption')
+    doc.save(outpath)
 
-def save_latex(text_list, images, captions, out_dir="output", out_path="output/output.tex"):
-    os.makedirs(out_dir, exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write("\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n")
-        for i, txt in enumerate(text_list):
-            f.write(txt + "\n\n")
-            if i < len(images):
-                img_path = f"{out_dir}/img-{i+1}.png"
-                images[i].save(img_path)
-                f.write(f"\\begin{{figure}}[h]\n\\centering\n\\includegraphics[width=0.7\\linewidth]{{img-{i+1}.png}}\n")
-                if captions and i < len(captions):
-                    f.write(f"\\caption{{{captions[i]}}}\n")
-                f.write("\\end{figure}\n\n")
-        f.write("\\end{document}\n")
+# ==== Tabs giao diện ====
+tab1, tab2 = st.tabs(["Cắt ảnh minh họa (Gemini)", "Chuyển sang LaTeX/Word (Mistral)"])
 
-st.set_page_config(layout="wide", page_title="P_PDF with AI 6/2025")
-if not os.path.exists("output"): os.makedirs("output")
-
-st.markdown("""
-# 📄 P_PDF with AI 6/2025  
-⭑ Chuyển đổi PDF/Image thành văn bản có thể chỉnh sửa với AI
-""")
-
-tab1, tab2, tab3 = st.tabs(["OCR PDF", "OCR Image", "Sửa lỗi chính tả"])
-
+# ---------- TAB 1: CẮT ẢNH MINH HỌA BẰNG GEMINI ----------
 with tab1:
-    st.markdown("### OCR cho file PDF")
-    uploaded = st.file_uploader("Chọn file PDF để xử lý OCR", type=["pdf"])
-    log = []
-    if uploaded:
-        st.info("Tải lên thành công! Đang chuyển PDF sang ảnh...")
-        images = pdf_to_images(uploaded.read())
-        num_pages = len(images)
-        file_info = {
-            "Tên file": uploaded.name,
-            "Loại file": uploaded.type,
-            "Kích thước": f"{uploaded.size/1024:.1f} KB",
-            "Số trang": num_pages
-        }
-        with st.expander("🛈 Thông tin file"):
-            for k, v in file_info.items():
-                st.write(f"- **{k}:** {v}")
+    st.subheader("1️⃣ Upload PDF hoặc Ảnh")
+    uploaded = st.file_uploader("Chọn file PDF hoặc ảnh", type=["pdf", "png", "jpg", "jpeg"])
+    images = []
+    img_captions = []
+    outdir = "output_imgs"
+    os.makedirs(outdir, exist_ok=True)
 
-        st.subheader("Xem & crop minh họa từng trang")
-        text_results = []
-        img_results = []
-        caption_results = []
+    if uploaded:
+        if uploaded.name.lower().endswith(".pdf"):
+            images = pdf_to_images(uploaded.read())
+        else:
+            images = [Image.open(uploaded)]
+
+        st.success(f"Đã chuyển thành {len(images)} trang ảnh.")
+
+        crop_imgs = []
+        img_captions = []
+        st.info("Chọn, crop vùng hình minh họa bằng chuột với mỗi trang/ảnh. Sau đó gửi cho Gemini để mô tả/xác nhận.")
+
         for i, img in enumerate(images):
             st.markdown(f"---\n#### Trang {i+1}")
             st.image(img, caption=f"Trang {i+1}", use_column_width=True)
-            st.write("**Chọn vùng hình minh họa bằng chuột (nếu có):**")
             box = st_cropper(img, box_color='#00FF00', aspect_ratio=None, key=f"cropper{i}")
-
             cropped = None
+            left = top = width = height = None
             if box:
-                # Luôn khởi tạo mặc định None
-                left = top = width = height = None
                 if isinstance(box, dict):
                     left = box.get("left")
                     top = box.get("top")
@@ -123,81 +121,71 @@ with tab1:
                     height = box.get("height")
                 elif isinstance(box, (tuple, list)) and len(box) == 4:
                     left, top, width, height = box
-                else:
-                    st.warning("Không nhận diện được vùng crop!")
                 if None not in (left, top, width, height):
                     cropped = img.crop((left, top, left + width, top + height))
-                    st.image(cropped, caption=f"Hình minh họa đã cắt (Trang {i+1})", use_column_width=True)
+                    st.image(cropped, caption=f"Ảnh minh họa cắt (Trang {i+1})", use_column_width=True)
+                    crop_imgs.append(cropped)
+                    # Xác nhận/mô tả bằng Gemini
+                    if gemini_api_key and st.button(f"Mô tả hình minh họa Trang {i+1} (Gemini)", key=f"desimg{i}"):
+                        with st.spinner("Gemini đang phân tích..."):
+                            caption = gemini_flash_vision(cropped, gemini_api_key, prompt="Mô tả chi tiết hình minh họa Toán học này (cho caption LaTeX hoặc tiếng Việt ngắn gọn).")
+                            img_captions.append(caption)
+                            st.write("**Caption Gemini:**", caption)
                 else:
-                    cropped = None
-            colbt1, colbt2 = st.columns(2)
-            with colbt1:
-                if st.button(f"OCR văn bản + công thức (trang {i+1})", key=f"btnocr-{i}"):
-                    with st.spinner("Đang nhận diện..."):
-                        ocr_text = gemini_image_to_text(img, latex=True)
-                        text_results.append(ocr_text)
-                        st.success("Hoàn thành nhận diện!")
-                        st.code(ocr_text, language="latex")
-            with colbt2:
-                if cropped is not None and st.button(f"Mô tả hình minh họa (trang {i+1})", key=f"btnimg-{i}"):
-                    with st.spinner("Đang mô tả hình minh họa..."):
-                        img_caption = gemini_image_to_text(cropped, latex=False)
-                        img_results.append(cropped)
-                        caption_results.append(img_caption)
-                        st.success("Đã mô tả xong!")
-                        st.write(f"**Caption:** {img_caption}")
+                    st.warning("Vui lòng crop đủ vùng ảnh!")
+        # Lưu danh sách ảnh & caption cho tab sau
+        st.session_state["crop_imgs"] = crop_imgs
+        st.session_state["img_captions"] = img_captions
 
-        st.markdown("---")
-        if st.button("Tạo file Word + LaTeX", type="primary"):
-            with st.spinner("Đang xuất..."):
-                save_word(text_results, img_results, caption_results, "output/word.docx")
-                save_latex(text_results, img_results, caption_results)
-                st.success("Đã xuất xong file!")
-                with open("output/word.docx", "rb") as f:
-                    st.download_button("Tải file Word", f, "output.docx")
-                with open("output/output.tex", "r", encoding="utf-8") as f:
-                    st.download_button("Tải file LaTeX", f, "output.tex")
-
-    with st.expander("📊 Nhật ký hoạt động"):
-        st.write("Hành động, trạng thái xử lý sẽ hiển thị ở đây.")
-
+# ---------- TAB 2: CHUYỂN SANG LATEX/WORD (MISTRAL) ----------
 with tab2:
-    st.markdown("### OCR cho ảnh (bổ sung)")
-    uploaded_img = st.file_uploader("Chọn ảnh để OCR", type=["png", "jpg", "jpeg"])
-    if uploaded_img:
-        img = Image.open(uploaded_img)
-        st.image(img, caption="Ảnh đã chọn", use_column_width=True)
-        st.write("Chọn vùng hình minh họa bằng chuột:")
-        box = st_cropper(img, box_color='#FF0000', aspect_ratio=None, key="imgcropper")
-        cropped_img = None
-        if box:
-            left = top = width = height = None
-            if isinstance(box, dict):
-                left = box.get("left")
-                top = box.get("top")
-                width = box.get("width")
-                height = box.get("height")
-            elif isinstance(box, (tuple, list)) and len(box) == 4:
-                left, top, width, height = box
-            else:
-                st.warning("Không nhận diện được vùng crop!")
-            if None not in (left, top, width, height):
-                cropped_img = img.crop((left, top, left + width, top + height))
-                st.image(cropped_img, caption="Ảnh đã cắt", use_column_width=True)
-            else:
-                cropped_img = None
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("OCR nội dung ảnh"):
-                with st.spinner("Đang nhận diện..."):
-                    text = gemini_image_to_text(img, latex=True)
-                    st.code(text, language="latex")
-        with col2:
-            if cropped_img is not None and st.button("Mô tả vùng hình minh họa"):
-                with st.spinner("Đang mô tả..."):
-                    caption = gemini_image_to_text(cropped_img, latex=False)
-                    st.write(f"**Caption:** {caption}")
+    st.subheader("2️⃣ Chuyển sang LaTeX hoặc Word")
+    crop_imgs = st.session_state.get("crop_imgs", [])
+    img_captions = st.session_state.get("img_captions", [])
+    st.markdown(f"Bạn đã crop **{len(crop_imgs)}** hình minh họa.")
 
-with tab3:
-    st.markdown("### Sửa lỗi chính tả")
-    st.info("Tính năng sẽ cập nhật sau.")
+    doc_type = st.radio("Chọn kiểu xuất", ["LaTeX", "Word"])
+    text_input = st.text_area("Dán hoặc nhập toàn bộ đề (text, công thức toán, ...)", height=250)
+
+    # Gợi ý prompt cho Mistral
+    prompt = ""
+    if doc_type == "LaTeX":
+        img_latex = "\n".join([f"\\includegraphics{{img-{i+1}.png}}" for i in range(len(crop_imgs))])
+        prompt = f"""
+Chuyển toàn bộ văn bản đề Toán dưới đây thành LaTeX chuẩn, giữ nguyên công thức, bảng, biểu diễn Toán học.
+Chèn hình minh họa vào đúng vị trí bằng lệnh \\includegraphics{{img-<index>.png}}, caption nếu có, lấy theo thứ tự: {img_latex}.
+Đề toán:
+{text_input}
+"""
+    else:
+        prompt = f"""
+Chuyển toàn bộ văn bản đề Toán dưới đây thành file Word chuẩn, giữ nguyên công thức, bảng.
+Chèn hình minh họa vào đúng vị trí (theo thứ tự img-1.png, img-2.png...), caption nếu có, dựa trên chú thích đã phân tích trước đó (nếu có).
+Đề toán:
+{text_input}
+"""
+
+    mistral_ok = mistral_api_key and text_input
+    if mistral_ok and st.button("Chuyển đổi bằng Mistral AI"):
+        with st.spinner("Đang gửi tới Mistral AI..."):
+            result = mistral_convert(prompt, mistral_api_key)
+            st.markdown("**Kết quả chuyển đổi:**")
+            st.code(result, language="latex" if doc_type=="LaTeX" else "markdown")
+
+            # Cho phép tải về file kết quả (Word/LaTeX) và các ảnh
+            if doc_type == "Word":
+                save_word(result, crop_imgs, img_captions, "output_word.docx")
+                with open("output_word.docx", "rb") as f:
+                    st.download_button("Tải file Word", f, "output_word.docx")
+            else:
+                out_latex = "output_latex.tex"
+                with open(out_latex, "w", encoding="utf-8") as f:
+                    f.write(result)
+                with open(out_latex, "rb") as f:
+                    st.download_button("Tải file LaTeX", f, out_latex)
+            # Tải từng hình minh họa đã crop
+            for idx, img in enumerate(crop_imgs):
+                img_path = f"img-{idx+1}.png"
+                img.save(img_path)
+                with open(img_path, "rb") as f:
+                    st.download_button(f"Tải {img_path}", f, img_path)
