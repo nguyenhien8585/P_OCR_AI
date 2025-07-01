@@ -3,7 +3,7 @@ import openai
 import base64
 import io
 
-openai.api_key = "YOUR_API_KEY"
+openai.api_key = "sk-j4DkzI7htsVqEZqC272d3b58B0Fb49A183573dD2Fc04F71d"
 openai.api_base = "https://api.sv2.llm.ai.vn/v1"  # hoặc bỏ /v1 nếu không tương thích
 
 def extract_text_ocr(image):
@@ -17,7 +17,7 @@ def encode_image(image):
 def call_gpt4o_ai_vn(image, raw_text):
     b64_image = encode_image(image)
     response = openai.chat.completions.create(
-        model="gpt-4o",
+        model="openai:gpt-4o",
         messages=[
             {"role": "system", "content": "Bạn là trợ lý chuyên phân tích đề thi và xuất ra định dạng LaTeX/Word."},
             {
