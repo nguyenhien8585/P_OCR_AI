@@ -8,7 +8,6 @@ import base64
 import requests
 from docx import Document
 
-# ---- Config ----
 st.set_page_config(page_title="Crop & OCR PDF/Ảnh sang LaTeX/Word (GPT-4o AI.VN)", layout="wide")
 st.title("📄 Crop ảnh, OCR và chuyển sang LaTeX/Word (GPT-4o, AI.VN)")
 
@@ -73,7 +72,7 @@ def gpt4o_ocr_format(image, api_key, mode="latex"):
     img_b64 = base64.b64encode(img_bytes).decode()
     prompt = getPrompt(mode)
     payload = {
-        "model": "openai:gpt-4o",
+        "model": "gpt-4o",
         "messages": [
             {
                 "role": "user",
@@ -138,12 +137,11 @@ if uploaded and api_key:
             box_color='#00FF00',
             aspect_ratio=None,
             key=f"cropper_{idx}",
-            return_type='box'  # Chắc chắn trả về dict hoặc tuple
+            return_type='box'
         )
 
         cropped = img
         if box:
-            # box là dict hoặc tuple (left, top, width, height)
             if isinstance(box, dict):
                 left = box.get("left", 0)
                 top = box.get("top", 0)
@@ -153,23 +151,18 @@ if uploaded and api_key:
                 left, top, width, height = box
             else:
                 left, top, width, height = 0, 0, img.width, img.height
-            # Nếu crop hợp lệ thì cắt, còn không thì lấy nguyên ảnh
             if width > 10 and height > 10:
                 cropped = img.crop((left, top, left + width, top + height))
             st.image(cropped, caption=f"Hình đã crop Trang {idx+1}", use_container_width=True)
         all_cropped_imgs.append(cropped)
 
+        # Lưu vào biến cục bộ, không dùng session_state!
         if st.button(f"OCR + Định dạng trang {idx+1} (GPT-4o)", key=f"ocr_{idx}"):
             with st.spinner("GPT-4o AI.VN đang xử lý..."):
                 result = gpt4o_ocr_format(cropped, api_key, mode)
                 st.code(result, language="latex" if mode == "latex" else "markdown")
                 all_results.append(result)
-                st.session_state[f"ocr_{idx}"] = result
-        else:
-            old_result = st.session_state.get(f"ocr_{idx}")
-            if old_result:
-                st.code(old_result, language="latex" if mode == "latex" else "markdown")
-                all_results.append(old_result)
+        # Không còn truy cập session_state để lấy lại kết quả cũ nữa!
 
     # Kết hợp và xuất file cuối cùng
     if all_results and st.button(f"Tải về {'LaTeX' if mode=='latex' else 'Word'} hoàn chỉnh"):
