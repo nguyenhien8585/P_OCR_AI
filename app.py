@@ -1,17 +1,20 @@
 import streamlit as st
-import fitz
+from streamlit_cropper import st_cropper
 from PIL import Image
-import io, os, base64
+import fitz
+import io
+import os
+import base64
 import requests
 from docx import Document
 
-st.set_page_config(page_title="PDF/Ảnh sang LaTeX/Word (ChatGPT-4o AI.VN)", layout="wide")
-st.title("🪄 Chuyển PDF/Ảnh sang LaTeX hoặc Word bằng ChatGPT-4o (AI.VN)")
+# ---- Config ----
+st.set_page_config(page_title="Crop & OCR PDF/Ảnh sang LaTeX/Word (GPT-4o AI.VN)", layout="wide")
+st.title("📄 Crop ảnh, OCR và chuyển sang LaTeX/Word (GPT-4o, AI.VN)")
 
 api_key = st.sidebar.text_input("AI.VN API Key (GPT-4o)", type="password")
-api_url = "https://api.sv2.llm.ai.vn/v1/chat/completions"  # endpoint AI.VN cho GPT-4o
+api_url = "https://api.sv2.llm.ai.vn/v1/chat/completions"
 
-# ---- Prompt Generator ----
 def getPrompt(mode):
     if mode == "latex":
         return """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
@@ -54,7 +57,6 @@ YÊU CẦU:
    - Tự luận: Câu X: ... (Lời giải...)
 KHÔNG giải thích. KHÔNG bịa thêm. Trả về văn bản gốc."""
 
-# ---- PDF sang ảnh ----
 def pdf_to_images(pdf_bytes):
     images = []
     with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
@@ -64,7 +66,6 @@ def pdf_to_images(pdf_bytes):
             images.append(img)
     return images
 
-# ---- Gửi ảnh sang GPT-4o để OCR + định dạng ----
 def gpt4o_ocr_format(image, api_key, mode="latex"):
     buffered = io.BytesIO()
     image.save(buffered, format="PNG")
@@ -102,7 +103,6 @@ def gpt4o_ocr_format(image, api_key, mode="latex"):
     except Exception as e:
         return f"[Lỗi gọi GPT-4o: {e}]"
 
-# ---- Lưu Word với hình ----
 def save_word(doc_text, images, output_path="output_word.docx"):
     doc = Document()
     doc.add_paragraph(doc_text)
@@ -113,10 +113,9 @@ def save_word(doc_text, images, output_path="output_word.docx"):
         doc.add_picture(img_stream, width=docx.shared.Inches(4))
     doc.save(output_path)
 
-# ---- GIAO DIỆN ----
 uploaded = st.file_uploader("Chọn file PDF hoặc ảnh", type=["pdf", "png", "jpg", "jpeg"])
 mode = st.radio("Chọn chế độ xuất", ["latex", "word"])
-st.info("Sử dụng GPT-4o (AI.VN) để nhận diện nội dung và định dạng LaTeX/Word. Hỗ trợ crop ảnh thủ công.")
+st.info("Cắt vùng hình minh họa bằng chuột, OCR bằng GPT-4o AI.VN, định dạng LaTeX hoặc Word.")
 
 if uploaded and api_key:
     if uploaded.name.lower().endswith(".pdf"):
@@ -130,23 +129,39 @@ if uploaded and api_key:
     all_cropped_imgs = []
     for idx, img in enumerate(images):
         st.markdown(f"---\n### Trang {idx+1}")
-        st.image(img, caption=f"Trang {idx+1}", use_column_width=True)
-        st.write("Cắt vùng hình minh họa bằng chuột (nếu cần, không bắt buộc):")
-        # ---- Crop bằng Pillow trực tiếp (nếu có nhu cầu) ----
-        left = st.number_input(f"left_{idx}", 0, img.width, 0, 1)
-        top = st.number_input(f"top_{idx}", 0, img.height, 0, 1)
-        width = st.number_input(f"width_{idx}", 1, img.width, img.width, 1)
-        height = st.number_input(f"height_{idx}", 1, img.height, img.height, 1)
-        if st.button(f"Crop hình minh họa trang {idx+1}", key=f"crop{idx}"):
-            cropped_img = img.crop((left, top, left + width, top + height))
-            st.image(cropped_img, caption=f"Hình minh họa đã cắt Trang {idx+1}", use_column_width=True)
-            all_cropped_imgs.append(cropped_img)
-        else:
-            all_cropped_imgs.append(img)  # Nếu không crop thì lấy nguyên ảnh
+        st.image(img, caption=f"Trang {idx+1}", use_container_width=True)
+        st.write("**Crop vùng hình minh họa thủ công bằng chuột nếu muốn**")
 
-        if st.button(f"Nhận diện và định dạng trang {idx+1} bằng GPT-4o", key=f"ocr{idx}"):
-            with st.spinner("GPT-4o đang xử lý..."):
-                result = gpt4o_ocr_format(img, api_key, mode)
+        # --- Sử dụng streamlit-cropper cho từng trang ---
+        box = st_cropper(
+            img,
+            box_color='#00FF00',
+            aspect_ratio=None,
+            key=f"cropper_{idx}",
+            return_type='box'  # Chắc chắn trả về dict hoặc tuple
+        )
+
+        cropped = img
+        if box:
+            # box là dict hoặc tuple (left, top, width, height)
+            if isinstance(box, dict):
+                left = box.get("left", 0)
+                top = box.get("top", 0)
+                width = box.get("width", img.width)
+                height = box.get("height", img.height)
+            elif isinstance(box, (tuple, list)):
+                left, top, width, height = box
+            else:
+                left, top, width, height = 0, 0, img.width, img.height
+            # Nếu crop hợp lệ thì cắt, còn không thì lấy nguyên ảnh
+            if width > 10 and height > 10:
+                cropped = img.crop((left, top, left + width, top + height))
+            st.image(cropped, caption=f"Hình đã crop Trang {idx+1}", use_container_width=True)
+        all_cropped_imgs.append(cropped)
+
+        if st.button(f"OCR + Định dạng trang {idx+1} (GPT-4o)", key=f"ocr_{idx}"):
+            with st.spinner("GPT-4o AI.VN đang xử lý..."):
+                result = gpt4o_ocr_format(cropped, api_key, mode)
                 st.code(result, language="latex" if mode == "latex" else "markdown")
                 all_results.append(result)
                 st.session_state[f"ocr_{idx}"] = result
@@ -157,7 +172,7 @@ if uploaded and api_key:
                 all_results.append(old_result)
 
     # Kết hợp và xuất file cuối cùng
-    if st.button(f"Tải về {'LaTeX' if mode=='latex' else 'Word'} hoàn chỉnh"):
+    if all_results and st.button(f"Tải về {'LaTeX' if mode=='latex' else 'Word'} hoàn chỉnh"):
         full_text = "\n\n".join(all_results)
         if mode == "word":
             save_word(full_text, all_cropped_imgs, "output_word.docx")
