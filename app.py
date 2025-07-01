@@ -8,8 +8,8 @@ import base64
 import requests
 from docx import Document
 
-st.set_page_config(page_title="Crop & OCR PDF/Ảnh sang LaTeX/Word (GPT-4o AI.VN)", layout="wide")
-st.title("📄 Crop ảnh, OCR và chuyển sang LaTeX/Word (GPT-4o, AI.VN)")
+st.set_page_config(page_title="OCR & Crop & Export LaTeX/Word (GPT-4o)", layout="wide")
+st.title("📄 PDF/Ảnh ➔ Crop minh họa ➔ LaTeX/Word (ChatGPT-4o AI.VN)")
 
 api_key = st.sidebar.text_input("AI.VN API Key (GPT-4o)", type="password")
 api_url = "https://api.sv2.llm.ai.vn/v1/chat/completions"
@@ -114,7 +114,7 @@ def save_word(doc_text, images, output_path="output_word.docx"):
 
 uploaded = st.file_uploader("Chọn file PDF hoặc ảnh", type=["pdf", "png", "jpg", "jpeg"])
 mode = st.radio("Chọn chế độ xuất", ["latex", "word"])
-st.info("Cắt vùng hình minh họa bằng chuột, OCR bằng GPT-4o AI.VN, định dạng LaTeX hoặc Word.")
+st.info("Crop thủ công từng hình minh họa trong trang. OCR từng vùng bằng GPT-4o. Kết quả auto LaTeX hoặc Word.")
 
 if uploaded and api_key:
     if uploaded.name.lower().endswith(".pdf"):
@@ -126,45 +126,55 @@ if uploaded and api_key:
 
     all_results = []
     all_cropped_imgs = []
+
     for idx, img in enumerate(images):
-        st.markdown(f"---\n### Trang {idx+1}")
+        st.markdown(f"---\n## Trang {idx+1}")
         st.image(img, caption=f"Trang {idx+1}", use_container_width=True)
-        st.write("**Crop vùng hình minh họa thủ công bằng chuột nếu muốn**")
 
-        # --- Sử dụng streamlit-cropper cho từng trang ---
-        box = st_cropper(
-            img,
-            box_color='#00FF00',
-            aspect_ratio=None,
-            key=f"cropper_{idx}",
-            return_type='box'
-        )
+        st.write("**Crop từng hình minh họa bằng chuột (Crop xong nhấn 'OCR hình này') - Có thể crop nhiều lần trên 1 trang!**")
+        crop_img_list = []
+        crop_result_list = []
 
-        cropped = img
-        if box:
-            if isinstance(box, dict):
-                left = box.get("left", 0)
-                top = box.get("top", 0)
-                width = box.get("width", img.width)
-                height = box.get("height", img.height)
-            elif isinstance(box, (tuple, list)):
-                left, top, width, height = box
+        # Hỗ trợ crop nhiều hình trên 1 trang (dùng số lần crop + list)
+        n_crop = st.number_input(f"Số vùng minh họa muốn crop ở trang {idx+1}", 1, 10, 1, 1)
+        for i in range(n_crop):
+            st.write(f"### Crop vùng minh họa {i+1} (Trang {idx+1})")
+            box = st_cropper(
+                img,
+                box_color='#FF0000',
+                aspect_ratio=None,
+                key=f"cropper_{idx}_{i}",
+                return_type='box'
+            )
+            cropped = img
+            if box:
+                if isinstance(box, dict):
+                    left = box.get("left", 0)
+                    top = box.get("top", 0)
+                    width = box.get("width", img.width)
+                    height = box.get("height", img.height)
+                elif isinstance(box, (tuple, list)):
+                    left, top, width, height = box
+                else:
+                    left, top, width, height = 0, 0, img.width, img.height
+                if width > 10 and height > 10:
+                    cropped = img.crop((left, top, left + width, top + height))
+                    st.image(cropped, caption=f"Minh họa {i+1} Trang {idx+1}", use_container_width=True)
+                    crop_img_list.append(cropped)
+                else:
+                    crop_img_list.append(None)
             else:
-                left, top, width, height = 0, 0, img.width, img.height
-            if width > 10 and height > 10:
-                cropped = img.crop((left, top, left + width, top + height))
-            st.image(cropped, caption=f"Hình đã crop Trang {idx+1}", use_container_width=True)
-        all_cropped_imgs.append(cropped)
+                crop_img_list.append(None)
 
-        # Lưu vào biến cục bộ, không dùng session_state!
-        if st.button(f"OCR + Định dạng trang {idx+1} (GPT-4o)", key=f"ocr_{idx}"):
-            with st.spinner("GPT-4o AI.VN đang xử lý..."):
-                result = gpt4o_ocr_format(cropped, api_key, mode)
-                st.code(result, language="latex" if mode == "latex" else "markdown")
-                all_results.append(result)
-        # Không còn truy cập session_state để lấy lại kết quả cũ nữa!
+            if crop_img_list[-1] is not None and st.button(f"OCR hình minh họa {i+1} (Trang {idx+1})", key=f"ocr_{idx}_{i}"):
+                with st.spinner("GPT-4o AI.VN đang OCR hình minh họa..."):
+                    result = gpt4o_ocr_format(crop_img_list[-1], api_key, mode)
+                    st.code(result, language="latex" if mode == "latex" else "markdown")
+                    crop_result_list.append(result)
+                    all_results.append(result)
+                    all_cropped_imgs.append(crop_img_list[-1])
 
-    # Kết hợp và xuất file cuối cùng
+    # Xuất file cuối cùng (toàn bộ kết quả ghép lại)
     if all_results and st.button(f"Tải về {'LaTeX' if mode=='latex' else 'Word'} hoàn chỉnh"):
         full_text = "\n\n".join(all_results)
         if mode == "word":
@@ -178,8 +188,8 @@ if uploaded and api_key:
             with open(latex_file, "rb") as f:
                 st.download_button("Tải file LaTeX", f, latex_file)
         # Tải từng hình minh họa đã crop
-        for idx, img in enumerate(all_cropped_imgs):
-            img_path = f"img_{idx+1}.png"
+        for i, img in enumerate(all_cropped_imgs):
+            img_path = f"img_{i+1}.png"
             img.save(img_path)
             with open(img_path, "rb") as f:
                 st.download_button(f"Tải hình {img_path}", f, img_path)
