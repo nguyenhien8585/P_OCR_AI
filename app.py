@@ -72,7 +72,7 @@ def gpt4o_ocr_format(image, api_key, mode="latex"):
     img_b64 = base64.b64encode(img_bytes).decode()
     prompt = getPrompt(mode)
     payload = {
-        "model": "gpt-4o",
+        "model": "openai:gpt-4o",
         "messages": [
             {
                 "role": "user",
