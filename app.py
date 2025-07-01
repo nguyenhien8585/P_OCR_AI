@@ -114,18 +114,22 @@ with tab1:
 
             cropped = None
             if box:
-                # Kiểm tra kiểu trả về của box (dict hoặc tuple/list)
+                # Luôn khởi tạo mặc định None
+                left = top = width = height = None
                 if isinstance(box, dict):
-                    left, top, width, height = box["left"], box["top"], box["width"], box["height"]
-                elif isinstance(box, (tuple, list)):
+                    left = box.get("left")
+                    top = box.get("top")
+                    width = box.get("width")
+                    height = box.get("height")
+                elif isinstance(box, (tuple, list)) and len(box) == 4:
                     left, top, width, height = box
                 else:
                     st.warning("Không nhận diện được vùng crop!")
-                    cropped = None
-                # Kiểm tra đã có toạ độ chưa
-                if all(var is not None for var in [left, top, width, height]):
+                if None not in (left, top, width, height):
                     cropped = img.crop((left, top, left + width, top + height))
                     st.image(cropped, caption=f"Hình minh họa đã cắt (Trang {i+1})", use_column_width=True)
+                else:
+                    cropped = None
             colbt1, colbt2 = st.columns(2)
             with colbt1:
                 if st.button(f"OCR văn bản + công thức (trang {i+1})", key=f"btnocr-{i}"):
@@ -135,7 +139,7 @@ with tab1:
                         st.success("Hoàn thành nhận diện!")
                         st.code(ocr_text, language="latex")
             with colbt2:
-                if cropped and st.button(f"Mô tả hình minh họa (trang {i+1})", key=f"btnimg-{i}"):
+                if cropped is not None and st.button(f"Mô tả hình minh họa (trang {i+1})", key=f"btnimg-{i}"):
                     with st.spinner("Đang mô tả hình minh họa..."):
                         img_caption = gemini_image_to_text(cropped, latex=False)
                         img_results.append(cropped)
@@ -167,16 +171,21 @@ with tab2:
         box = st_cropper(img, box_color='#FF0000', aspect_ratio=None, key="imgcropper")
         cropped_img = None
         if box:
+            left = top = width = height = None
             if isinstance(box, dict):
-                left, top, width, height = box["left"], box["top"], box["width"], box["height"]
-            elif isinstance(box, (tuple, list)):
+                left = box.get("left")
+                top = box.get("top")
+                width = box.get("width")
+                height = box.get("height")
+            elif isinstance(box, (tuple, list)) and len(box) == 4:
                 left, top, width, height = box
             else:
                 st.warning("Không nhận diện được vùng crop!")
-                cropped_img = None
-            if all(var is not None for var in [left, top, width, height]):
+            if None not in (left, top, width, height):
                 cropped_img = img.crop((left, top, left + width, top + height))
                 st.image(cropped_img, caption="Ảnh đã cắt", use_column_width=True)
+            else:
+                cropped_img = None
         col1, col2 = st.columns(2)
         with col1:
             if st.button("OCR nội dung ảnh"):
@@ -184,7 +193,7 @@ with tab2:
                     text = gemini_image_to_text(img, latex=True)
                     st.code(text, language="latex")
         with col2:
-            if cropped_img and st.button("Mô tả vùng hình minh họa"):
+            if cropped_img is not None and st.button("Mô tả vùng hình minh họa"):
                 with st.spinner("Đang mô tả..."):
                     caption = gemini_image_to_text(cropped_img, latex=False)
                     st.write(f"**Caption:** {caption}")
