@@ -90,7 +90,7 @@ uploaded_file = st.file_uploader("Tải lên file PDF hoặc ảnh", type=['pdf'
 
 if uploaded_file and api_key:
     try:
-        client = openai.OpenAI(api_key=api_key, base_url="https://api.sv2.llm.ai.vn/v1")
+        client = openai.OpenAI(api_key=api_key, base_url="https://api.sv2.llm.ai.vn")
         images = []
         if uploaded_file.type == "application/pdf":
             with fitz.open(stream=uploaded_file.read(), filetype="pdf") as doc:
