@@ -6,7 +6,7 @@ import fitz  # PyMuPDF
 
 # ⚠️ Thay bằng API KEY của bạn từ https://api.sv2.llm.ai.vn
 openai.api_key = "sk-j4DkzI7htsVqEZqC272d3b58B0Fb49A183573dD2Fc04F71d"
-openai.api_base = "https://api.sv2.llm.ai.vn"
+openai.api_base = "https://api.sv2.llm.ai.vn/v1"
 
 def encode_image(image):
     buffered = io.BytesIO()
@@ -16,7 +16,7 @@ def encode_image(image):
 def call_gpt4o_ai_vn(image):
     b64_image = encode_image(image)
     response = openai.chat.completions.create(
-        model="openai:gpt-4o",
+        model="gpt-4o",
         messages=[
             {
                 "role": "system",
