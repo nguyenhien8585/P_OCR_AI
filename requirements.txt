@@ -3,3 +3,4 @@ pymupdf
 python-docx
 Pillow
 requests
+streamlit-cropper
