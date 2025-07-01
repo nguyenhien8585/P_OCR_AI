@@ -7,20 +7,6 @@ import base64
 import re
 import json
 
-# ========== CẤU HÌNH ========== #
-# Nếu muốn luôn dùng toạ độ thủ công, set về True
-FORCE_MANUAL_BOX = True
-
-# Nhập toạ độ cắt đúng của 2 hình trên trang PDF (xác định chuẩn từ ảnh hoặc PDF)
-# Dùng Paint hoặc Photoshop để lấy toạ độ pixel nếu cần chính xác hơn!
-MANUAL_BOXES = [
-    # Box lớp học: (left, top, right, bottom)
-    {"left": 175, "top": 285, "right": 400, "bottom": 525},  # (crop ảnh lớp học)
-    # Box hình chữ nhật ABCD: (left, top, right, bottom)
-    {"left": 410, "top": 525, "right": 730, "bottom": 670}   # (crop hình ABCD)
-]
-
-# ========== PROMPT CHUẨN ========== #
 def get_prompt(mode):
     return """
 Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
@@ -31,7 +17,7 @@ Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và 
 5. Chỉ trả về bounding box bao toàn bộ mỗi HÌNH VẼ/MINH HOẠ/BIỂU ĐỒ.
 6. Sau phần văn bản, chỉ trả về một dòng duy nhất:
 BoundingBox: [{"left":x1,"top":y1,"right":x2,"bottom":y2},...]
-**Không trả về box cho chữ hoặc từng phần nhỏ của hình!**
+**Chỉ trả về box bao trọn hình, KHÔNG trả về box cho text hoặc các phần nhỏ khác!**
 """
 
 def img_to_base64(img):
@@ -72,21 +58,22 @@ def parse_gpt_output(text):
         content = text.strip()
     return content, boxes
 
+def filter_boxes_auto(boxes):
+    # Lấy 2 box có diện tích lớn nhất (auto lọc box hình)
+    box_areas = [
+        ((b["right"]-b["left"])*(b["bottom"]-b["top"]), idx) for idx, b in enumerate(boxes)
+        if all(k in b for k in ("left","top","right","bottom"))
+    ]
+    box_areas = sorted(box_areas, reverse=True)
+    top_idx = [idx for area, idx in box_areas[:2]]
+    return [boxes[idx] for idx in top_idx]
+
 def crop_images(pil_img, boxes):
     crops = []
     for i, box in enumerate(boxes):
-        if not all(k in box for k in ("left","top","right","bottom")): continue
         left, top, right, bottom = int(box['left']), int(box['top']), int(box['right']), int(box['bottom'])
         crop = pil_img.crop((left, top, right, bottom))
         crops.append((f"image_{i+1}.png", crop))
-    return crops
-
-def crop_images_manual(pil_img):
-    crops = []
-    for idx, box in enumerate(MANUAL_BOXES):
-        left, top, right, bottom = box["left"], box["top"], box["right"], box["bottom"]
-        crop = pil_img.crop((left, top, right, bottom))
-        crops.append((f"image_{idx+1}.png", crop))
     return crops
 
 def insert_images_latex(content, crops):
@@ -95,8 +82,8 @@ def insert_images_latex(content, crops):
         content = content.replace(f"{{image_{idx}}}", img_latex)
     return content
 
-st.set_page_config(page_title="Chuyển đề Toán thành LaTeX + Hình đúng", layout="wide")
-st.title("Chuyển đề Toán (PDF/Ảnh) thành LaTeX kèm hình minh hoạ (cắt chính xác)")
+st.set_page_config(page_title="Chuyển đề Toán thành LaTeX + Hình tự động", layout="wide")
+st.title("Chuyển đề Toán (PDF/Ảnh) thành LaTeX kèm hình minh hoạ (TỰ ĐỘNG GPT-4o)")
 
 api_key = st.text_input("Nhập API Key GPT-4o:", type="password")
 uploaded_file = st.file_uploader("Tải lên file PDF hoặc ảnh", type=['pdf', 'jpg', 'png'])
@@ -116,7 +103,6 @@ if uploaded_file and api_key:
 
         st.info(f"Phát hiện {len(images)} trang để xử lý.")
 
-        # Dùng demo cho đúng trang bạn gửi: chỉ lấy trang 1
         img = images[0]
         st.image(img, caption="Trang PDF gốc")
 
@@ -127,13 +113,12 @@ if uploaded_file and api_key:
         st.subheader("Văn bản nhận diện (LaTeX):")
         st.code(content, language="latex")
 
-        # --- Xử lý box ---
-        if FORCE_MANUAL_BOX:
-            crops = crop_images_manual(img)
-            st.warning("Đang dùng crop thủ công với toạ độ đã đo (100% chính xác với file này)!")
-        else:
-            crops = crop_images(img, boxes)
-            st.info(f"Auto-crop từ GPT-4o trả về {len(crops)} box.")
+        # --- Lọc tự động 2 box lớn nhất ---
+        filtered_boxes = filter_boxes_auto(boxes)
+        if len(filtered_boxes) < 2:
+            st.warning("Chỉ phát hiện được <2 hình. Nếu crop chưa đúng, bạn có thể thử lại hoặc kiểm tra prompt/ảnh đầu vào.")
+        crops = crop_images(img, filtered_boxes)
+        st.success(f"Auto crop thành công {len(crops)} hình minh hoạ!")
 
         # Ghép nội dung với ảnh
         full_text = insert_images_latex(content, crops)
@@ -161,13 +146,11 @@ elif not uploaded_file:
 
 with st.expander("Hướng dẫn", expanded=False):
     st.markdown("""
-**Lưu ý crop hình:**  
-- Nếu muốn crop chính xác đúng 2 hình (không bị dính chữ), dùng crop thủ công (code mẫu này đã setup).
-- Nếu AI trả về box đúng, có thể set `FORCE_MANUAL_BOX = False` ở đầu file.
-- Để sửa lại vị trí crop: mở file ảnh, lấy lại toạ độ (trái, trên, phải, dưới) rồi sửa trong biến `MANUAL_BOXES`.
+**Cách hoạt động:**
+- AI sẽ tự động nhận diện và trả về bounding box cho hình minh hoạ/biểu đồ trong trang.
+- Code chỉ giữ lại 2 box có diện tích lớn nhất (gần như chắc chắn là 2 hình bạn cần).
+- Bạn không cần nhập tọa độ thủ công.
 
-**Quy trình đầy đủ:**
-- Upload file PDF gốc
-- Nhập API Key
-- Xem lại crop, tải về LaTeX và từng hình.
+**Nếu hình vẫn crop chưa đúng:**  
+- Tối ưu lại prompt cho AI rõ hơn, hoặc crop tay theo hướng dẫn các trả lời phía trên.
     """)
