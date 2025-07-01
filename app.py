@@ -116,7 +116,8 @@ with tab1:
             st.markdown(f"---\n#### Trang {i+1}")
             st.image(img, caption=f"Trang {i+1}", use_column_width=True)
             st.write("**Chọn vùng hình minh họa bằng chuột (nếu có):**")
-            cropped = st_cropper(img, box_color='#00FF00', aspect_ratio=None, return_type="PIL", key=f"cropper{i}")
+            cropped_array = st_cropper(img, box_color='#00FF00', aspect_ratio=None, return_type="numpy", key=f"cropper{i}")
+            cropped = Image.fromarray(cropped_array)
             st.image(cropped, caption=f"Hình minh họa đã cắt (Trang {i+1})", use_column_width=True)
             colbt1, colbt2 = st.columns(2)
             with colbt1:
