@@ -5,13 +5,11 @@ import io, os, base64
 import requests
 from docx import Document
 from streamlit_cropper import st_cropper
-import shutil
 
-# --- Cấu hình API ---
+# ==== Cấu hình API ====
 API_ENDPOINT = "https://api.sv2.llm.ai.vn/v1/chat/completions"
-API_KEY = "sk-j4DkzI7htsVqEZqC272d3b58B0Fb49A183573dD2Fc04F71d"  # <-- Điền API KEY AI.VN
+API_KEY = "sk-j4DkzI7htsVqEZqC272d3b58B0Fb49A183573dD2Fc04F71d"  # <-- Đổi bằng API KEY AI.VN của bạn
 
-# --- Hàm gửi ảnh lên AI.VN để nhận diện ---
 def gemini_image_to_text(image, latex=True):
     buffered = io.BytesIO()
     image.save(buffered, format="PNG")
@@ -39,7 +37,6 @@ def gemini_image_to_text(image, latex=True):
     except Exception as e:
         return f"[Lỗi API: {e}]"
 
-# --- PDF sang ảnh ---
 def pdf_to_images(pdf_bytes):
     images = []
     with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
@@ -49,7 +46,6 @@ def pdf_to_images(pdf_bytes):
             images.append(img)
     return images
 
-# --- Xuất Word ---
 def save_word(text_list, images, captions, output_path):
     doc = Document()
     for i, txt in enumerate(text_list):
@@ -63,7 +59,6 @@ def save_word(text_list, images, captions, output_path):
                 doc.add_paragraph(captions[i], style='Caption')
     doc.save(output_path)
 
-# --- Xuất LaTeX ---
 def save_latex(text_list, images, captions, out_dir="output", out_path="output/output.tex"):
     os.makedirs(out_dir, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
@@ -79,7 +74,6 @@ def save_latex(text_list, images, captions, out_dir="output", out_path="output/o
                 f.write("\\end{figure}\n\n")
         f.write("\\end{document}\n")
 
-# --- MAIN APP ---
 st.set_page_config(layout="wide", page_title="P_PDF with AI 6/2025")
 if not os.path.exists("output"): os.makedirs("output")
 
@@ -116,9 +110,13 @@ with tab1:
             st.markdown(f"---\n#### Trang {i+1}")
             st.image(img, caption=f"Trang {i+1}", use_column_width=True)
             st.write("**Chọn vùng hình minh họa bằng chuột (nếu có):**")
-            cropped_array = st_cropper(img, box_color='#00FF00', aspect_ratio=None, return_type="numpy", key=f"cropper{i}")
-            cropped = Image.fromarray(cropped_array)
-            st.image(cropped, caption=f"Hình minh họa đã cắt (Trang {i+1})", use_column_width=True)
+            # -- Cropper trả về box, crop thủ công bằng Pillow
+            box = st_cropper(img, box_color='#00FF00', aspect_ratio=None, key=f"cropper{i}")
+            cropped = None
+            if box:
+                left, top, width, height = box["left"], box["top"], box["width"], box["height"]
+                cropped = img.crop((left, top, left + width, top + height))
+                st.image(cropped, caption=f"Hình minh họa đã cắt (Trang {i+1})", use_column_width=True)
             colbt1, colbt2 = st.columns(2)
             with colbt1:
                 if st.button(f"OCR văn bản + công thức (trang {i+1})", key=f"btnocr-{i}"):
@@ -128,7 +126,7 @@ with tab1:
                         st.success("Hoàn thành nhận diện!")
                         st.code(ocr_text, language="latex")
             with colbt2:
-                if st.button(f"Mô tả hình minh họa (trang {i+1})", key=f"btnimg-{i}"):
+                if cropped and st.button(f"Mô tả hình minh họa (trang {i+1})", key=f"btnimg-{i}"):
                     with st.spinner("Đang mô tả hình minh họa..."):
                         img_caption = gemini_image_to_text(cropped, latex=False)
                         img_results.append(cropped)
@@ -157,8 +155,12 @@ with tab2:
         img = Image.open(uploaded_img)
         st.image(img, caption="Ảnh đã chọn", use_column_width=True)
         st.write("Chọn vùng hình minh họa bằng chuột:")
-        cropped_img = st_cropper(img, box_color='#FF0000')
-        st.image(cropped_img, caption="Ảnh đã cắt", use_column_width=True)
+        box = st_cropper(img, box_color='#FF0000', aspect_ratio=None, key="imgcropper")
+        cropped_img = None
+        if box:
+            left, top, width, height = box["left"], box["top"], box["width"], box["height"]
+            cropped_img = img.crop((left, top, left + width, top + height))
+            st.image(cropped_img, caption="Ảnh đã cắt", use_column_width=True)
         col1, col2 = st.columns(2)
         with col1:
             if st.button("OCR nội dung ảnh"):
@@ -166,7 +168,7 @@ with tab2:
                     text = gemini_image_to_text(img, latex=True)
                     st.code(text, language="latex")
         with col2:
-            if st.button("Mô tả vùng hình minh họa"):
+            if cropped_img and st.button("Mô tả vùng hình minh họa"):
                 with st.spinner("Đang mô tả..."):
                     caption = gemini_image_to_text(cropped_img, latex=False)
                     st.write(f"**Caption:** {caption}")
