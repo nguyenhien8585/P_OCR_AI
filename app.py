@@ -11,7 +11,7 @@ DIAGRAM_DIR = "diagrams"
 OUTPUT_LATEX = "output.tex"
 OUTPUT_WORD = "output.docx"
 MODE = "latex"  # hoặc "word"
-API_KEY = "YOUR_AI_VN_API_KEY"
+API_KEY = "sk-j4DkzI7htsVqEZqC272d3b58B0Fb49A183573dD2Fc04F71d"
 
 # 1. Tách trang PDF
 os.makedirs(PAGE_DIR, exist_ok=True)
