@@ -1,6 +1,7 @@
 streamlit
+layoutparser[layoutmodels]
 Pillow
-requests
-python-docx
-streamlit-cropper
 pymupdf
+streamlit-cropper
+opencv-python
+torch
