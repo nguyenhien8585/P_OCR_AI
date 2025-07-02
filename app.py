@@ -1,22 +1,30 @@
 import streamlit as st
-from streamlit_cropper import st_cropper
 from PIL import Image
 import fitz
 import io
 import os
 import base64
 import requests
+import cv2
+from ultralytics import YOLO
 from docx import Document
+import numpy as np
 
-st.set_page_config(page_title="OCR & Crop & Export LaTeX/Word (GPT-4o)", layout="wide")
-st.title("📄 PDF/Ảnh ➔ Crop minh họa ➔ LaTeX/Word (ChatGPT-4o AI.VN)")
+st.set_page_config(page_title="PDF/Ảnh ➔ Auto-crop minh họa ➔ LaTeX/Word (YOLO + GPT-4o)", layout="wide")
+st.title("📄 Auto-crop minh họa, OCR và chuyển sang LaTeX/Word (YOLOv8 + GPT-4o AI.VN)")
 
 api_key = st.sidebar.text_input("AI.VN API Key (GPT-4o)", type="password")
 api_url = "https://api.sv2.llm.ai.vn/v1/chat/completions"
 
-def getPrompt(mode):
+# --- YOLOv8 model ---
+@st.cache_resource
+def load_yolo():
+    return YOLO("yolov8n.pt")
+yolo_model = load_yolo()
+
+def getPrompt(mode, n_img=0):
     if mode == "latex":
-        return """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
+        prompt = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
 QUY TẮC ĐỊNH DẠNG VĂN BẢN VÀ CÔNG THỨC:
 1. Với câu hỏi trắc nghiệm không lời giải (bắt đầu bằng 'Câu X:' hoặc 'Câu X.'): 
    - Thay 'Câu X:' bằng \\begin{ex}
@@ -33,10 +41,9 @@ QUY TẮC ĐỊNH DẠNG VĂN BẢN VÀ CÔNG THỨC:
 4. Với danh sách (a), b), c)...):
    - Bọc trong \\begin{enumerate} và \\end{enumerate}
    - Thay mỗi chữ cái bằng \\item
-5. Công thức toán học: Giữ nguyên định dạng LaTeX như $...$ hoặc $$...$$
-KHÔNG thêm giải thích hay bình luận gì thêm. Trả về văn bản đã được định dạng LaTeX."""
+5. Công thức toán học: Giữ nguyên định dạng LaTeX như $...$ hoặc $$...$$"""
     else:
-        return """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này.
+        prompt = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này.
 YÊU CẦU:
 1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh
 2. Giữ nguyên cấu trúc đoạn văn và xuống dòng
@@ -53,8 +60,12 @@ YÊU CẦU:
      C. Đáp án C
      D. Đáp án D
    - Đúng/Sai: a), b), c)...
-   - Tự luận: Câu X: ... (Lời giải...)
-KHÔNG giải thích. KHÔNG bịa thêm. Trả về văn bản gốc."""
+   - Tự luận: Câu X: ... (Lời giải...)"""
+    if n_img > 0:
+        img_str = ", ".join([f"img_{i+1}.png" for i in range(n_img)])
+        prompt += f"\nTrong văn bản, hãy CHÈN ký hiệu <<IMG_1>>, <<IMG_2>>, ... vào vị trí phù hợp với các hình minh họa ({img_str}) theo đúng nội dung/câu hỏi."
+    prompt += "\nKHÔNG thêm giải thích hay bình luận gì thêm. Chỉ trả về văn bản đã được định dạng."
+    return prompt
 
 def pdf_to_images(pdf_bytes):
     images = []
@@ -65,14 +76,25 @@ def pdf_to_images(pdf_bytes):
             images.append(img)
     return images
 
-def gpt4o_ocr_format(image, api_key, mode="latex"):
+def yolo_auto_crop(image: Image.Image, conf=0.35):
+    img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    results = yolo_model(img_cv, conf=conf)
+    crops = []
+    for i, box in enumerate(results[0].boxes.xyxy):
+        x1, y1, x2, y2 = map(int, box)
+        crop = img_cv[y1:y2, x1:x2]
+        pil_crop = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+        crops.append(pil_crop)
+    return crops
+
+def gpt4o_ocr_format(image, api_key, mode="latex", n_img=0):
     buffered = io.BytesIO()
     image.save(buffered, format="PNG")
     img_bytes = buffered.getvalue()
     img_b64 = base64.b64encode(img_bytes).decode()
-    prompt = getPrompt(mode)
+    prompt = getPrompt(mode, n_img=n_img)
     payload = {
-        "model": "openai:gpt-4o",
+        "model": "gpt-4o",
         "messages": [
             {
                 "role": "user",
@@ -102,19 +124,37 @@ def gpt4o_ocr_format(image, api_key, mode="latex"):
     except Exception as e:
         return f"[Lỗi gọi GPT-4o: {e}]"
 
-def save_word(doc_text, images, output_path="output_word.docx"):
+def insert_images_latex(latex_text, images):
+    for idx, _ in enumerate(images):
+        tag = f"<<IMG_{idx+1}>>"
+        fig_str = f"""
+\\begin{{figure}}[h]
+\\centering
+\\includegraphics[width=0.7\\linewidth]{{img_{idx+1}.png}}
+\\end{{figure}}
+"""
+        latex_text = latex_text.replace(tag, fig_str)
+    return latex_text
+
+def insert_images_word(doc_text, images, output_path="output_word.docx"):
     doc = Document()
-    doc.add_paragraph(doc_text)
-    for img in images:
-        img_stream = io.BytesIO()
-        img.save(img_stream, format="PNG")
-        img_stream.seek(0)
-        doc.add_picture(img_stream, width=docx.shared.Inches(4))
+    paragraphs = doc_text.split("\n")
+    img_idx = 0
+    for para in paragraphs:
+        # Tìm và thay <<IMG_n>> trong từng đoạn
+        while f"<<IMG_{img_idx+1}>>" in para and img_idx < len(images):
+            para = para.replace(f"<<IMG_{img_idx+1}>>", "")
+            img_stream = io.BytesIO()
+            images[img_idx].save(img_stream, format="PNG")
+            img_stream.seek(0)
+            doc.add_picture(img_stream, width=docx.shared.Inches(4))
+            img_idx += 1
+        doc.add_paragraph(para)
     doc.save(output_path)
 
 uploaded = st.file_uploader("Chọn file PDF hoặc ảnh", type=["pdf", "png", "jpg", "jpeg"])
 mode = st.radio("Chọn chế độ xuất", ["latex", "word"])
-st.info("Crop thủ công từng hình minh họa trong trang. OCR từng vùng bằng GPT-4o. Kết quả auto LaTeX hoặc Word.")
+st.info("PDF/Ảnh sẽ được tách trang, YOLO tự động cắt từng hình minh họa, GPT-4o OCR văn bản, tự động chèn ảnh đúng vị trí câu hỏi.")
 
 if uploaded and api_key:
     if uploaded.name.lower().endswith(".pdf"):
@@ -124,71 +164,41 @@ if uploaded and api_key:
         images = [Image.open(uploaded)]
         st.success("Đã tải lên 1 ảnh.")
 
-    all_results = []
-    all_cropped_imgs = []
+    all_ocr_results = []
+    all_auto_crops = []
 
     for idx, img in enumerate(images):
-        st.markdown(f"---\n## Trang {idx+1}")
+        st.markdown(f"---\n### Trang {idx+1}")
         st.image(img, caption=f"Trang {idx+1}", use_container_width=True)
 
-        st.write("**Crop từng hình minh họa bằng chuột (Crop xong nhấn 'OCR hình này') - Có thể crop nhiều lần trên 1 trang!**")
-        crop_img_list = []
-        crop_result_list = []
+        with st.spinner("YOLOv8 đang tự động nhận diện và crop các hình minh họa..."):
+            crops = yolo_auto_crop(img)
+        st.write(f"Đã tự động crop {len(crops)} hình minh họa trang {idx+1}")
+        for i, crop in enumerate(crops):
+            st.image(crop, caption=f"Minh họa {i+1} - Trang {idx+1}", use_container_width=True)
+        all_auto_crops += crops
 
-        # Hỗ trợ crop nhiều hình trên 1 trang (dùng số lần crop + list)
-        n_crop = st.number_input(f"Số vùng minh họa muốn crop ở trang {idx+1}", 1, 10, 1, 1)
-        for i in range(n_crop):
-            st.write(f"### Crop vùng minh họa {i+1} (Trang {idx+1})")
-            box = st_cropper(
-                img,
-                box_color='#FF0000',
-                aspect_ratio=None,
-                key=f"cropper_{idx}_{i}",
-                return_type='box'
-            )
-            cropped = img
-            if box:
-                if isinstance(box, dict):
-                    left = box.get("left", 0)
-                    top = box.get("top", 0)
-                    width = box.get("width", img.width)
-                    height = box.get("height", img.height)
-                elif isinstance(box, (tuple, list)):
-                    left, top, width, height = box
-                else:
-                    left, top, width, height = 0, 0, img.width, img.height
-                if width > 10 and height > 10:
-                    cropped = img.crop((left, top, left + width, top + height))
-                    st.image(cropped, caption=f"Minh họa {i+1} Trang {idx+1}", use_container_width=True)
-                    crop_img_list.append(cropped)
-                else:
-                    crop_img_list.append(None)
-            else:
-                crop_img_list.append(None)
+        if st.button(f"OCR toàn bộ trang {idx+1} bằng GPT-4o", key=f"ocr_{idx}"):
+            with st.spinner("GPT-4o AI.VN đang nhận diện nội dung..."):
+                result = gpt4o_ocr_format(img, api_key, mode=mode, n_img=len(crops))
+                st.code(result, language="latex" if mode == "latex" else "markdown")
+                all_ocr_results.append(result)
 
-            if crop_img_list[-1] is not None and st.button(f"OCR hình minh họa {i+1} (Trang {idx+1})", key=f"ocr_{idx}_{i}"):
-                with st.spinner("GPT-4o AI.VN đang OCR hình minh họa..."):
-                    result = gpt4o_ocr_format(crop_img_list[-1], api_key, mode)
-                    st.code(result, language="latex" if mode == "latex" else "markdown")
-                    crop_result_list.append(result)
-                    all_results.append(result)
-                    all_cropped_imgs.append(crop_img_list[-1])
-
-    # Xuất file cuối cùng (toàn bộ kết quả ghép lại)
-    if all_results and st.button(f"Tải về {'LaTeX' if mode=='latex' else 'Word'} hoàn chỉnh"):
-        full_text = "\n\n".join(all_results)
+    # Ghép file cuối cùng, chèn ảnh đúng vị trí
+    if all_ocr_results and st.button(f"Tải về {'LaTeX' if mode=='latex' else 'Word'} hoàn chỉnh"):
+        full_text = "\n\n".join(all_ocr_results)
         if mode == "word":
-            save_word(full_text, all_cropped_imgs, "output_word.docx")
+            insert_images_word(full_text, all_auto_crops, "output_word.docx")
             with open("output_word.docx", "rb") as f:
                 st.download_button("Tải file Word", f, "output_word.docx")
         else:
-            latex_file = "output_latex.tex"
-            with open(latex_file, "w", encoding="utf-8") as f:
-                f.write(full_text)
-            with open(latex_file, "rb") as f:
-                st.download_button("Tải file LaTeX", f, latex_file)
+            latex_full = insert_images_latex(full_text, all_auto_crops)
+            with open("output_latex.tex", "w", encoding="utf-8") as f:
+                f.write(latex_full)
+            with open("output_latex.tex", "rb") as f:
+                st.download_button("Tải file LaTeX", f, "output_latex.tex")
         # Tải từng hình minh họa đã crop
-        for i, img in enumerate(all_cropped_imgs):
+        for i, img in enumerate(all_auto_crops):
             img_path = f"img_{i+1}.png"
             img.save(img_path)
             with open(img_path, "rb") as f:
