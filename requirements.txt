@@ -4,4 +4,3 @@ Pillow
 requests
 python-docx
 streamlit-cropper
-pytesseract
