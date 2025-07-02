@@ -1,8 +1,3 @@
-import requests
-import base64
-import io
-from PIL import Image
-
 def get_prompt(mode):
     if mode == "latex":
         return "Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX. KHÔNG giải thích. KHÔNG bịa thêm. Trả về văn bản LaTeX."
@@ -10,6 +5,8 @@ def get_prompt(mode):
         return "Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này. KHÔNG giải thích. KHÔNG bịa thêm. Trả về văn bản gốc."
 
 def ask_gpt_vision(image, mode, api_key):
+    import base64, io, requests
+    from PIL import Image
     buffered = io.BytesIO()
     image.save(buffered, format="PNG")
     img_b64 = base64.b64encode(buffered.getvalue()).decode()
@@ -18,9 +15,9 @@ def ask_gpt_vision(image, mode, api_key):
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
     payload = {
-        "model": "gpt-4o",
+        "model": "openai:gpt-4o",
         "messages": [
-            {"role": "system", "content": "Bạn là AI chuyên chuyển ảnh sang văn bản học thuật."},
+            {"role": "system", "content": "Bạn là AI chuyên OCR học thuật."},
             {"role": "user", "content": [
                 {"type": "text", "text": get_prompt(mode)},
                 {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}}
