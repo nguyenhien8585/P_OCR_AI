@@ -1,6 +1,5 @@
-from docx import Document
-
 def build_docx(text, output_path):
+    from docx import Document
     doc = Document()
     for line in text.splitlines():
         if line.strip():
@@ -17,4 +16,3 @@ def build_latex(content, output_path):
         f.write(preamble)
         f.write(content)
         f.write("\n\\end{document}")
-
