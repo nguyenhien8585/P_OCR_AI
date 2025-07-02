@@ -5,17 +5,18 @@ import io
 import os
 import requests
 import base64
+import docx
 from docx import Document
 from google.cloud import vision
 
-# Set your Google Vision service account JSON path
+# =========== GOOGLE VISION KEY ===========
+# Đảm bảo file JSON này là key mới nhất, đã được cấp quyền Éditeur hoặc Owner, đúng Project đã enable Vision AI API
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gen-lang-client-0798870399-c606ceff4a2a.json"
 
+# =========== STREAMLIT UI ===========
 st.set_page_config(layout="wide", page_title="PDF/Ảnh → LaTeX/Word + Auto crop minh họa (GPT-4o + GG Vision)")
-
 st.title("📄 PDF/Ảnh ➔ LaTeX/Word (ChatGPT-4o) + Auto-crop minh họa (Google Vision)")
 
-# GPT-4o endpoint AI.VN
 api_url = "https://api.sv2.llm.ai.vn/v1/chat/completions"
 api_key = st.sidebar.text_input("AI.VN GPT-4o API Key", type="password")
 
@@ -68,18 +69,22 @@ def gpt4o_ocr_format(image, api_key, mode="latex"):
         return f"[Lỗi gọi GPT-4o: {e}]"
 
 def vision_auto_crop(image_pil, page_idx=1, out_dir="vision_crops"):
-    client = vision.ImageAnnotatorClient()
-    buffered = io.BytesIO()
-    image_pil.save(buffered, format="PNG")
-    content = buffered.getvalue()
-    image = vision.Image(content=content)
-    response = client.document_text_detection(image=image)
+    try:
+        client = vision.ImageAnnotatorClient()
+        buffered = io.BytesIO()
+        image_pil.save(buffered, format="PNG")
+        content = buffered.getvalue()
+        image = vision.Image(content=content)
+        response = client.document_text_detection(image=image)
+    except Exception as e:
+        st.error(f"[Lỗi Vision API: {e}] (Kiểm tra quyền Service Account và Billing)")
+        return []
     os.makedirs(out_dir, exist_ok=True)
     crops = []
-    # Vision API trả về các block, lọc lấy hình minh họa
     try:
         for page in response.full_text_annotation.pages:
             for block in page.blocks:
+                # block_type = 3 là hình ảnh (PICTURE)
                 if block.block_type == vision.Document.Page.Block.BlockType.PICTURE:
                     box = block.bounding_box.vertices
                     x1 = min(v.x for v in box)
@@ -141,7 +146,6 @@ if uploaded and api_key:
                 st.download_button("Tải file Word", f, "output_word.docx")
         else:
             latex_file = "output_latex.tex"
-            # Chèn hình minh họa vào cuối mỗi trang
             with open(latex_file, "w", encoding="utf-8") as f:
                 for idx, txt in enumerate(ocr_results):
                     f.write(txt + "\n\n")
