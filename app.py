@@ -9,7 +9,7 @@ from docx import Document
 from google.cloud import vision
 
 # Set your Google Vision service account JSON path
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "YOUR_GG_JSON_KEY.json"
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gen-lang-client-0798870399-03afc399d966.json"
 
 st.set_page_config(layout="wide", page_title="PDF/Ảnh → LaTeX/Word + Auto crop minh họa (GPT-4o + GG Vision)")
 
