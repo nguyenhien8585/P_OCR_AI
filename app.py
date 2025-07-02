@@ -2,12 +2,9 @@ import streamlit as st
 from PIL import Image
 import io
 import base64
-import openai
+import requests
 
-# Đặt API key GPT-4o (nếu dùng OpenAI chính thống)
-openai.api_key = "sk-j4DkzI7htsVqEZqC272d3b58B0Fb49A183573dD2Fc04F71d"  # hoặc dùng api của AI.VN nếu có SDK riêng
-
-# Prompt chế độ LaTeX hoặc văn bản gốc
+# Prompt sinh theo chế độ
 def getPrompt(mode):
     if mode == "latex":
         return """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
@@ -63,42 +60,66 @@ YÊU CẦU:
 
 KHÔNG giải thích. KHÔNG bịa thêm. Trả về văn bản gốc."""
 
-# Hàm gửi ảnh đến GPT-4o
-def image_to_text(image: Image.Image, mode: str):
+# Gọi API AI.VN
+def call_ai_vn_api(image: Image.Image, prompt: str, api_key: str):
+    # Chuyển ảnh thành base64
     buffered = io.BytesIO()
     image.save(buffered, format="PNG")
-    b64_image = base64.b64encode(buffered.getvalue()).decode()
+    img_base64 = base64.b64encode(buffered.getvalue()).decode()
 
-    prompt = getPrompt(mode)
+    url = "https://api.sv2.llm.ai.vn/v1/chat/completions"
 
-    response = openai.ChatCompletion.create(
-        model="gpt-4o",
-        messages=[
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "model": "openai:gpt-4o",
+        "messages": [
             {"role": "system", "content": "Bạn là công cụ OCR thông minh chuyên chuyển ảnh thành văn bản hoặc LaTeX."},
-            {"role": "user", "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_image}"}}
-            ]}
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}}
+                ]
+            }
         ],
-        temperature=0.1
-    )
-    return response.choices[0].message.content
+        "temperature": 0.2,
+        "max_tokens": 4096
+    }
 
-# Giao diện Streamlit
-st.title("📄 Chuyển ảnh/PDF sang LaTeX hoặc Word bằng GPT-4o")
+    response = requests.post(url, headers=headers, json=data)
 
-mode = st.selectbox("Chọn chế độ xuất", ["latex", "word"], format_func=lambda x: "LaTeX" if x == "latex" else "Văn bản gốc (Word)")
+    if response.status_code == 200:
+        return response.json()["choices"][0]["message"]["content"]
+    else:
+        raise Exception(f"Lỗi API: {response.status_code} - {response.text}")
 
-uploaded_image = st.file_uploader("Tải ảnh hoặc PDF đã chuyển sang ảnh", type=["png", "jpg", "jpeg"])
+# === Streamlit App ===
+st.set_page_config(page_title="PDF to LaTeX/Word", layout="centered")
+st.title("📄 Chuyển ảnh đề sang LaTeX / Word bằng GPT-4o AI.VN")
 
-if uploaded_image:
+# Nhập API key
+api_key = st.text_input("🔐 Nhập API Key từ AI.VN:", type="password")
+
+# Chọn chế độ xử lý
+mode = st.radio("🎯 Chế độ chuyển đổi:", ["latex", "word"], format_func=lambda m: "LaTeX (soạn đề)" if m == "latex" else "Word (giữ nguyên gốc)")
+
+# Tải ảnh
+uploaded_image = st.file_uploader("🖼️ Tải ảnh PNG/JPG/JPEG", type=["png", "jpg", "jpeg"])
+
+if uploaded_image and api_key:
     image = Image.open(uploaded_image)
     st.image(image, caption="Ảnh đã tải lên", use_column_width=True)
 
-    if st.button("🔄 Chuyển đổi"):
-        with st.spinner("Đang xử lý bằng GPT-4o..."):
-            result = image_to_text(image, mode)
-            st.success("✅ Hoàn tất!")
-            st.code(result, language="latex" if mode == "latex" else "text")
-
-            st.download_button("📥 Tải kết quả", data=result, file_name=f"output.{ 'tex' if mode == 'latex' else 'txt'}", mime="text/plain")
+    if st.button("🚀 Bắt đầu chuyển đổi"):
+        with st.spinner("⏳ Đang xử lý bằng GPT-4o từ AI.VN..."):
+            try:
+                result = call_ai_vn_api(image, getPrompt(mode), api_key)
+                st.success("✅ Hoàn tất!")
+                st.code(result, language="latex" if mode == "latex" else "text")
+                st.download_button("📥 Tải kết quả", result, file_name=f"output.{ 'tex' if mode == 'latex' else 'txt'}", mime="text/plain")
+            except Exception as e:
+                st.error(f"❌ Đã xảy ra lỗi: {e}")
