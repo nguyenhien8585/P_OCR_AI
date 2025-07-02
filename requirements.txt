@@ -1,6 +1,5 @@
 streamlit
-pymupdf
+paddleocr
 Pillow
 requests
-python-docx
 streamlit-cropper
