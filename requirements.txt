@@ -1,7 +1,7 @@
 streamlit
 pymupdf
 Pillow
-ultralytics
-opencv-python-headless
+layoutparser
 python-docx
 requests
+opencv-python-headless
