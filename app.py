@@ -1,39 +1,41 @@
 import os
-from pdf2image import convert_from_path
-from utils.extract_images import extract_diagrams
+import io
+import tempfile
+import streamlit as st
+from pdf2image import convert_from_bytes
 from utils.gpt_vision import ask_gpt_vision
 from utils.doc_writer import build_docx, build_latex
 
-# Cấu hình
-PDF_PATH = "input.pdf"
-PAGE_DIR = "pages"
-DIAGRAM_DIR = "diagrams"
-OUTPUT_LATEX = "output.tex"
-OUTPUT_WORD = "output.docx"
-MODE = "latex"  # hoặc "word"
-API_KEY = "sk-j4DkzI7htsVqEZqC272d3b58B0Fb49A183573dD2Fc04F71d"
+st.set_page_config(page_title="PDF to LaTeX/Word", layout="centered")
+st.title("📄 Chuyển PDF sang LaTeX hoặc Word bằng GPT-4o")
 
-# 1. Tách trang PDF
-os.makedirs(PAGE_DIR, exist_ok=True)
-pages = convert_from_path(PDF_PATH, dpi=300)
-for i, page in enumerate(pages):
-    img_path = f"{PAGE_DIR}/page_{i+1}.png"
-    page.save(img_path)
+api_key = st.text_input("🔐 Nhập API Key từ AI.VN:", type="password")
 
-# 2. Gửi từng trang đến GPT-4o để sinh nội dung
-full_text = ""
-for i, page in enumerate(pages):
-    img_path = f"{PAGE_DIR}/page_{i+1}.png"
-    content = ask_gpt_vision(img_path, MODE, API_KEY)
-    full_text += content + "\n"
+mode = st.selectbox("🎯 Chế độ chuyển đổi:", ["latex", "word"], format_func=lambda m: "LaTeX (soạn đề)" if m == "latex" else "Word (giữ nguyên văn bản)")
 
-# 3. Tách ảnh minh họa
-os.makedirs(DIAGRAM_DIR, exist_ok=True)
-for i in range(len(pages)):
-    extract_diagrams(f"{PAGE_DIR}/page_{i+1}.png", f"{DIAGRAM_DIR}/image_page{i+1}")
+uploaded_file = st.file_uploader("📎 Tải lên file PDF", type=["pdf"])
 
-# 4. Tạo file Word hoặc LaTeX
-if MODE == "word":
-    build_docx(full_text, DIAGRAM_DIR, OUTPUT_WORD)
-else:
-    build_latex(full_text, OUTPUT_LATEX)
+if uploaded_file and api_key:
+    with st.spinner("🔍 Đang chuyển đổi PDF sang ảnh..."):
+        images = convert_from_bytes(uploaded_file.read(), dpi=300)
+
+    st.success(f"✅ Đã tách {len(images)} trang từ PDF.")
+
+    output_text = ""
+    for i, img in enumerate(images):
+        st.image(img, caption=f"Trang {i+1}", use_column_width=True)
+        st.info(f"⏳ Đang xử lý trang {i+1}...")
+        result = ask_gpt_vision(img, mode, api_key)
+        output_text += result + "\n"
+
+    st.success("✅ Xử lý hoàn tất!")
+
+    if mode == "latex":
+        st.code(output_text, language="latex")
+        st.download_button("📥 Tải LaTeX", data=output_text, file_name="output.tex", mime="text/plain")
+    else:
+        # Xuất ra file Word
+        docx_path = tempfile.NamedTemporaryFile(delete=False, suffix=".docx").name
+        build_docx(output_text, docx_path)
+        with open(docx_path, "rb") as f:
+            st.download_button("📥 Tải Word", data=f, file_name="output.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
