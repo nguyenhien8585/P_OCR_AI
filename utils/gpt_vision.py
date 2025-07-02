@@ -1,8 +1,8 @@
 def get_prompt(mode):
     if mode == "latex":
-        return "Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX. KHÔNG giải thích. KHÔNG bịa thêm. Trả về văn bản LaTeX."
+        return "Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX. Nếu có hình minh hoạ, đánh dấu tại vị trí bằng dạng: <<image_pageX_Y.png>>. KHÔNG giải thích. KHÔNG bịa thêm."
     else:
-        return "Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này. KHÔNG giải thích. KHÔNG bịa thêm. Trả về văn bản gốc."
+        return "Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này. Nếu có hình minh hoạ, đánh dấu tại vị trí bằng dạng: <<image_pageX_Y.png>>. KHÔNG giải thích. KHÔNG bịa thêm."
 
 def ask_gpt_vision(image, mode, api_key):
     import base64, io, requests
