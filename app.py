@@ -7,12 +7,13 @@ import os
 import base64
 import requests
 from docx import Document
+import pytesseract
 
 # =============== CONFIG ===============
-API_GEMINI_ENDPOINT = "https://api.sv2.llm.ai.vn/v1/chat/completions"
 API_GPT4O_ENDPOINT = "https://api.sv2.llm.ai.vn/v1/chat/completions"
-st.set_page_config(page_title="Auto-crop minh họa (Gemini) + OCR GPT-4o", layout="wide")
-st.title("📄 Auto-crop minh họa (Gemini), OCR và chuyển sang LaTeX/Word (GPT-4o AI.VN)")
+API_GEMINI_ENDPOINT = "https://api.sv2.llm.ai.vn/v1/chat/completions"
+st.set_page_config(page_title="OCR đề toán AI", layout="wide")
+st.title("📄 OCR tài liệu toán, auto crop minh họa, chuyển Word/LaTeX")
 
 api_key = st.sidebar.text_input("AI.VN API Key", type="password")
 
@@ -45,7 +46,6 @@ def gemini_detect_boxes(image, api_key):
         resp = requests.post(API_GEMINI_ENDPOINT, headers=headers, json=payload, timeout=120)
         data = resp.json()
         st.write("DEBUG Gemini:", data)
-        # Lấy nội dung trả về (có thể là text chứa array hoặc [])
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         import re
         boxes = re.findall(r'\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]', content)
@@ -67,30 +67,26 @@ def pdf_to_images(pdf_bytes):
             images.append(img)
     return images
 
-# ====== GPT-4o OCR ======
-def getPrompt(mode, n_img=0):
-    prompt = "Hãy chuyển toàn bộ nội dung ảnh này sang định dạng " + ("LaTeX" if mode == "latex" else "Word") + "."
-    if n_img > 0:
-        prompt += f"\nHãy chèn ký hiệu <<IMG_1>>, <<IMG_2>>... vào vị trí phù hợp với các hình minh họa img_1.png, img_2.png,..."
-    prompt += "\nKHÔNG giải thích gì thêm."
-    return prompt
+# ====== Tesseract OCR cho text ======
+def tesseract_ocr(image):
+    # Có thể thêm config lang='vie' nếu OCR tiếng Việt tốt hơn
+    return pytesseract.image_to_string(image, lang="eng+vie")
 
-def gpt4o_ocr_format(image, api_key, mode="latex", n_img=0):
-    buffered = io.BytesIO()
-    image.save(buffered, format="PNG")
-    img_bytes = buffered.getvalue()
-    img_b64 = base64.b64encode(img_bytes).decode()
-    prompt = getPrompt(mode, n_img=n_img)
+# ====== GPT-4o chuyển đổi LaTeX/Word ======
+def gpt4o_format(text, api_key, mode="latex"):
+    if not text.strip():
+        return ""
+    prompt = (
+        "Chuyển đoạn văn dưới đây sang định dạng "
+        + ("LaTeX." if mode == "latex" else "Word. Đảm bảo định dạng bảng, công thức nếu có.")
+        + "\nĐoạn văn:\n"
+        + text
+        + "\nKHÔNG giải thích gì thêm."
+    )
     payload = {
         "model": "openai:gpt-4o",
         "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}}
-                ]
-            }
+            {"role": "user", "content": prompt}
         ],
         "max_tokens": 2048,
         "temperature": 0.0
@@ -141,9 +137,9 @@ def insert_images_word(doc_text, images, output_path="output_word.docx"):
 
 uploaded = st.file_uploader("Chọn file PDF hoặc ảnh", type=["pdf", "png", "jpg", "jpeg"])
 mode = st.radio("Chọn chế độ xuất", ["latex", "word"])
-st.info("Ảnh sẽ được Gemini tự động detect/crop minh họa. Nếu thất bại, bạn crop tay bằng chuột.")
+st.info("OCR text bằng Tesseract (không bị GPT-4o chặn), tự động crop minh họa bằng Gemini (nếu có), chuyển LaTeX/Word bằng GPT-4o.")
 
-if uploaded and api_key:
+if uploaded:
     if uploaded.name.lower().endswith(".pdf"):
         images = pdf_to_images(uploaded.read())
         st.success(f"Đã tách {len(images)} trang từ PDF.")
@@ -151,7 +147,8 @@ if uploaded and api_key:
         images = [Image.open(uploaded)]
         st.success("Đã tải lên 1 ảnh.")
 
-    all_ocr_results = []
+    all_texts = []
+    all_formats = []
     all_crops = []
 
     for idx, img in enumerate(images):
@@ -159,8 +156,10 @@ if uploaded and api_key:
         st.image(img, caption=f"Trang {idx+1}", use_container_width=True)
 
         # ----- AUTO CROP bằng Gemini -----
-        with st.spinner("Gemini đang tự động nhận diện vùng hình minh họa..."):
-            boxes = gemini_detect_boxes(img, api_key)
+        boxes = []
+        if api_key:
+            with st.spinner("Gemini đang tự động nhận diện vùng hình minh họa..."):
+                boxes = gemini_detect_boxes(img, api_key)
         crops_this_page = []
         if boxes:
             st.write(f"Gemini detect {len(boxes)} vùng minh họa:")
@@ -185,14 +184,21 @@ if uploaded and api_key:
                         crops_this_page.append(crop)
         all_crops += crops_this_page
 
-        if st.button(f"OCR toàn bộ trang {idx+1} bằng GPT-4o", key=f"ocr_{idx}"):
-            with st.spinner("GPT-4o AI.VN đang nhận diện nội dung..."):
-                result = gpt4o_ocr_format(img, api_key, mode=mode, n_img=len(crops_this_page))
-                st.code(result, language="latex" if mode == "latex" else "markdown")
-                all_ocr_results.append(result)
+        if st.button(f"OCR toàn bộ trang {idx+1} (Tesseract) & chuyển LaTeX/Word", key=f"ocr_{idx}"):
+            with st.spinner("Đang nhận diện nội dung..."):
+                ocr_text = tesseract_ocr(img)
+                st.code(ocr_text, language="markdown")
+                all_texts.append(ocr_text)
+                if api_key:
+                    with st.spinner("GPT-4o AI.VN đang chuyển định dạng..."):
+                        formatted = gpt4o_format(ocr_text, api_key, mode=mode)
+                        st.code(formatted, language="latex" if mode == "latex" else "markdown")
+                        all_formats.append(formatted)
+                else:
+                    st.warning("Bạn cần nhập API Key AI.VN để chuyển định dạng.")
 
-    if all_ocr_results and st.button(f"Tải về {'LaTeX' if mode=='latex' else 'Word'} hoàn chỉnh"):
-        full_text = "\n\n".join(all_ocr_results)
+    if all_formats and st.button(f"Tải về {'LaTeX' if mode=='latex' else 'Word'} hoàn chỉnh"):
+        full_text = "\n\n".join(all_formats)
         if mode == "word":
             insert_images_word(full_text, all_crops, "output_word.docx")
             with open("output_word.docx", "rb") as f:
