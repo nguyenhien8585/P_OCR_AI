@@ -5,22 +5,26 @@ import io
 import os
 import base64
 import requests
+import layoutparser as lp
 import cv2
-from ultralytics import YOLO
 from docx import Document
 import numpy as np
 
-st.set_page_config(page_title="PDF/Ảnh ➔ Auto-crop minh họa ➔ LaTeX/Word (YOLO + GPT-4o)", layout="wide")
-st.title("📄 Auto-crop minh họa, OCR và chuyển sang LaTeX/Word (YOLOv8 + GPT-4o AI.VN)")
+st.set_page_config(page_title="PDF/Ảnh ➔ Auto-crop minh họa ➔ LaTeX/Word (LayoutParser + GPT-4o)", layout="wide")
+st.title("📄 Auto-crop minh họa, OCR và chuyển sang LaTeX/Word (PubLayNet + GPT-4o AI.VN)")
 
 api_key = st.sidebar.text_input("AI.VN API Key (GPT-4o)", type="password")
 api_url = "https://api.sv2.llm.ai.vn/v1/chat/completions"
 
-# --- YOLOv8 model ---
+# --- PubLayNet LayoutParser model ---
 @st.cache_resource
-def load_yolo():
-    return YOLO("yolov8n.pt")
-yolo_model = load_yolo()
+def load_layout_model():
+    return lp.Detectron2LayoutModel(
+        'lp://PubLayNet/faster_rcnn_R_50_FPN_3x/config',
+        extra_config=["MODEL.ROI_HEADS.SCORE_THRESH_TEST", 0.7],
+        label_map={0: "Text", 1: "Title", 2: "List", 3: "Table", 4: "Figure"}
+    )
+layout_model = load_layout_model()
 
 def getPrompt(mode, n_img=0):
     if mode == "latex":
@@ -76,15 +80,18 @@ def pdf_to_images(pdf_bytes):
             images.append(img)
     return images
 
-def yolo_auto_crop(image: Image.Image, conf=0.35):
+def layout_auto_crop(image: Image.Image, min_area=2000):
+    # Detect "Figure" blocks
     img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-    results = yolo_model(img_cv, conf=conf)
+    layout = layout_model.detect(img_cv)
     crops = []
-    for i, box in enumerate(results[0].boxes.xyxy):
-        x1, y1, x2, y2 = map(int, box)
-        crop = img_cv[y1:y2, x1:x2]
-        pil_crop = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
-        crops.append(pil_crop)
+    for i, block in enumerate(layout):
+        if block.type == "Figure":
+            x1, y1, x2, y2 = map(int, block.coordinates)
+            if (x2-x1)*(y2-y1) > min_area:
+                crop = img_cv[y1:y2, x1:x2]
+                pil_crop = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+                crops.append(pil_crop)
     return crops
 
 def gpt4o_ocr_format(image, api_key, mode="latex", n_img=0):
@@ -94,7 +101,7 @@ def gpt4o_ocr_format(image, api_key, mode="latex", n_img=0):
     img_b64 = base64.b64encode(img_bytes).decode()
     prompt = getPrompt(mode, n_img=n_img)
     payload = {
-        "model": "gpt-4o",
+        "model": "openai:gpt-4o",
         "messages": [
             {
                 "role": "user",
@@ -154,7 +161,7 @@ def insert_images_word(doc_text, images, output_path="output_word.docx"):
 
 uploaded = st.file_uploader("Chọn file PDF hoặc ảnh", type=["pdf", "png", "jpg", "jpeg"])
 mode = st.radio("Chọn chế độ xuất", ["latex", "word"])
-st.info("PDF/Ảnh sẽ được tách trang, YOLO tự động cắt từng hình minh họa, GPT-4o OCR văn bản, tự động chèn ảnh đúng vị trí câu hỏi.")
+st.info("PDF/Ảnh sẽ được tách trang, PubLayNet tự động cắt từng hình minh họa, GPT-4o OCR văn bản, tự động chèn ảnh đúng vị trí câu hỏi.")
 
 if uploaded and api_key:
     if uploaded.name.lower().endswith(".pdf"):
@@ -171,8 +178,8 @@ if uploaded and api_key:
         st.markdown(f"---\n### Trang {idx+1}")
         st.image(img, caption=f"Trang {idx+1}", use_container_width=True)
 
-        with st.spinner("YOLOv8 đang tự động nhận diện và crop các hình minh họa..."):
-            crops = yolo_auto_crop(img)
+        with st.spinner("LayoutParser (PubLayNet) đang tự động nhận diện và crop các hình minh họa..."):
+            crops = layout_auto_crop(img)
         st.write(f"Đã tự động crop {len(crops)} hình minh họa trang {idx+1}")
         for i, crop in enumerate(crops):
             st.image(crop, caption=f"Minh họa {i+1} - Trang {idx+1}", use_container_width=True)
