@@ -1,6 +1,5 @@
-PyMuPDF>=1.23.1,<1.26.0
 streamlit>=1.30.0
 requests>=2.31.0
 Pillow>=10.2.0
 python-docx>=1.1.0
-opencv-python-headless==4.9.0.80
+PyMuPDF==1.23.17
