@@ -1,6 +1,7 @@
 streamlit
-streamlit-cropper
 pymupdf
-python-docx
 Pillow
+ultralytics
+opencv-python
+python-docx
 requests
