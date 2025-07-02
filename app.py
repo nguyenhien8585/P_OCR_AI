@@ -3,59 +3,64 @@ from streamlit_cropper import st_cropper
 from PIL import Image
 import fitz
 import io
-import os
 import base64
 import requests
 from docx import Document
-import pytesseract
 
 # =============== CONFIG ===============
+GEMINI_FLASH_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 API_GPT4O_ENDPOINT = "https://api.sv2.llm.ai.vn/v1/chat/completions"
-API_GEMINI_ENDPOINT = "https://api.sv2.llm.ai.vn/v1/chat/completions"
-st.set_page_config(page_title="OCR đề toán AI", layout="wide")
-st.title("📄 OCR tài liệu toán, auto crop minh họa, chuyển Word/LaTeX")
+st.set_page_config(page_title="Auto-crop minh họa (Gemini Flash) + OCR GPT-4o", layout="wide")
+st.title("📄 Auto-crop minh họa (Gemini Flash), OCR và chuyển sang LaTeX/Word (GPT-4o AI.VN)")
 
-api_key = st.sidebar.text_input("AI.VN API Key", type="password")
+g_api_key = st.sidebar.text_input("Google Gemini Flash API Key", type="password")
+api_key = st.sidebar.text_input("AI.VN API Key (GPT-4o)", type="password")
 
-# ===== GEMINI detect box minh họa =====
-def gemini_detect_boxes(image, api_key):
+# ===== GEMINI FLASH detect box minh họa & OCR =====
+def gemini_flash(image, g_api_key, ocr_only=False):
     buffered = io.BytesIO()
     image.save(buffered, format="PNG")
     img_bytes = buffered.getvalue()
     img_b64 = base64.b64encode(img_bytes).decode()
-    prompt = (
-        "Detect all illustration/figure/image regions in this image. "
-        "Return for each region an array [left, top, width, height] (pixel, integer). "
-        "If no region, return []. No explanation."
-    )
-    payload = {
-        "model": "gemini-2.5-pro-preview-06-05",
-        "messages": [
+
+    if ocr_only:
+        prompt = "Nhận diện TẤT CẢ văn bản và công thức Toán trong ảnh. Gõ lại CHÍNH XÁC toàn bộ nội dung (ưu tiên định dạng LaTeX nếu là công thức), không giải thích gì thêm."
+    else:
+        prompt = (
+            "Detect all illustration/figure/image regions in this image. "
+            "Return for each region an array [left, top, width, height] (pixel, integer). "
+            "If no region, return []. No explanation."
+        )
+    body = {
+        "contents": [
             {
-                "role": "user",
-                "content": prompt,
-                "images": [img_b64]
+                "parts": [
+                    {"text": prompt},
+                    {
+                        "inline_data": {
+                            "mime_type": "image/png",
+                            "data": img_b64,
+                        }
+                    }
+                ]
             }
         ]
     }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Content-Type": "application/json"}
+    url = f"{GEMINI_FLASH_ENDPOINT}?key={g_api_key}"
     try:
-        resp = requests.post(API_GEMINI_ENDPOINT, headers=headers, json=payload, timeout=120)
+        resp = requests.post(url, headers=headers, json=body, timeout=120)
         data = resp.json()
-        st.write("DEBUG Gemini:", data)
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        import re
-        boxes = re.findall(r'\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]', content)
-        result = []
-        for b in boxes:
-            result.append(tuple(map(int, b)))
-        return result
+        st.write("DEBUG Gemini Flash:", data)
+        text = (
+            data.get("candidates", [{}])[0]
+            .get("content", {})
+            .get("parts", [{}])[0]
+            .get("text", "")
+        )
+        return text
     except Exception as e:
-        st.warning(f"[Lỗi Gemini: {e}]")
-        return []
+        return f"[Lỗi Gemini Flash: {e}]"
 
 # ===== PDF sang ảnh =====
 def pdf_to_images(pdf_bytes):
@@ -66,11 +71,6 @@ def pdf_to_images(pdf_bytes):
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             images.append(img)
     return images
-
-# ====== Tesseract OCR cho text ======
-def tesseract_ocr(image):
-    # Có thể thêm config lang='vie' nếu OCR tiếng Việt tốt hơn
-    return pytesseract.image_to_string(image, lang="eng+vie")
 
 # ====== GPT-4o chuyển đổi LaTeX/Word ======
 def gpt4o_format(text, api_key, mode="latex"):
@@ -137,9 +137,9 @@ def insert_images_word(doc_text, images, output_path="output_word.docx"):
 
 uploaded = st.file_uploader("Chọn file PDF hoặc ảnh", type=["pdf", "png", "jpg", "jpeg"])
 mode = st.radio("Chọn chế độ xuất", ["latex", "word"])
-st.info("OCR text bằng Tesseract (không bị GPT-4o chặn), tự động crop minh họa bằng Gemini (nếu có), chuyển LaTeX/Word bằng GPT-4o.")
+st.info("Ảnh sẽ được Gemini Flash tự động detect/crop minh họa. Nếu thất bại, bạn crop tay bằng chuột. Text OCR bởi Gemini Flash, chuyển định dạng bằng GPT-4o (AI.VN).")
 
-if uploaded:
+if uploaded and (g_api_key or api_key):
     if uploaded.name.lower().endswith(".pdf"):
         images = pdf_to_images(uploaded.read())
         st.success(f"Đã tách {len(images)} trang từ PDF.")
@@ -147,7 +147,6 @@ if uploaded:
         images = [Image.open(uploaded)]
         st.success("Đã tải lên 1 ảnh.")
 
-    all_texts = []
     all_formats = []
     all_crops = []
 
@@ -155,11 +154,14 @@ if uploaded:
         st.markdown(f"---\n### Trang {idx+1}")
         st.image(img, caption=f"Trang {idx+1}", use_container_width=True)
 
-        # ----- AUTO CROP bằng Gemini -----
+        # ----- AUTO CROP bằng Gemini Flash -----
         boxes = []
-        if api_key:
-            with st.spinner("Gemini đang tự động nhận diện vùng hình minh họa..."):
-                boxes = gemini_detect_boxes(img, api_key)
+        if g_api_key:
+            with st.spinner("Gemini Flash đang tự động nhận diện vùng hình minh họa..."):
+                text_boxes = gemini_flash(img, g_api_key, ocr_only=False)
+            import re
+            boxes = re.findall(r'\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]', text_boxes)
+            boxes = [tuple(map(int, b)) for b in boxes]
         crops_this_page = []
         if boxes:
             st.write(f"Gemini detect {len(boxes)} vùng minh họa:")
@@ -184,18 +186,18 @@ if uploaded:
                         crops_this_page.append(crop)
         all_crops += crops_this_page
 
-        if st.button(f"OCR toàn bộ trang {idx+1} (Tesseract) & chuyển LaTeX/Word", key=f"ocr_{idx}"):
-            with st.spinner("Đang nhận diện nội dung..."):
-                ocr_text = tesseract_ocr(img)
-                st.code(ocr_text, language="markdown")
-                all_texts.append(ocr_text)
-                if api_key:
-                    with st.spinner("GPT-4o AI.VN đang chuyển định dạng..."):
-                        formatted = gpt4o_format(ocr_text, api_key, mode=mode)
-                        st.code(formatted, language="latex" if mode == "latex" else "markdown")
-                        all_formats.append(formatted)
-                else:
-                    st.warning("Bạn cần nhập API Key AI.VN để chuyển định dạng.")
+        if st.button(f"OCR toàn bộ trang {idx+1} bằng Gemini Flash & chuyển LaTeX/Word", key=f"ocr_{idx}"):
+            ocr_text = ""
+            with st.spinner("Gemini Flash đang nhận diện nội dung..."):
+                ocr_text = gemini_flash(img, g_api_key, ocr_only=True)
+                st.code(ocr_text, language="latex")
+            if api_key:
+                with st.spinner("GPT-4o AI.VN đang chuyển định dạng..."):
+                    formatted = gpt4o_format(ocr_text, api_key, mode=mode)
+                    st.code(formatted, language="latex" if mode == "latex" else "markdown")
+                    all_formats.append(formatted)
+            else:
+                all_formats.append(ocr_text)
 
     if all_formats and st.button(f"Tải về {'LaTeX' if mode=='latex' else 'Word'} hoàn chỉnh"):
         full_text = "\n\n".join(all_formats)
