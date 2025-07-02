@@ -7,30 +7,28 @@ import base64
 import requests
 from docx import Document
 
-# =============== CONFIG ===============
+# ========== CONFIG ==========
 GEMINI_FLASH_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 API_GPT4O_ENDPOINT = "https://api.sv2.llm.ai.vn/v1/chat/completions"
-st.set_page_config(page_title="Auto-crop minh họa (Gemini Flash) + OCR GPT-4o", layout="wide")
-st.title("📄 Auto-crop minh họa (Gemini Flash), OCR và chuyển sang LaTeX/Word (GPT-4o AI.VN)")
+
+st.set_page_config(page_title="Gemini crop & GPT-4o OCR", layout="wide")
+st.title("📄 Auto-crop minh họa (Gemini Flash), chuyển sang LaTeX/Word (GPT-4o AI.VN)")
 
 g_api_key = st.sidebar.text_input("Google Gemini Flash API Key", type="password")
 api_key = st.sidebar.text_input("AI.VN API Key (GPT-4o)", type="password")
 
-# ===== GEMINI FLASH detect box minh họa & OCR =====
-def gemini_flash(image, g_api_key, ocr_only=False):
+# ===== GEMINI FLASH: Detect crop boxes =====
+def gemini_detect_boxes(image, g_api_key):
     buffered = io.BytesIO()
     image.save(buffered, format="PNG")
     img_bytes = buffered.getvalue()
     img_b64 = base64.b64encode(img_bytes).decode()
 
-    if ocr_only:
-        prompt = "Nhận diện TẤT CẢ văn bản và công thức Toán trong ảnh. Gõ lại CHÍNH XÁC toàn bộ nội dung (ưu tiên định dạng LaTeX nếu là công thức), không giải thích gì thêm."
-    else:
-        prompt = (
-            "Detect all illustration/figure/image regions in this image. "
-            "Return for each region an array [left, top, width, height] (pixel, integer). "
-            "If no region, return []. No explanation."
-        )
+    prompt = (
+        "Detect all illustration/figure/image regions in this image. "
+        "Return for each region an array [left, top, width, height] (pixel, integer). "
+        "If no region, return []. No explanation."
+    )
     body = {
         "contents": [
             {
@@ -58,9 +56,13 @@ def gemini_flash(image, g_api_key, ocr_only=False):
             .get("parts", [{}])[0]
             .get("text", "")
         )
-        return text
+        import re
+        boxes = re.findall(r'\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]', text)
+        result = [tuple(map(int, b)) for b in boxes]
+        return result
     except Exception as e:
-        return f"[Lỗi Gemini Flash: {e}]"
+        st.warning(f"[Lỗi Gemini Flash: {e}]")
+        return []
 
 # ===== PDF sang ảnh =====
 def pdf_to_images(pdf_bytes):
@@ -73,20 +75,25 @@ def pdf_to_images(pdf_bytes):
     return images
 
 # ====== GPT-4o chuyển đổi LaTeX/Word ======
-def gpt4o_format(text, api_key, mode="latex"):
-    if not text.strip():
-        return ""
-    prompt = (
-        "Chuyển đoạn văn dưới đây sang định dạng "
-        + ("LaTeX." if mode == "latex" else "Word. Đảm bảo định dạng bảng, công thức nếu có.")
-        + "\nĐoạn văn:\n"
-        + text
-        + "\nKHÔNG giải thích gì thêm."
-    )
+def gpt4o_ocr_format(image, api_key, mode="latex", n_img=0):
+    buffered = io.BytesIO()
+    image.save(buffered, format="PNG")
+    img_bytes = buffered.getvalue()
+    img_b64 = base64.b64encode(img_bytes).decode()
+    if mode == "latex":
+        prompt = "Extract all text and math from this image. Output in LaTeX. If there are figures, indicate their position with <<IMG_1>>, <<IMG_2>>, ... at appropriate places."
+    else:
+        prompt = "Extract all text and math from this image. Output in Word format (markdown is fine). If there are figures, indicate their position with <<IMG_1>>, <<IMG_2>>, ... at appropriate places."
     payload = {
         "model": "openai:gpt-4o",
         "messages": [
-            {"role": "user", "content": prompt}
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}}
+                ]
+            }
         ],
         "max_tokens": 2048,
         "temperature": 0.0
@@ -137,9 +144,9 @@ def insert_images_word(doc_text, images, output_path="output_word.docx"):
 
 uploaded = st.file_uploader("Chọn file PDF hoặc ảnh", type=["pdf", "png", "jpg", "jpeg"])
 mode = st.radio("Chọn chế độ xuất", ["latex", "word"])
-st.info("Ảnh sẽ được Gemini Flash tự động detect/crop minh họa. Nếu thất bại, bạn crop tay bằng chuột. Text OCR bởi Gemini Flash, chuyển định dạng bằng GPT-4o (AI.VN).")
+st.info("Gemini Flash tự động detect/crop minh họa. Nếu không được, crop tay bằng chuột. OCR và định dạng bằng GPT-4o (AI.VN).")
 
-if uploaded and (g_api_key or api_key):
+if uploaded and (g_api_key and api_key):
     if uploaded.name.lower().endswith(".pdf"):
         images = pdf_to_images(uploaded.read())
         st.success(f"Đã tách {len(images)} trang từ PDF.")
@@ -147,21 +154,18 @@ if uploaded and (g_api_key or api_key):
         images = [Image.open(uploaded)]
         st.success("Đã tải lên 1 ảnh.")
 
-    all_formats = []
+    all_ocr_results = []
     all_crops = []
 
     for idx, img in enumerate(images):
         st.markdown(f"---\n### Trang {idx+1}")
         st.image(img, caption=f"Trang {idx+1}", use_container_width=True)
 
-        # ----- AUTO CROP bằng Gemini Flash -----
+        # ----- AUTO CROP bằng Gemini -----
         boxes = []
         if g_api_key:
             with st.spinner("Gemini Flash đang tự động nhận diện vùng hình minh họa..."):
-                text_boxes = gemini_flash(img, g_api_key, ocr_only=False)
-            import re
-            boxes = re.findall(r'\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]', text_boxes)
-            boxes = [tuple(map(int, b)) for b in boxes]
+                boxes = gemini_detect_boxes(img, g_api_key)
         crops_this_page = []
         if boxes:
             st.write(f"Gemini detect {len(boxes)} vùng minh họa:")
@@ -186,21 +190,14 @@ if uploaded and (g_api_key or api_key):
                         crops_this_page.append(crop)
         all_crops += crops_this_page
 
-        if st.button(f"OCR toàn bộ trang {idx+1} bằng Gemini Flash & chuyển LaTeX/Word", key=f"ocr_{idx}"):
-            ocr_text = ""
-            with st.spinner("Gemini Flash đang nhận diện nội dung..."):
-                ocr_text = gemini_flash(img, g_api_key, ocr_only=True)
-                st.code(ocr_text, language="latex")
-            if api_key:
-                with st.spinner("GPT-4o AI.VN đang chuyển định dạng..."):
-                    formatted = gpt4o_format(ocr_text, api_key, mode=mode)
-                    st.code(formatted, language="latex" if mode == "latex" else "markdown")
-                    all_formats.append(formatted)
-            else:
-                all_formats.append(ocr_text)
+        if st.button(f"OCR + chuyển định dạng (GPT-4o) Trang {idx+1}", key=f"ocr_{idx}"):
+            with st.spinner("GPT-4o AI.VN đang nhận diện và định dạng nội dung..."):
+                result = gpt4o_ocr_format(img, api_key, mode=mode, n_img=len(crops_this_page))
+                st.code(result, language="latex" if mode == "latex" else "markdown")
+                all_ocr_results.append(result)
 
-    if all_formats and st.button(f"Tải về {'LaTeX' if mode=='latex' else 'Word'} hoàn chỉnh"):
-        full_text = "\n\n".join(all_formats)
+    if all_ocr_results and st.button(f"Tải về {'LaTeX' if mode=='latex' else 'Word'} hoàn chỉnh"):
+        full_text = "\n\n".join(all_ocr_results)
         if mode == "word":
             insert_images_word(full_text, all_crops, "output_word.docx")
             with open("output_word.docx", "rb") as f:
