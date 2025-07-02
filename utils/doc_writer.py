@@ -1,8 +1,15 @@
 def build_docx(text, output_path):
     from docx import Document
+    from docx.shared import Inches
+    import os
     doc = Document()
     for line in text.splitlines():
-        if line.strip():
+        if line.strip().startswith("<<image_"):
+            img_name = line.strip().replace("<<", "").replace(">>", "")
+            img_path = os.path.join("diagrams", img_name)
+            if os.path.exists(img_path):
+                doc.add_picture(img_path, width=Inches(4))
+        elif line.strip():
             doc.add_paragraph(line)
     doc.save(output_path)
 
