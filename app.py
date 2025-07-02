@@ -1,161 +1,113 @@
+import os
+import io
+import fitz  # PyMuPDF
+import base64
 import streamlit as st
 from PIL import Image
-import fitz
-import io
-import os
-import requests
-import base64
-import docx
-from docx import Document
-from google.cloud import vision
+from pdf2image import convert_from_path
+from paddleocr import PaddleOCR
+import openai
 
-# =========== GOOGLE VISION KEY ===========
-# Đảm bảo file JSON này là key mới nhất, đã được cấp quyền Éditeur hoặc Owner, đúng Project đã enable Vision AI API
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gen-lang-client-0798870399-c606ceff4a2a.json"
+# ================== CẤU HÌNH ==================
+POPPLER_PATH = None  # Để None nếu chạy trên web (Streamlit Cloud có sẵn poppler)
+SAVE_DIR = "output_images"
+MODEL = "openai:gpt-4o"
 
-# =========== STREAMLIT UI ===========
-st.set_page_config(layout="wide", page_title="PDF/Ảnh → LaTeX/Word + Auto crop minh họa (GPT-4o + GG Vision)")
-st.title("📄 PDF/Ảnh ➔ LaTeX/Word (ChatGPT-4o) + Auto-crop minh họa (Google Vision)")
+# Lấy API key từ Streamlit secrets
+openai.api_key = st.secrets["api_key"]
+openai.api_base = st.secrets["api_base"]
 
-api_url = "https://api.sv2.llm.ai.vn/v1/chat/completions"
-api_key = st.sidebar.text_input("AI.VN GPT-4o API Key", type="password")
+ocr_engine = PaddleOCR(use_angle_cls=True, lang='en')
 
-def pdf_to_images(pdf_bytes):
-    images = []
-    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
-        for page in doc:
-            pix = page.get_pixmap(dpi=300)
-            img = Image.open(io.BytesIO(pix.tobytes("png")))
-            images.append(img)
-    return images
+# ================== HÀM CHÍNH ==================
+def extract_images_near_text(pdf_file):
+    os.makedirs(SAVE_DIR, exist_ok=True)
 
-def gpt4o_ocr_format(image, api_key, mode="latex"):
-    buffered = io.BytesIO()
-    image.save(buffered, format="PNG")
-    img_bytes = buffered.getvalue()
-    img_b64 = base64.b64encode(img_bytes).decode()
-    if mode == "latex":
-        prompt = "Nhận diện CHÍNH XÁC toàn bộ văn bản, công thức toán học, bảng biểu trong ảnh này và chuyển sang LaTeX. Không giải thích, không bình luận, không bịa thêm."
+    # Đọc PDF từ uploaded file
+    pdf_bytes = pdf_file.read()
+    images = convert_from_path(io.BytesIO(pdf_bytes), dpi=200, poppler_path=POPPLER_PATH)
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+    output_paths = []
+
+    for page_num, page in enumerate(doc):
+        img = images[page_num]
+        image_path = f"{SAVE_DIR}/page_{page_num + 1}.png"
+        img.save(image_path)
+
+        result = ocr_engine.ocr(image_path, cls=True)[0]
+
+        illustration_keywords = ["hình", "vẽ", "tọạ độ", "minh họạ", "biểu diễn", "trên hình"]
+        selected_regions = []
+
+        for box in result:
+            text = box[1][0].lower()
+            if any(key in text for key in illustration_keywords):
+                x_min = min([pt[0] for pt in box[0]])
+                y_min = min([pt[1] for pt in box[0]])
+                x_max = max([pt[0] for pt in box[0]])
+                y_max = max([pt[1] for pt in box[0]])
+                selected_regions.append(((x_min, y_min, x_max, y_max), text))
+
+        image_list = page.get_images(full=True)
+        for i, img_info in enumerate(image_list):
+            xref = img_info[0]
+            base_image = doc.extract_image(xref)
+            image_bytes = base_image["image"]
+            img = Image.open(io.BytesIO(image_bytes))
+
+            bbox = page.get_image_bbox(img_info)
+            left, top, right, bottom = bbox.x0, bbox.y0, bbox.x1, bbox.y1
+
+            is_close = False
+            for (x_min, y_min, x_max, y_max), text in selected_regions:
+                if abs(y_min - top) < 300 or abs(top - y_max) < 300:
+                    is_close = True
+                    break
+
+            if is_close:
+                output_path = f"{SAVE_DIR}/minhhoa_page{page_num + 1}_{i + 1}.png"
+                img.save(output_path)
+                if is_math_related(output_path, text):
+                    output_paths.append(output_path)
+                else:
+                    os.remove(output_path)
+    return output_paths
+
+
+def is_math_related(image_path, context_text):
+    try:
+        with open(image_path, "rb") as img_file:
+            img_data = base64.b64encode(img_file.read()).decode("utf-8")
+            response = openai.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": "Bạn là trợ lý AI toán học."},
+                    {"role": "user", "content": f"Đây là ảnh gần đoạn: '{context_text}'. Có phải minh họa toán học không? ĐÚNG / SAI."},
+                    {"role": "user", "content": f"<img src='data:image/png;base64,{img_data}'>"}
+                ],
+                temperature=0.0,
+                max_tokens=10
+            )
+            result = response.choices[0].message.content.strip()
+            return "ĐÚNG" in result.upper()
+    except Exception as e:
+        st.warning(f"GPT lỗi: {e}")
+        return False
+
+# ================== GIAO DIỆN ==================
+st.set_page_config(page_title="Tách ảnh minh họa Toán học", layout="wide")
+st.title("🧠 Trích xuất ảnh minh họa toán học từ PDF")
+
+uploaded_file = st.file_uploader("📄 Tải lên file PDF đề toán", type="pdf")
+
+if uploaded_file:
+    with st.spinner("🔍 Đang xử lý..."):
+        images = extract_images_near_text(uploaded_file)
+
+    if images:
+        st.success(f"✅ Đã phát hiện {len(images)} ảnh minh họa toán học")
+        for img_path in images:
+            st.image(img_path, caption=img_path, use_column_width=True)
     else:
-        prompt = "Nhận diện CHÍNH XÁC toàn bộ văn bản, công thức toán học, bảng biểu trong ảnh này và chuyển sang văn bản Word chuẩn. Không giải thích, không bình luận, không bịa thêm."
-    payload = {
-        "model": "openai:gpt-4o",
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}}
-                ]
-            }
-        ],
-        "max_tokens": 2048,
-        "temperature": 0.0
-    }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    try:
-        resp = requests.post(api_url, headers=headers, json=payload, timeout=180)
-        data = resp.json()
-        if "choices" in data and data["choices"]:
-            return data["choices"][0]["message"]["content"]
-        elif "error" in data:
-            return f"[Lỗi GPT-4o: {data['error'].get('message', str(data['error']))}]"
-        else:
-            return f"[Lỗi GPT-4o: Không có dữ liệu trả về | {data}]"
-    except Exception as e:
-        return f"[Lỗi gọi GPT-4o: {e}]"
-
-def vision_auto_crop(image_pil, page_idx=1, out_dir="vision_crops"):
-    try:
-        client = vision.ImageAnnotatorClient()
-        buffered = io.BytesIO()
-        image_pil.save(buffered, format="PNG")
-        content = buffered.getvalue()
-        image = vision.Image(content=content)
-        response = client.document_text_detection(image=image)
-    except Exception as e:
-        st.error(f"[Lỗi Vision API: {e}] (Kiểm tra quyền Service Account và Billing)")
-        return []
-    os.makedirs(out_dir, exist_ok=True)
-    crops = []
-    try:
-        for page in response.full_text_annotation.pages:
-            for block in page.blocks:
-                # block_type = 3 là hình ảnh (PICTURE)
-                if block.block_type == vision.Document.Page.Block.BlockType.PICTURE:
-                    box = block.bounding_box.vertices
-                    x1 = min(v.x for v in box)
-                    y1 = min(v.y for v in box)
-                    x2 = max(v.x for v in box)
-                    y2 = max(v.y for v in box)
-                    crop = image_pil.crop((x1, y1, x2, y2))
-                    crop_path = f"{out_dir}/img_p{page_idx}_{len(crops)+1}.png"
-                    crop.save(crop_path)
-                    crops.append(crop_path)
-    except Exception as e:
-        st.warning(f"Lỗi Vision crop: {e}")
-    return crops
-
-def save_word(text_list, image_dict, output_path):
-    doc = Document()
-    for idx, txt in enumerate(text_list):
-        doc.add_paragraph(txt)
-        # Chèn ảnh minh họa từng trang vào sau nội dung
-        if (idx+1) in image_dict:
-            for img_path in image_dict[idx+1]:
-                doc.add_picture(img_path, width=docx.shared.Inches(4))
-    doc.save(output_path)
-
-uploaded = st.file_uploader("Chọn file PDF hoặc ảnh", type=["pdf", "png", "jpg", "jpeg"])
-mode = st.radio("Chọn chế độ xuất", ["latex", "word"])
-if uploaded and api_key:
-    if uploaded.name.lower().endswith(".pdf"):
-        images = pdf_to_images(uploaded.read())
-        st.success(f"Đã tách {len(images)} trang từ PDF.")
-    else:
-        images = [Image.open(uploaded)]
-        st.success("Đã tải lên 1 ảnh.")
-
-    ocr_results = []
-    all_crops = {}
-    for idx, img in enumerate(images):
-        st.markdown(f"---\n### Trang {idx+1}")
-        st.image(img, caption=f"Trang {idx+1}", use_container_width=True)
-
-        with st.spinner("Tự động crop hình minh họa bằng Google Vision..."):
-            crops = vision_auto_crop(img, page_idx=idx+1)
-            st.write(f"Đã crop tự động {len(crops)} hình minh họa.")
-            for crop_path in crops:
-                st.image(crop_path, caption=f"Minh họa {os.path.basename(crop_path)}", use_container_width=True)
-            all_crops[idx+1] = crops
-
-        if st.button(f"OCR toàn bộ trang {idx+1} (GPT-4o)", key=f"ocr_{idx}"):
-            with st.spinner("GPT-4o đang nhận diện nội dung..."):
-                ocr_text = gpt4o_ocr_format(img, api_key, mode=mode)
-                st.code(ocr_text, language="latex" if mode=="latex" else "markdown")
-                ocr_results.append(ocr_text)
-
-    if ocr_results and st.button(f"Tải về {'LaTeX' if mode=='latex' else 'Word'} hoàn chỉnh"):
-        full_text = "\n\n".join(ocr_results)
-        if mode == "word":
-            save_word(ocr_results, all_crops, "output_word.docx")
-            with open("output_word.docx", "rb") as f:
-                st.download_button("Tải file Word", f, "output_word.docx")
-        else:
-            latex_file = "output_latex.tex"
-            with open(latex_file, "w", encoding="utf-8") as f:
-                for idx, txt in enumerate(ocr_results):
-                    f.write(txt + "\n\n")
-                    if (idx+1) in all_crops:
-                        for img_path in all_crops[idx+1]:
-                            f.write(f"\\includegraphics[width=0.7\\linewidth]{{{os.path.basename(img_path)}}}\n")
-            with open(latex_file, "rb") as f:
-                st.download_button("Tải file LaTeX", f, latex_file)
-            # Cho tải riêng từng hình
-            for idx in all_crops:
-                for img_path in all_crops[idx]:
-                    with open(img_path, "rb") as f:
-                        st.download_button(f"Tải hình {os.path.basename(img_path)}", f, os.path.basename(img_path))
+        st.warning("⚠️ Không tìm thấy ảnh minh họa toán học nào.")
