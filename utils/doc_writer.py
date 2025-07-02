@@ -1,14 +1,9 @@
 from docx import Document
-from docx.shared import Inches
 
-def build_docx(text, image_dir, output_path):
+def build_docx(text, output_path):
     doc = Document()
     for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("<<image_"):
-            img = line.replace("<<", "").replace(">>", "")
-            doc.add_picture(f"{image_dir}/{img}", width=Inches(4))
-        elif line:
+        if line.strip():
             doc.add_paragraph(line)
     doc.save(output_path)
 
@@ -22,3 +17,4 @@ def build_latex(content, output_path):
         f.write(preamble)
         f.write(content)
         f.write("\n\\end{document}")
+
