@@ -1,113 +1,104 @@
-import os
-import io
-import fitz  # PyMuPDF
-import base64
 import streamlit as st
 from PIL import Image
-from pdf2image import convert_from_path
-from paddleocr import PaddleOCR
+import io
+import base64
 import openai
 
-# ================== CẤU HÌNH ==================
-POPPLER_PATH = None  # Để None nếu chạy trên web (Streamlit Cloud có sẵn poppler)
-SAVE_DIR = "output_images"
-MODEL = "openai:gpt-4o"
+# Đặt API key GPT-4o (nếu dùng OpenAI chính thống)
+openai.api_key = "sk-j4DkzI7htsVqEZqC272d3b58B0Fb49A183573dD2Fc04F71d"  # hoặc dùng api của AI.VN nếu có SDK riêng
 
-# Lấy API key từ Streamlit secrets
-openai.api_key = st.secrets["api_key"]
-openai.api_base = st.secrets["api_base"]
+# Prompt chế độ LaTeX hoặc văn bản gốc
+def getPrompt(mode):
+    if mode == "latex":
+        return """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
 
-ocr_engine = PaddleOCR(use_angle_cls=True, lang='en')
+QUY TẮC ĐỊNH DẠNG VĂN BẢN VÀ CÔNG THỨC:
+1. Với câu hỏi trắc nghiệm không lời giải (bắt đầu bằng 'Câu X:' hoặc 'Câu X.'): 
+   - Thay 'Câu X:' bằng \\begin{ex}
+   - Thêm \\choice trước phương án A
+   - Đặt mỗi phương án trong cặp dấy {}, ví dụ A. $x^2+2x+1.$ sẽ thành {$x^2+2x+1$}, bỏ phần A., B., C., D. và dấu . cuối phương án
+   - Kết thúc bằng \\end{ex}
 
-# ================== HÀM CHÍNH ==================
-def extract_images_near_text(pdf_file):
-    os.makedirs(SAVE_DIR, exist_ok=True)
+2. Với câu hỏi trắc nghiệm có lời giải:
+   - Thêm \\True trước phương án đúng
+   - Đặt lời giải trong \\loigiai{}
 
-    # Đọc PDF từ uploaded file
-    pdf_bytes = pdf_file.read()
-    images = convert_from_path(io.BytesIO(pdf_bytes), dpi=200, poppler_path=POPPLER_PATH)
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+3. Với bài tập tự luận (bắt đầu bằng 'Bài X:' hoặc 'Bài X.'):
+   - Thay 'Bài X:' bằng \\begin{bt}
+   - Đặt lời giải trong \\loigiai{}
+   - Kết thúc bằng \\end{bt}
 
-    output_paths = []
+4. Với danh sách (a), b), c)...):
+   - Bọc trong \\begin{enumerate} và \\end{enumerate}
+   - Thay mỗi chữ cái bằng \\item
 
-    for page_num, page in enumerate(doc):
-        img = images[page_num]
-        image_path = f"{SAVE_DIR}/page_{page_num + 1}.png"
-        img.save(image_path)
+5. Công thức toán học: Giữ nguyên định dạng LaTeX như $...$ hoặc $$...$$
 
-        result = ocr_engine.ocr(image_path, cls=True)[0]
-
-        illustration_keywords = ["hình", "vẽ", "tọạ độ", "minh họạ", "biểu diễn", "trên hình"]
-        selected_regions = []
-
-        for box in result:
-            text = box[1][0].lower()
-            if any(key in text for key in illustration_keywords):
-                x_min = min([pt[0] for pt in box[0]])
-                y_min = min([pt[1] for pt in box[0]])
-                x_max = max([pt[0] for pt in box[0]])
-                y_max = max([pt[1] for pt in box[0]])
-                selected_regions.append(((x_min, y_min, x_max, y_max), text))
-
-        image_list = page.get_images(full=True)
-        for i, img_info in enumerate(image_list):
-            xref = img_info[0]
-            base_image = doc.extract_image(xref)
-            image_bytes = base_image["image"]
-            img = Image.open(io.BytesIO(image_bytes))
-
-            bbox = page.get_image_bbox(img_info)
-            left, top, right, bottom = bbox.x0, bbox.y0, bbox.x1, bbox.y1
-
-            is_close = False
-            for (x_min, y_min, x_max, y_max), text in selected_regions:
-                if abs(y_min - top) < 300 or abs(top - y_max) < 300:
-                    is_close = True
-                    break
-
-            if is_close:
-                output_path = f"{SAVE_DIR}/minhhoa_page{page_num + 1}_{i + 1}.png"
-                img.save(output_path)
-                if is_math_related(output_path, text):
-                    output_paths.append(output_path)
-                else:
-                    os.remove(output_path)
-    return output_paths
-
-
-def is_math_related(image_path, context_text):
-    try:
-        with open(image_path, "rb") as img_file:
-            img_data = base64.b64encode(img_file.read()).decode("utf-8")
-            response = openai.chat.completions.create(
-                model=MODEL,
-                messages=[
-                    {"role": "system", "content": "Bạn là trợ lý AI toán học."},
-                    {"role": "user", "content": f"Đây là ảnh gần đoạn: '{context_text}'. Có phải minh họa toán học không? ĐÚNG / SAI."},
-                    {"role": "user", "content": f"<img src='data:image/png;base64,{img_data}'>"}
-                ],
-                temperature=0.0,
-                max_tokens=10
-            )
-            result = response.choices[0].message.content.strip()
-            return "ĐÚNG" in result.upper()
-    except Exception as e:
-        st.warning(f"GPT lỗi: {e}")
-        return False
-
-# ================== GIAO DIỆN ==================
-st.set_page_config(page_title="Tách ảnh minh họa Toán học", layout="wide")
-st.title("🧠 Trích xuất ảnh minh họa toán học từ PDF")
-
-uploaded_file = st.file_uploader("📄 Tải lên file PDF đề toán", type="pdf")
-
-if uploaded_file:
-    with st.spinner("🔍 Đang xử lý..."):
-        images = extract_images_near_text(uploaded_file)
-
-    if images:
-        st.success(f"✅ Đã phát hiện {len(images)} ảnh minh họa toán học")
-        for img_path in images:
-            st.image(img_path, caption=img_path, use_column_width=True)
+KHÔNG thêm giải thích hay bình luận gì thêm. Trả về văn bản đã được định dạng LaTeX."""
     else:
-        st.warning("⚠️ Không tìm thấy ảnh minh họa toán học nào.")
+        return """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này.
+
+YÊU CẦU:
+1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh
+2. Giữ nguyên cấu trúc đoạn văn và xuống dòng
+3. Với công thức toán học: gõ lại chính xác, tất cả công thức Toán dưới dạng \${...}\$
+   - Inline: \${x^2 + 2x + 1}\$
+   - Hệ: \$\\begin{cases} ... \\end{cases}\$
+   - Ký hiệu: ví dụ \${Oxyz}\$, \${A}\$, \${AB}\$, \${0{,}1\%}\$, \${CD}\$, \${1}\$,.....
+
+4. Với bảng biểu: dùng markdown nếu có thể
+5. Dạng bài:
+   - Trắc nghiệm:
+     Câu X: Nội dung
+     A. Đáp án A
+     B. Đáp án B
+     C. Đáp án C
+     D. Đáp án D
+   - Đúng/Sai: a), b), c)...
+   - Tự luận: Câu X: ... (Lời giải...)
+
+✅ Gợi ý thêm:
+- Nếu ảnh dài hoặc nhiều trang, chia nhỏ xử lý từng ảnh để tránh thiếu trang.
+- Khi lưu kết quả, nên xuất file Word định dạng .docx để hiển thị tiếng Việt chuẩn và hỗ trợ tốt Unicode.
+
+KHÔNG giải thích. KHÔNG bịa thêm. Trả về văn bản gốc."""
+
+# Hàm gửi ảnh đến GPT-4o
+def image_to_text(image: Image.Image, mode: str):
+    buffered = io.BytesIO()
+    image.save(buffered, format="PNG")
+    b64_image = base64.b64encode(buffered.getvalue()).decode()
+
+    prompt = getPrompt(mode)
+
+    response = openai.ChatCompletion.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": "Bạn là công cụ OCR thông minh chuyên chuyển ảnh thành văn bản hoặc LaTeX."},
+            {"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_image}"}}
+            ]}
+        ],
+        temperature=0.1
+    )
+    return response.choices[0].message.content
+
+# Giao diện Streamlit
+st.title("📄 Chuyển ảnh/PDF sang LaTeX hoặc Word bằng GPT-4o")
+
+mode = st.selectbox("Chọn chế độ xuất", ["latex", "word"], format_func=lambda x: "LaTeX" if x == "latex" else "Văn bản gốc (Word)")
+
+uploaded_image = st.file_uploader("Tải ảnh hoặc PDF đã chuyển sang ảnh", type=["png", "jpg", "jpeg"])
+
+if uploaded_image:
+    image = Image.open(uploaded_image)
+    st.image(image, caption="Ảnh đã tải lên", use_column_width=True)
+
+    if st.button("🔄 Chuyển đổi"):
+        with st.spinner("Đang xử lý bằng GPT-4o..."):
+            result = image_to_text(image, mode)
+            st.success("✅ Hoàn tất!")
+            st.code(result, language="latex" if mode == "latex" else "text")
+
+            st.download_button("📥 Tải kết quả", data=result, file_name=f"output.{ 'tex' if mode == 'latex' else 'txt'}", mime="text/plain")
