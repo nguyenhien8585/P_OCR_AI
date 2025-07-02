@@ -1,7 +1,6 @@
 streamlit
 pymupdf
 Pillow
-layoutparser
-python-docx
 requests
-opencv-python-headless
+python-docx
+streamlit-cropper
