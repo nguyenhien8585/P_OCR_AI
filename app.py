@@ -12,8 +12,8 @@ api_key_input = st.text_input("🔑 Nhập AI_API_KEY lấy từ https://api.sv2
 API_KEY = api_key_input.strip() if api_key_input.strip() else os.getenv("AI_API_KEY", "demo-key")
 
 # Các biến GPT4O_API_URL, GEMINI_API_URL giữ nguyên
-GPT4O_API_URL = "https://api.sv2.llm.ai.vn/v1"
-GEMINI_API_URL = "https://api.sv2.llm.ai.vn/v1"
+GPT4O_API_URL = "https://api.sv2.llm.ai.vn"
+GEMINI_API_URL = "https://api.sv2.llm.ai.vn"
 
 PROMPT_LATEX = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
 1. Với câu hỏi trắc nghiệm không lời giải (bắt đầu bằng 'Câu X:' hoặc 'Câu X.'):
