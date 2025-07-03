@@ -27,7 +27,7 @@ def detect_tables_with_gemini(image: Image.Image, api_key: str):
     prompt = "Phát hiện vị trí tất cả các bảng biến thiên trong ảnh. Trả lời bằng JSON gồm list các dict với các khóa: label (luôn là 'bang'), x, y, width, height."
 
     payload = {
-        "model": "gemini-pro-2.5-preview-06-05",
+        "model": "gemini-1.5-pro",
         "messages": [
             {"role": "system", "content": "Bạn là AI chuyên phát hiện bảng trong ảnh"},
             {"role": "user", "content": [
