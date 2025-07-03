@@ -1,4 +1,4 @@
-# 📄 OCR PDF/Ảnh bằng GPT-4o và Gemini 2.0
+# 📄 OCR PDF/Ảnh bằng GPT-4o và Gemini 2.0 Flash (API HTTP)
 import streamlit as st
 import fitz  # PyMuPDF
 from PIL import Image
@@ -7,25 +7,45 @@ import tempfile
 import base64
 import requests
 import os
-import google.generativeai as genai
+import json
 
 # ------------------------------
-# 🔧 Cấu hình Gemini Vision (Gemini 2.0)
+# 🔧 Cấu hình Gemini 2.0 Flash HTTP API
 # ------------------------------
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model_gemini = genai.GenerativeModel("gemini-1.5-pro-vision")
-
-def detect_tables_with_gemini(image: Image.Image):
+def detect_tables_with_gemini(image: Image.Image, api_key: str):
     img_bytes = io.BytesIO()
     image.save(img_bytes, format="PNG")
-    img_bytes.seek(0)
+    img_base64 = base64.b64encode(img_bytes.getvalue()).decode()
+
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
 
     prompt = "Phát hiện vị trí tất cả các bảng biến thiên trong ảnh. Trả lời bằng JSON gồm list các dict với các khóa: label (luôn là 'bang'), x, y, width, height."
-    res = model_gemini.generate_content([
-        prompt,
-        img_bytes.read()
-    ])
-    return res.text
+
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt},
+                    {
+                        "inline_data": {
+                            "mime_type": "image/png",
+                            "data": img_base64
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    res = requests.post(url, headers=headers, data=json.dumps(payload))
+    if res.status_code == 200:
+        return res.json()["candidates"][0]["content"]["parts"][0]["text"]
+    else:
+        raise Exception(f"Lỗi Gemini API: {res.status_code} {res.text}")
 
 # ------------------------------
 # 📌 Hàm chuyển PDF thành ảnh
@@ -97,7 +117,7 @@ def crop_image(img, box):
 # 🎯 Giao diện Streamlit Web
 # ------------------------------
 st.set_page_config(page_title="📄 PDF to Word/LaTeX", layout="centered")
-st.title("📄 Chuyển PDF sang Word/LaTeX + ảnh minh họa bằng GPT-4o + Gemini 2.0")
+st.title("📄 Chuyển PDF sang Word/LaTeX + ảnh minh họa bằng GPT-4o + Gemini 2.0 Flash")
 
 api_key = st.text_input("🔐 Nhập API Key AI.VN (GPT-4o)", type="password")
 gemini_key = st.text_input("🔐 Nhập API Key Gemini 2.0", type="password")
@@ -105,7 +125,6 @@ mode = st.radio("Chọn chế độ chuyển đổi:", ["word", "latex"], index=
 file = st.file_uploader("📎 Tải lên file PDF hoặc ảnh", type=["pdf", "png", "jpg", "jpeg"])
 
 if api_key and gemini_key and file:
-    os.environ["GEMINI_API_KEY"] = gemini_key
     with st.spinner("🔄 Đang chuyển PDF thành ảnh..."):
         if file.type == "application/pdf":
             images = pdf_to_images(file.read())
@@ -117,9 +136,8 @@ if api_key and gemini_key and file:
     for i, img in enumerate(images):
         st.image(img, caption=f"Trang {i+1}", use_column_width=True)
         st.info(f"🤖 Gemini Vision đang xác định bảng trên trang {i+1}...")
-        boxes_json = detect_tables_with_gemini(img)
         try:
-            import json
+            boxes_json = detect_tables_with_gemini(img, gemini_key)
             boxes = json.loads(boxes_json)
         except:
             st.error("❌ Lỗi phân tích kết quả từ Gemini. Định dạng JSON không hợp lệ.")
