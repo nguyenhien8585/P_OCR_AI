@@ -6,6 +6,7 @@ import base64
 import io
 import json
 import os
+import re
 
 # Cho nhập key AI.VN và key Gemini Google
 aivn_key = st.text_input(
@@ -15,7 +16,7 @@ gemini_key = st.text_input(
     "🔑 Nhập Google Gemini API Key (https://makersuite.google.com/app/apikey)", type="password"
 )
 
-GPT4O_API_URL = "https://api.sv2.llm.ai.vn/v1"
+GPT4O_API_URL = "https://api.sv2.llm.ai.vn/v1/chat/completions"
 
 PROMPT_LATEX = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
 1. Với câu hỏi trắc nghiệm không lời giải (bắt đầu bằng 'Câu X:' hoặc 'Câu X.'):
