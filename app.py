@@ -8,13 +8,9 @@ import json
 import os
 import re
 
-# Cho nhập key AI.VN và key Gemini Google
-aivn_key = st.text_input(
-    "🔑 Nhập AI.VN API Key (GPT-4o, https://api.sv2.llm.ai.vn)", type="password"
-)
-gemini_key = st.text_input(
-    "🔑 Nhập Google Gemini API Key (https://makersuite.google.com/app/apikey)", type="password"
-)
+# Nhập API key trên giao diện
+aivn_key = st.text_input("🔑 Nhập AI.VN API Key (GPT-4o, https://api.sv2.llm.ai.vn)", type="password")
+gemini_key = st.text_input("🔑 Nhập Google Gemini API Key (https://makersuite.google.com/app/apikey)", type="password")
 
 GPT4O_API_URL = "https://api.sv2.llm.ai.vn/v1/chat/completions"
 
@@ -59,87 +55,6 @@ PROMPT_GEMINI = """Trong ảnh sau, hãy tìm ra các vùng ảnh minh họa (bi
   {"label": "hinh_2", "x": 450, "y": 700, "width": 280, "height": 180}
 ]"""
 
-def detect_image_regions(image: Image.Image):
-    if not gemini_key:
-        st.warning("Vui lòng nhập Google Gemini API Key để tách ảnh minh họa!")
-        return []
-    try:
-        buffered = io.BytesIO()
-        image.save(buffered, format="PNG")
-        image_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-        payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": PROMPT_GEMINI},
-                        {
-                            "inline_data": {
-                                "mime_type": "image/png",
-                                "data": image_b64
-                            }
-                        }
-                    ]
-                }
-            ]
-        }
-        headers = {"Content-Type": "application/json"}
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp-01-21:generateContent?key={gemini_key}"
-        r = requests.post(url, json=payload, headers=headers, timeout=60)
-        resp = r.json()
-        # st.write("Phản hồi Gemini:", resp)   # debug
-
-        if "candidates" in resp:
-            text = resp["candidates"][0]["content"]["parts"][0]["text"]
-            # Lấy phần nằm trong ``` hoặc ```json block
-            code_blocks = re.findall(r"```(?:json)?(.*?)```", text, re.DOTALL)
-            if code_blocks:
-                code = code_blocks[0]
-            else:
-                code = text
-
-            # Loại bỏ các dòng thừa/newline và thử sửa lỗi JSON nếu có
-            code = code.strip()
-            # Thử thêm ngoặc vuông nếu thiếu
-            if not code.startswith("["):
-                code = "[" + code
-            if not code.endswith("]"):
-                code = code + "]"
-            # Thay dấu ] [ giữa 2 object thành dấu phẩy
-            code = code.replace("]\n[", ",\n")
-            code = code.replace("],\n[", ",\n")
-            # Thay đổi 'label' bị nằm ngoài {} thành object hợp lệ
-            code = re.sub(r"\[\s*\"label\":", "{\n\"label\":", code)
-            code = re.sub(r"\}\s*\]\s*,", "},", code)
-            code = code.replace("]\n]", "]")
-
-            try:
-                data = json.loads(code)
-                return data
-            except Exception as e:
-                st.error(f"Lỗi parse JSON từ Gemini: {e}\nNội dung nhận được:\n{code}")
-                return []
-        elif "error" in resp:
-            st.error(f"Lỗi Gemini: {resp['error']}")
-            return []
-        else:
-            st.error("Gemini không trả về kết quả phân vùng ảnh!")
-            return []
-    except Exception as e:
-        st.warning(f"Lỗi Gemini: {e}")
-        return []
-
-def extract_cropped_images(image: Image.Image, regions: list):
-    output = []
-    for region in regions:
-        try:
-            x, y, w, h = region["x"], region["y"], region["width"], region["height"]
-            cropped = image.crop((x, y, x + w, y + h))
-            output.append({"label": region.get("label", "minh_hoa"), "image": cropped})
-        except Exception as e:
-            st.warning(f"Lỗi cắt hình: {e}")
-            continue
-    return output
-
 def call_gpt4o(image: Image.Image, mode="latex"):
     if not aivn_key:
         return "❌ Vui lòng nhập AI.VN API Key (GPT-4o)"
@@ -169,6 +84,72 @@ def call_gpt4o(image: Image.Image, mode="latex"):
     except Exception as e:
         return f"Lỗi gọi GPT-4o: {e}"
 
+def detect_image_regions(image: Image.Image):
+    if not gemini_key:
+        st.warning("Vui lòng nhập Google Gemini API Key để tách ảnh minh họa!")
+        return []
+    try:
+        buffered = io.BytesIO()
+        image.save(buffered, format="PNG")
+        image_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": PROMPT_GEMINI},
+                        {
+                            "inline_data": {
+                                "mime_type": "image/png",
+                                "data": image_b64
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        headers = {"Content-Type": "application/json"}
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp-01-21:generateContent?key={gemini_key}"
+        r = requests.post(url, json=payload, headers=headers, timeout=60)
+        resp = r.json()
+        if "candidates" in resp:
+            text = resp["candidates"][0]["content"]["parts"][0]["text"]
+            # Xử lý chuỗi JSON nằm trong code block
+            code_blocks = re.findall(r"```(?:json)?(.*?)```", text, re.DOTALL)
+            if code_blocks:
+                code = code_blocks[0]
+            else:
+                code = text
+            code = code.strip()
+            # Vá một số lỗi format nếu có
+            code = code.replace("\n", "").replace(",]", "]")
+            try:
+                data = json.loads(code)
+                return data
+            except Exception as e:
+                st.error(f"Lỗi parse JSON từ Gemini: {e}\nNội dung nhận được:\n{code}")
+                return []
+        elif "error" in resp:
+            st.error(f"Lỗi Gemini: {resp['error']}")
+            return []
+        else:
+            st.error("Gemini không trả về kết quả phân vùng ảnh!")
+            return []
+    except Exception as e:
+        st.warning(f"Lỗi Gemini: {e}")
+        return []
+
+def extract_cropped_images(image: Image.Image, regions: list):
+    output = []
+    for region in regions:
+        try:
+            x, y, w, h = region["x"], region["y"], region["width"], region["height"]
+            cropped = image.crop((x, y, x + w, y + h))
+            output.append({"label": region.get("label", "minh_hoa"), "image": cropped})
+        except Exception as e:
+            st.warning(f"Lỗi cắt hình: {e}")
+            continue
+    return output
+
 def process_pdf(uploaded_file, mode):
     results = []
     try:
@@ -180,9 +161,11 @@ def process_pdf(uploaded_file, mode):
         page = doc.load_page(0)
         pix = page.get_pixmap(dpi=150)
         img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+        # 1. Gửi ảnh GỐC lên GPT-4o để sinh text/công thức
+        text = call_gpt4o(img, mode=mode)
+        # 2. Tách bounding box ảnh minh họa từ ảnh GỐC
         regions = detect_image_regions(img)
         cropped_images = extract_cropped_images(img, regions)
-        text = call_gpt4o(img, mode=mode)
         results.append({"page": 1, "text": text, "images": cropped_images})
     except Exception as e:
         st.error(f"Lỗi xử lý PDF: {e}")
@@ -208,7 +191,7 @@ uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"])
 mode = st.radio("Chế độ xuất", ["latex", "word"], horizontal=True)
 
 if uploaded_file:
-    st.info("👉 Chỉ xử lý 1 trang đầu để demo. Bạn có thể mở rộng xử lý toàn bộ trang nếu muốn.")
+    st.info("👉 Chỉ xử lý 1 trang đầu để demo.")
     if st.button("🚀 Chuyển đổi"):
         with st.spinner("Đang xử lý... Vui lòng chờ 10–20 giây."):
             result = process_pdf(uploaded_file, mode)
@@ -216,5 +199,5 @@ if uploaded_file:
             st.markdown(f"### Trang {item['page']}")
             st.code(item['text'], language="latex" if mode == "latex" else "markdown")
             for im in item['images']:
-                st.image(im['image'], caption=im['label'], use_column_width=False)
+                st.image(im['image'], caption=im['label'], use_container_width=True)
         st.success("✅ Xử lý xong!")
