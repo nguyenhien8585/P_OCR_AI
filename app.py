@@ -1,20 +1,49 @@
 import streamlit as st
 import fitz  # PyMuPDF
-import requests
 from PIL import Image
-import base64
+import requests
 import io
-import json
+import base64
 import os
-import re
+from ultralytics import YOLO
 
-# Nhập API key trên giao diện
-aivn_key = st.text_input("🔑 Nhập AI.VN API Key (GPT-4o, https://api.sv2.llm.ai.vn)", type="password")
-gemini_key = st.text_input("🔑 Nhập Google Gemini API Key (https://makersuite.google.com/app/apikey)", type="password")
+# --- Load YOLO model (lần đầu hơi lâu, lần sau cực nhanh)
+@st.cache_resource
+def load_model():
+    return YOLO("yolov8x.pt")  # Model lớn nhất, chuẩn nhất
 
-GPT4O_API_URL = "https://api.sv2.llm.ai.vn/v1/chat/completions"
+model = load_model()
 
-PROMPT_LATEX = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
+# --- Hàm tách bounding box bằng YOLO
+def detect_objects(img_pil):
+    results = model(img_pil)
+    bboxes = []
+    for box in results[0].boxes:
+        x1, y1, x2, y2 = map(int, box.xyxy[0])
+        label = results[0].names[int(box.cls[0])] if hasattr(results[0], "names") else "object"
+        bboxes.append({
+            "x": int(x1), "y": int(y1),
+            "width": int(x2 - x1), "height": int(y2 - y1),
+            "label": label
+        })
+    return bboxes
+
+# --- Hàm cắt các ảnh minh hoạ (bounding box)
+def extract_cropped_images(img_pil, regions):
+    w_img, h_img = img_pil.size
+    crops = []
+    for idx, region in enumerate(regions):
+        x = max(0, min(region["x"], w_img - 1))
+        y = max(0, min(region["y"], h_img - 1))
+        w = max(1, min(region["width"], w_img - x))
+        h = max(1, min(region["height"], h_img - y))
+        crop = img_pil.crop((x, y, x + w, y + h))
+        crops.append({"label": region.get("label", f"minh_hoa_{idx+1}"), "image": crop})
+    return crops
+
+# --- Gửi GPT-4o nhận diện văn bản, công thức, LaTeX/Word
+def call_gpt4o(image, mode, api_key):
+    PROMPT_LATEX = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
 1. Với câu hỏi trắc nghiệm không lời giải (bắt đầu bằng 'Câu X:' hoặc 'Câu X.'):
    - Thay 'Câu X:' bằng \\begin{ex}
    - Thêm \\choice trước phương án A
@@ -32,8 +61,7 @@ PROMPT_LATEX = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có tro
    - Thay mỗi chữ cái bằng \\item
 5. Công thức toán học: Giữ nguyên định dạng LaTeX như $...$ hoặc $$...$$
 KHÔNG thêm giải thích hay bình luận gì thêm. Trả về văn bản đã được định dạng LaTeX."""
-
-PROMPT_WORD = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này.
+    PROMPT_WORD = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này.
 1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh
 2. Giữ nguyên cấu trúc đoạn văn và xuống dòng
 3. Với công thức toán học: gõ lại chính xác, tất cả công thức Toán dưới dạng \${...}\$
@@ -48,18 +76,8 @@ PROMPT_WORD = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có tron
    - Đúng/Sai: a), b), c)...
    - Tự luận: Câu X: ... (Lời giải...)
 KHÔNG giải thích. KHÔNG bịa thêm. Trả về văn bản gốc."""
-
-PROMPT_GEMINI = """Trong ảnh sau, hãy tìm ra các vùng ảnh minh họa (biểu đồ, hình vẽ, bảng, sơ đồ,...) và trả về danh sách các tọa độ (x, y, width, height) cho từng vùng ảnh đó. Kết quả phải ở dạng JSON như sau:
-[
-  {"label": "hinh_1", "x": 120, "y": 230, "width": 300, "height": 200},
-  {"label": "hinh_2", "x": 450, "y": 700, "width": 280, "height": 180}
-]"""
-
-def call_gpt4o(image: Image.Image, mode="latex"):
-    if not aivn_key:
-        return "❌ Vui lòng nhập AI.VN API Key (GPT-4o)"
+    prompt = PROMPT_LATEX if mode == "latex" else PROMPT_WORD
     try:
-        prompt = PROMPT_LATEX if mode == "latex" else PROMPT_WORD
         buffered = io.BytesIO()
         image.save(buffered, format="PNG")
         image_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
@@ -74,8 +92,9 @@ def call_gpt4o(image: Image.Image, mode="latex"):
             }],
             "temperature": 0.3
         }
-        headers = {"Authorization": f"Bearer {aivn_key}"}
-        r = requests.post(GPT4O_API_URL, json=payload, headers=headers, timeout=120)
+        headers = {"Authorization": f"Bearer {api_key}"}
+        API_URL = "https://api.sv2.llm.ai.vn/v1/chat/completions"
+        r = requests.post(API_URL, json=payload, headers=headers, timeout=120)
         data = r.json()
         if "choices" in data:
             return data["choices"][0]["message"]["content"]
@@ -84,124 +103,37 @@ def call_gpt4o(image: Image.Image, mode="latex"):
     except Exception as e:
         return f"Lỗi gọi GPT-4o: {e}"
 
-def detect_image_regions(image: Image.Image):
-    if not gemini_key:
-        st.warning("Vui lòng nhập Google Gemini API Key để tách ảnh minh họa!")
-        return []
-    try:
-        buffered = io.BytesIO()
-        image.save(buffered, format="PNG")
-        image_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-        payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": PROMPT_GEMINI},
-                        {
-                            "inline_data": {
-                                "mime_type": "image/png",
-                                "data": image_b64
-                            }
-                        }
-                    ]
-                }
-            ]
-        }
-        headers = {"Content-Type": "application/json"}
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp-01-21:generateContent?key={gemini_key}"
-        r = requests.post(url, json=payload, headers=headers, timeout=60)
-        resp = r.json()
-        if "candidates" in resp:
-            text = resp["candidates"][0]["content"]["parts"][0]["text"]
-            # Xử lý chuỗi JSON nằm trong code block
-            code_blocks = re.findall(r"```(?:json)?(.*?)```", text, re.DOTALL)
-            if code_blocks:
-                code = code_blocks[0]
-            else:
-                code = text
-            code = code.strip()
-            # Vá một số lỗi format nếu có
-            code = code.replace("\n", "").replace(",]", "]")
-            try:
-                data = json.loads(code)
-                return data
-            except Exception as e:
-                st.error(f"Lỗi parse JSON từ Gemini: {e}\nNội dung nhận được:\n{code}")
-                return []
-        elif "error" in resp:
-            st.error(f"Lỗi Gemini: {resp['error']}")
-            return []
-        else:
-            st.error("Gemini không trả về kết quả phân vùng ảnh!")
-            return []
-    except Exception as e:
-        st.warning(f"Lỗi Gemini: {e}")
-        return []
+# --- Streamlit UI
+st.title("📄 Chuyển PDF sang LaTeX/Word + Tách ảnh minh hoạ CHUẨN (YOLOv8)")
+st.markdown("- **Không cần API Gemini, YOLO nhận diện chuẩn mọi hình học, bảng, biểu đồ, ...**\n"
+            "- **Text/công thức vẫn dùng GPT-4o AI.VN**")
 
-def extract_cropped_images(image: Image.Image, regions: list):
-    output = []
-    w_img, h_img = image.size
-    for region in regions:
-        try:
-            x = max(0, min(region["x"], w_img - 1))
-            y = max(0, min(region["y"], h_img - 1))
-            w = max(1, min(region["width"], w_img - x))
-            h = max(1, min(region["height"], h_img - y))
-            cropped = image.crop((x, y, x + w, y + h))
-            output.append({"label": region.get("label", "minh_hoa"), "image": cropped})
-        except Exception as e:
-            st.warning(f"Lỗi cắt hình: {e}")
-            continue
-    return output
-
-def process_pdf(uploaded_file, mode):
-    results = []
-    try:
-        pdf_bytes = uploaded_file.read()
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        if doc.page_count == 0:
-            st.error("PDF không có trang nào.")
-            return []
-        page = doc.load_page(0)
-        pix = page.get_pixmap(dpi=150)
-        img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
-        # 1. Gửi ảnh GỐC lên GPT-4o để sinh text/công thức
-        text = call_gpt4o(img, mode=mode)
-        # 2. Tách bounding box ảnh minh họa từ ảnh GỐC
-        regions = detect_image_regions(img)
-        cropped_images = extract_cropped_images(img, regions)
-        results.append({"page": 1, "text": text, "images": cropped_images})
-    except Exception as e:
-        st.error(f"Lỗi xử lý PDF: {e}")
-    return results
-
-st.set_page_config(page_title="PDF sang LaTeX/Word", layout="wide")
-st.markdown("""
-    <style>
-    .stApp {background-color: #f6f7fa;}
-    .block-container {padding-top: 2rem;}
-    </style>
-""", unsafe_allow_html=True)
-st.title("📄 Chuyển PDF sang LaTeX hoặc Word kèm hình minh họa")
-
-st.markdown("""
-- 📂 **Bước 1:** Nhập key AI.VN (GPT-4o) và Google Gemini
-- 📁 **Bước 2:** Chọn file PDF
-- ⚙️ **Bước 3:** Chọn chế độ xuất (LaTeX hoặc Word)
-- 🚀 **Bước 4:** Nhấn nút chuyển đổi, chờ 10–20 giây
-""")
-
+api_key = st.text_input("🔑 Nhập AI.VN API Key (GPT-4o)", type="password")
 uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"])
 mode = st.radio("Chế độ xuất", ["latex", "word"], horizontal=True)
 
-if uploaded_file:
+if uploaded_file and api_key:
     st.info("👉 Chỉ xử lý 1 trang đầu để demo.")
     if st.button("🚀 Chuyển đổi"):
-        with st.spinner("Đang xử lý... Vui lòng chờ 10–20 giây."):
-            result = process_pdf(uploaded_file, mode)
-        for item in result:
-            st.markdown(f"### Trang {item['page']}")
-            st.code(item['text'], language="latex" if mode == "latex" else "markdown")
-            for im in item['images']:
-                st.image(im['image'], caption=im['label'], use_container_width=True)
-        st.success("✅ Xử lý xong!")
+        with st.spinner("Đang xử lý..."):
+            pdf_bytes = uploaded_file.read()
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            page = doc.load_page(0)
+            pix = page.get_pixmap(dpi=150)
+            img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+
+            # 1. Nhận diện text/công thức
+            gpt_result = call_gpt4o(img, mode, api_key)
+            # 2. Tách ảnh minh hoạ CHUẨN bằng YOLO
+            regions = detect_objects(img)
+            crops = extract_cropped_images(img, regions)
+
+        st.markdown("## Kết quả")
+        st.code(gpt_result, language="latex" if mode == "latex" else "markdown")
+        if len(crops) == 0:
+            st.warning("Không tìm thấy vùng ảnh minh hoạ nào!")
+        else:
+            for crop in crops:
+                st.image(crop['image'], caption=crop['label'], use_container_width=True)
+        st.success("✅ Đã xử lý xong!")
+
