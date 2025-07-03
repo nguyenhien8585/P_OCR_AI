@@ -1,4 +1,4 @@
-# 📄 OCR PDF/Ảnh bằng GPT-4o và Gemini 2.0 Flash (API HTTP)
+# 📄 OCR PDF/Ảnh bằng GPT-4o và Gemini 2.5 (AI.VN Proxy)
 import streamlit as st
 import fitz  # PyMuPDF
 from PIL import Image
@@ -11,40 +11,37 @@ import json
 import re
 
 # ------------------------------
-# 🔧 Cấu hình Gemini 2.0 Flash HTTP API
+# 🔧 Cấu hình Gemini 2.5 (AI.VN Proxy)
 # ------------------------------
 def detect_tables_with_gemini(image: Image.Image, api_key: str):
     img_bytes = io.BytesIO()
     image.save(img_bytes, format="PNG")
     img_base64 = base64.b64encode(img_bytes.getvalue()).decode()
 
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+    url = "https://api.sv2.llm.ai.vn/v1/chat/completions"
     headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
     }
 
     prompt = "Phát hiện vị trí tất cả các bảng biến thiên trong ảnh. Trả lời bằng JSON gồm list các dict với các khóa: label (luôn là 'bang'), x, y, width, height."
 
     payload = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": prompt},
-                    {
-                        "inline_data": {
-                            "mime_type": "image/png",
-                            "data": img_base64
-                        }
-                    }
-                ]
-            }
-        ]
+        "model": "gemini-pro-2.5-preview-06-05",
+        "messages": [
+            {"role": "system", "content": "Bạn là AI chuyên phát hiện bảng trong ảnh"},
+            {"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}}
+            ]}
+        ],
+        "temperature": 0.2,
+        "max_tokens": 2048
     }
 
-    res = requests.post(url, headers=headers, data=json.dumps(payload))
+    res = requests.post(url, headers=headers, json=payload)
     if res.status_code == 200:
-        return res.json()["candidates"][0]["content"]["parts"][0]["text"]
+        return res.json()["choices"][0]["message"]["content"]
     else:
         raise Exception(f"❌ Lỗi Gemini API: {res.status_code} {res.text}")
 
@@ -118,10 +115,10 @@ def crop_image(img, box):
 # 🌟 Giao diện Streamlit Web
 # ------------------------------
 st.set_page_config(page_title="📄 PDF to Word/LaTeX", layout="centered")
-st.title("📄 Chuyển PDF sang Word/LaTeX + ảnh minh họa bằng GPT-4o + Gemini 2.0 Flash")
+st.title("📄 Chuyển PDF sang Word/LaTeX + ảnh minh họa bằng GPT-4o + Gemini 2.5")
 
 api_key = st.text_input("🔐 Nhập API Key AI.VN (GPT-4o)", type="password")
-gemini_key = st.text_input("🔐 Nhập API Key Gemini 2.0", type="password")
+gemini_key = st.text_input("🔐 Nhập API Key Gemini 2.5", type="password")
 mode = st.radio("Chọn chế độ chuyển đổi:", ["word", "latex"], index=0, format_func=lambda x: "Word (giữ nguyên)" if x == "word" else "LaTeX (soạn đề)")
 file = st.file_uploader("📎 Tải lên file PDF hoặc ảnh", type=["pdf", "png", "jpg", "jpeg"])
 
@@ -135,7 +132,7 @@ if api_key and gemini_key and file:
     st.success(f"✅ Đã tải {len(images)} trang ảnh")
     all_text = ""
     for i, img in enumerate(images):
-        st.image(img, caption=f"Trang {i+1}", use_column_width=True)
+        st.image(img, caption=f"Trang {i+1}", use_container_width=True)
         st.info(f"☺️ Gemini Vision đang xác định bảng trên trang {i+1}...")
         try:
             boxes_json = detect_tables_with_gemini(img, gemini_key)
