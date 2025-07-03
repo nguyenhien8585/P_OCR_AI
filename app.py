@@ -7,31 +7,12 @@ import io
 import json
 import os
 
-# ==== GIAO DIỆN: Nhập API key và URLbase trực tiếp ====
-st.set_page_config(page_title="PDF sang LaTeX/Word", layout="wide")
-st.markdown("""
-    <style>
-    .stApp {background-color: #f6f7fa;}
-    .block-container {padding-top: 2rem;}
-    </style>
-""", unsafe_allow_html=True)
-st.title("📄 Chuyển PDF sang LaTeX hoặc Word kèm hình minh họa")
-
-st.markdown("""
-- 📂 **Bước 1:** Nhập API key và URLbase, chọn file PDF
-- ⚙️ **Bước 2:** Chọn chế độ xuất (LaTeX hoặc Word)
-- 🚀 **Bước 3:** Nhấn nút chuyển đổi, chờ 10–20 giây
-""")
-
-# ==== Nhập API key và URLbase ngay trên web ====
-api_key_input = st.text_input("🔑 Nhập AI_API_KEY lấy từ https://api.sv2.llm.ai.vn (bảo mật, không lưu lại):", type="password")
-urlbase_input = st.text_input("🔗 Thiết lập URL base API Endpoint:", value="https://api.sv2.llm.ai.vn/v1")
+# Cấu hình API
+GPT4O_API_URL = "https://api.sv2.llm.ai.vn/v1/chat/completions"
+GEMINI_API_URL = "https://api.sv2.llm.ai.vn/v1/models/gemini:gemini-2.5-pro-preview-06-05:generate-content"
+# Cho phép nhập key trên giao diện
+api_key_input = st.text_input("🔑 Nhập AI_API_KEY lấy từ https://api.sv2.llm.ai.vn (không lưu lại):", type="password")
 API_KEY = api_key_input.strip() if api_key_input.strip() else os.getenv("AI_API_KEY", "demo-key")
-URLBASE = urlbase_input.strip() if urlbase_input.strip() else "https://api.sv2.llm.ai.vn/v1"
-
-# Đặt các endpoint dựa vào URLBASE
-GPT4O_API_URL = f"{URLBASE}/chat/completions"
-GEMINI_API_URL = f"{URLBASE}/models/gemini:gemini-2.5-pro-preview-06-05:generate-content"
 
 PROMPT_LATEX = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
 1. Với câu hỏi trắc nghiệm không lời giải (bắt đầu bằng 'Câu X:' hoặc 'Câu X.'):
@@ -89,8 +70,13 @@ def detect_image_regions(image: Image.Image):
         }
         headers = {"Authorization": f"Bearer {API_KEY}"}
         r = requests.post(GEMINI_API_URL, json=payload, headers=headers, timeout=60)
-        text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-        return json.loads(text)
+        data = r.json()
+        if "candidates" in data:
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            return json.loads(text)
+        else:
+            st.warning(f"Lỗi Gemini: {data.get('error', data)}")
+            return []
     except Exception as e:
         st.warning(f"Lỗi Gemini: {e}")
         return []
@@ -152,6 +138,21 @@ def process_pdf(uploaded_file, mode):
     except Exception as e:
         st.error(f"Lỗi xử lý PDF: {e}")
     return results
+
+st.set_page_config(page_title="PDF sang LaTeX/Word", layout="wide")
+st.markdown("""
+    <style>
+    .stApp {background-color: #f6f7fa;}
+    .block-container {padding-top: 2rem;}
+    </style>
+""", unsafe_allow_html=True)
+st.title("📄 Chuyển PDF sang LaTeX hoặc Word kèm hình minh họa")
+
+st.markdown("""
+- 📂 **Bước 1:** Nhập key và chọn file PDF
+- ⚙️ **Bước 2:** Chọn chế độ xuất (LaTeX hoặc Word)
+- 🚀 **Bước 3:** Nhấn nút chuyển đổi, chờ 10–20 giây
+""")
 
 uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"])
 mode = st.radio("Chế độ xuất", ["latex", "word"], horizontal=True)
