@@ -140,9 +140,13 @@ def detect_image_regions(image: Image.Image):
 
 def extract_cropped_images(image: Image.Image, regions: list):
     output = []
+    w_img, h_img = image.size
     for region in regions:
         try:
-            x, y, w, h = region["x"], region["y"], region["width"], region["height"]
+            x = max(0, min(region["x"], w_img - 1))
+            y = max(0, min(region["y"], h_img - 1))
+            w = max(1, min(region["width"], w_img - x))
+            h = max(1, min(region["height"], h_img - y))
             cropped = image.crop((x, y, x + w, y + h))
             output.append({"label": region.get("label", "minh_hoa"), "image": cropped})
         except Exception as e:
