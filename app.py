@@ -5,12 +5,17 @@ from PIL import Image
 import base64
 import io
 import json
+import os
 
-# Nhập Gemini API Key
-gemini_key = st.text_input(
-    "🔑 Nhập Google Gemini API Key (lấy ở https://makersuite.google.com/app/apikey):",
-    type="password"
+# Cho nhập key AI.VN và key Gemini Google
+aivn_key = st.text_input(
+    "🔑 Nhập AI.VN API Key (GPT-4o, https://api.sv2.llm.ai.vn)", type="password"
 )
+gemini_key = st.text_input(
+    "🔑 Nhập Google Gemini API Key (https://makersuite.google.com/app/apikey)", type="password"
+)
+
+GPT4O_API_URL = "https://api.sv2.llm.ai.vn/v1/chat/completions"
 
 PROMPT_LATEX = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
 1. Với câu hỏi trắc nghiệm không lời giải (bắt đầu bằng 'Câu X:' hoặc 'Câu X.'):
@@ -55,7 +60,7 @@ PROMPT_GEMINI = """Trong ảnh sau, hãy tìm ra các vùng ảnh minh họa (bi
 
 def detect_image_regions(image: Image.Image):
     if not gemini_key:
-        st.warning("Vui lòng nhập Gemini API Key để tách ảnh minh họa bằng Google Gemini!")
+        st.warning("Vui lòng nhập Google Gemini API Key để tách ảnh minh họa!")
         return []
     try:
         buffered = io.BytesIO()
@@ -76,11 +81,9 @@ def detect_image_regions(image: Image.Image):
                 }
             ]
         }
-        headers = {
-            "Content-Type": "application/json",
-            "X-goog-api-key": gemini_key
-        }
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+        headers = {"Content-Type": "application/json"}
+        # Đổi endpoint Gemini tùy ý, ví dụ:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp-01-21:generateContent?key={gemini_key}"
         r = requests.post(url, json=payload, headers=headers, timeout=60)
         resp = r.json()
         if "candidates" in resp:
@@ -105,10 +108,34 @@ def extract_cropped_images(image: Image.Image, regions: list):
             continue
     return output
 
-# Bạn có thể thay call_gpt4o bằng 1 hàm gọi GPT hoặc Gemini cho OCR text, ở đây placeholder:
-def call_gemini_ocr(image: Image.Image, mode="latex"):
-    # Để lại chỗ này để bạn tích hợp OCR bằng Gemini hoặc bất kỳ API nào bạn thích
-    return "OCR placeholder (bạn tích hợp thêm API sinh văn bản ở đây)"
+def call_gpt4o(image: Image.Image, mode="latex"):
+    if not aivn_key:
+        return "❌ Vui lòng nhập AI.VN API Key (GPT-4o)"
+    try:
+        prompt = PROMPT_LATEX if mode == "latex" else PROMPT_WORD
+        buffered = io.BytesIO()
+        image.save(buffered, format="PNG")
+        image_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        payload = {
+            "model": "openai:gpt-4o",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}}
+                ]
+            }],
+            "temperature": 0.3
+        }
+        headers = {"Authorization": f"Bearer {aivn_key}"}
+        r = requests.post(GPT4O_API_URL, json=payload, headers=headers, timeout=120)
+        data = r.json()
+        if "choices" in data:
+            return data["choices"][0]["message"]["content"]
+        else:
+            return f"Lỗi GPT-4o: {data.get('error', data)}"
+    except Exception as e:
+        return f"Lỗi gọi GPT-4o: {e}"
 
 def process_pdf(uploaded_file, mode):
     results = []
@@ -123,7 +150,7 @@ def process_pdf(uploaded_file, mode):
         img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
         regions = detect_image_regions(img)
         cropped_images = extract_cropped_images(img, regions)
-        text = call_gemini_ocr(img, mode=mode)
+        text = call_gpt4o(img, mode=mode)
         results.append({"page": 1, "text": text, "images": cropped_images})
     except Exception as e:
         st.error(f"Lỗi xử lý PDF: {e}")
@@ -136,13 +163,13 @@ st.markdown("""
     .block-container {padding-top: 2rem;}
     </style>
 """, unsafe_allow_html=True)
-st.title("📄 Chuyển PDF sang LaTeX hoặc Word kèm hình minh họa (Google Gemini)")
+st.title("📄 Chuyển PDF sang LaTeX hoặc Word kèm hình minh họa")
 
 st.markdown("""
-- 📂 **Bước 1:** Nhập Google Gemini API Key
+- 📂 **Bước 1:** Nhập key AI.VN (GPT-4o) và Google Gemini
 - 📁 **Bước 2:** Chọn file PDF
 - ⚙️ **Bước 3:** Chọn chế độ xuất (LaTeX hoặc Word)
-- 🚀 **Bước 4:** Nhấn nút chuyển đổi, chờ kết quả
+- 🚀 **Bước 4:** Nhấn nút chuyển đổi, chờ 10–20 giây
 """)
 
 uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"])
