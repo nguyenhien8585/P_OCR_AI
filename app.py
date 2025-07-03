@@ -7,13 +7,12 @@ import io
 import json
 import os
 
-# Cho phép nhập API key trực tiếp trên giao diện (ưu tiên nhập, fallback lấy từ biến môi trường)
+# Cho phép nhập API key trực tiếp trên giao diện
 api_key_input = st.text_input("🔑 Nhập AI_API_KEY lấy từ https://api.sv2.llm.ai.vn (không lưu lại):", type="password")
 API_KEY = api_key_input.strip() if api_key_input.strip() else os.getenv("AI_API_KEY", "demo-key")
 
-# Các biến GPT4O_API_URL, GEMINI_API_URL giữ nguyên
-GPT4O_API_URL = "https://api.sv2.llm.ai.vn"
-GEMINI_API_URL = "https://api.sv2.llm.ai.vn"
+GPT4O_API_URL = "https://api.sv2.llm.ai.vn/v1/chat/completions"
+GEMINI_API_URL = "https://api.sv2.llm.ai.vn/v1/models/gemini:gemini-2.5-pro-preview-06-05:generate-content"
 
 PROMPT_LATEX = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
 1. Với câu hỏi trắc nghiệm không lời giải (bắt đầu bằng 'Câu X:' hoặc 'Câu X.'):
