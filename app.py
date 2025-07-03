@@ -1,164 +1,113 @@
-# 📄 OCR PDF/Ảnh bằng GPT-4o và Gemini 2.5 (AI.VN Proxy)
 import streamlit as st
 import fitz  # PyMuPDF
-from PIL import Image
-import io
-import tempfile
-import base64
 import requests
-import os
+from PIL import Image
+import base64
+import io
 import json
-import re
+import uuid
 
-# ------------------------------
-# 🔧 Cấu hình Gemini 2.5 (AI.VN Proxy)
-# ------------------------------
-def detect_tables_with_gemini(image: Image.Image, api_key: str):
-    img_bytes = io.BytesIO()
-    image.save(img_bytes, format="PNG")
-    img_base64 = base64.b64encode(img_bytes.getvalue()).decode()
+# Cấu hình API
+GPT4O_API_URL = "https://api.sv2.llm.ai.vn/v1/chat/completions"
+GEMINI_API_URL = "https://api.sv2.llm.ai.vn/v1/models/gemini:gemini-2.5-pro-preview-06-05:generate-content"
+API_KEY = "sk-j4DkzI7htsVqEZqC272d3b58B0Fb49A183573dD2Fc04F71d"  # Thay bằng API key thật
 
-    url = "https://api.sv2.llm.ai.vn/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
+# Prompt cho GPT-4o
+PROMPT_LATEX = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
+... (như bạn đã cung cấp ở trên)"""
 
-    prompt = "Phát hiện vị trí tất cả các bảng biến thiên trong ảnh. Trả lời bằng JSON gồm list các dict với các khóa: label (luôn là 'bang'), x, y, width, height."
+PROMPT_WORD = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này.
+... (như bạn đã cung cấp ở trên)"""
 
-    payload = {
-        "model": "gemini:gemini-2.5-pro-preview-06-05",
-        "messages": [
-            {"role": "system", "content": "Bạn là AI chuyên phát hiện bảng trong ảnh"},
-            {"role": "user", "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}}
-            ]}
-        ],
-        "temperature": 0.2,
-        "max_tokens": 2048
-    }
+PROMPT_GEMINI = "Trong ảnh sau, hãy tìm ra các vùng ảnh minh họa (biểu đồ, hình vẽ, bảng, sơ đồ,...) và trả về danh sách các tọa độ (x, y, width, height) cho từng vùng ảnh đó. Kết quả phải ở dạng JSON như sau: ..."
 
-    res = requests.post(url, headers=headers, json=payload)
-    if res.status_code == 200:
-        return res.json()["choices"][0]["message"]["content"]
-    else:
-        raise Exception(f"❌ Lỗi Gemini API: {res.status_code} {res.text}")
-
-# ------------------------------
-# 📌 Hàm chuyển PDF thành ảnh
-# ------------------------------
-def pdf_to_images(pdf_bytes):
-    images = []
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    for page in doc:
-        pix = page.get_pixmap(dpi=300)
-        img = Image.open(io.BytesIO(pix.tobytes("png")))
-        images.append(img)
-    return images
-
-# ------------------------------
-# 📌 Hàm gọi GPT-4o AI.VN
-# ------------------------------
-def get_prompt(mode):
-    if mode == "latex":
-        return "Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX. KHÔNG giải thích. KHÔNG bằa thêm."
-    else:
-        return "Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này. KHÔNG giải thích. KHÔNG bằa thêm."
-
-def ask_gpt_vision(image, mode, api_key):
+# Hàm gửi ảnh tới Gemini để tách vùng hình minh hoạ
+def detect_image_regions(image):
     buffered = io.BytesIO()
     image.save(buffered, format="PNG")
-    img_b64 = base64.b64encode(buffered.getvalue()).decode()
+    image_bytes = buffered.getvalue()
+    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
-    url = "https://api.sv2.llm.ai.vn/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": PROMPT_GEMINI},
+                {"inline_data": {"mime_type": "image/png", "data": image_b64}}
+            ]
+        }]
+    }
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    response = requests.post(GEMINI_API_URL, json=payload, headers=headers)
+    try:
+        return json.loads(response.json()["candidates"][0]["content"]["parts"][0]["text"])
+    except:
+        return []
+
+# Hàm gửi ảnh sang GPT-4o để sinh LaTeX hoặc Word
+
+def call_gpt4o(image, mode="latex"):
+    prompt = PROMPT_LATEX if mode == "latex" else PROMPT_WORD
+    buffered = io.BytesIO()
+    image.save(buffered, format="PNG")
+    image_bytes = buffered.getvalue()
+    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
     payload = {
         "model": "openai:gpt-4o",
-        "messages": [
-            {"role": "system", "content": "Bạn là AI chuyên OCR học thuật."},
-            {"role": "user", "content": [
-                {"type": "text", "text": get_prompt(mode)},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}}
-            ]}
-        ],
-        "temperature": 0.2,
-        "max_tokens": 4096
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}}
+            ]
+        }],
+        "temperature": 0.3
     }
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    response = requests.post(GPT4O_API_URL, json=payload, headers=headers)
+    return response.json()["choices"][0]["message"]["content"]
 
-    res = requests.post(url, headers=headers, json=payload)
-    if res.status_code == 200:
-        return res.json()["choices"][0]["message"]["content"]
-    else:
-        raise Exception(f"❌ Lỗi GPT-4o AI.VN: {res.status_code} {res.text}")
+# Hàm xử lý toàn bộ PDF
 
-# ------------------------------
-# 📌 Hàm tạo file Word
-# ------------------------------
-def build_docx(text, output_path):
-    from docx import Document
-    doc = Document()
-    for line in text.splitlines():
-        if line.strip():
-            doc.add_paragraph(line)
-    doc.save(output_path)
+def process_pdf(uploaded_file, mode):
+    results = []
+    pdf_bytes = uploaded_file.read()
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
-# ------------------------------
-# 📌 Hàm cắt ảnh theo bounding box
-# ------------------------------
-def crop_image(img, box):
-    x, y, w, h = box["x"], box["y"], box["width"], box["height"]
-    return img.crop((x, y, x + w, y + h))
+    for i, page in enumerate(doc):
+        pix = page.get_pixmap(dpi=300)
+        img = Image.open(io.BytesIO(pix.tobytes("png")))
 
-# ------------------------------
-# 🌟 Giao diện Streamlit Web
-# ------------------------------
-st.set_page_config(page_title="📄 PDF to Word/LaTeX", layout="centered")
-st.title("📄 Chuyển PDF sang Word/LaTeX + ảnh minh họa bằng GPT-4o + Gemini 2.5")
+        # Gọi Gemini để phát hiện vùng hình
+        regions = detect_image_regions(img)
 
-api_key = st.text_input("🔐 Nhập API Key AI.VN (GPT-4o)", type="password")
-gemini_key = st.text_input("🔐 Nhập API Key Gemini 2.5", type="password")
-mode = st.radio("Chọn chế độ chuyển đổi:", ["word", "latex"], index=0, format_func=lambda x: "Word (giữ nguyên)" if x == "word" else "LaTeX (soạn đề)")
-file = st.file_uploader("📎 Tải lên file PDF hoặc ảnh", type=["pdf", "png", "jpg", "jpeg"])
+        # Cắt ảnh minh hoạ nếu có
+        for region in regions:
+            x, y, w, h = region["x"], region["y"], region["width"], region["height"]
+            cropped = img.crop((x, y, x + w, y + h))
+            region["image"] = cropped
 
-if api_key and gemini_key and file:
-    with st.spinner("🔄 Đang chuyển PDF thành ảnh..."):
-        if file.type == "application/pdf":
-            images = pdf_to_images(file.read())
-        else:
-            images = [Image.open(file)]
+        # Gửi ảnh gốc sang GPT-4o
+        latex_or_word = call_gpt4o(img, mode=mode)
 
-    st.success(f"✅ Đã tải {len(images)} trang ảnh")
-    all_text = ""
-    for i, img in enumerate(images):
-        st.image(img, caption=f"Trang {i+1}", use_container_width=True)
-        st.info(f"☺️ Gemini Vision đang xác định bảng trên trang {i+1}...")
-        try:
-            boxes_json = detect_tables_with_gemini(img, gemini_key)
-            match = re.search(r'\[.*\]', boxes_json, re.DOTALL)
-            if match:
-                boxes = json.loads(match.group(0))
-            else:
-                st.error("❌ Không tìm thấy định dạng JSON hợp lệ trong phản hồi Gemini.")
-                continue
-        except Exception as e:
-            st.error(f"❌ Lỗi phân tích kết quả từ Gemini: {e}")
-            continue
+        results.append({"page": i+1, "text": latex_or_word, "images": regions})
 
-        for j, box in enumerate(boxes):
-            cropped = crop_image(img, box)
-            st.image(cropped, caption=f"Ảnh bảng {j+1}", width=300)
-            st.info(f"📖 GPT-4o đang OCR ảnh bảng {j+1}...")
-            text = ask_gpt_vision(cropped, mode, api_key)
-            all_text += text + "\n\n"
+    return results
 
-    st.success("🎉 Đã xử lý xong toàn bộ ảnh!")
+# Streamlit UI
+st.title("Chuyển PDF sang LaTeX hoặc Word kèm hình minh hoạ")
+uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"])
+mode = st.selectbox("Chế độ xuất", ["latex", "word"])
 
-    if mode == "latex":
-        st.code(all_text, language="latex")
-        st.download_button("📅 Tải LaTeX (.tex)", all_text, file_name="output.tex", mime="text/plain")
-    else:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
-            build_docx(all_text, tmp.name)
-            st.download_button("📅 Tải Word (.docx)", open(tmp.name, "rb"), file_name="output.docx")
+if uploaded_file:
+    if st.button("Chuyển đổi"):
+        with st.spinner("Đang xử lý..."):
+            output = process_pdf(uploaded_file, mode)
+
+        for item in output:
+            st.subheader(f"Trang {item['page']}")
+            st.code(item['text'], language="latex" if mode == "latex" else "markdown")
+            for img_data in item["images"]:
+                st.image(img_data["image"], caption=img_data["label"], width=300)
+
+        st.success("Xử lý xong!")
