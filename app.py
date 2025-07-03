@@ -8,6 +8,7 @@ import base64
 import requests
 import os
 import json
+import re
 
 # ------------------------------
 # 🔧 Cấu hình Gemini 2.0 Flash HTTP API
@@ -45,7 +46,7 @@ def detect_tables_with_gemini(image: Image.Image, api_key: str):
     if res.status_code == 200:
         return res.json()["candidates"][0]["content"]["parts"][0]["text"]
     else:
-        raise Exception(f"Lỗi Gemini API: {res.status_code} {res.text}")
+        raise Exception(f"❌ Lỗi Gemini API: {res.status_code} {res.text}")
 
 # ------------------------------
 # 📌 Hàm chuyển PDF thành ảnh
@@ -64,9 +65,9 @@ def pdf_to_images(pdf_bytes):
 # ------------------------------
 def get_prompt(mode):
     if mode == "latex":
-        return "Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX. KHÔNG giải thích. KHÔNG bịa thêm."
+        return "Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX. KHÔNG giải thích. KHÔNG bằa thêm."
     else:
-        return "Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này. KHÔNG giải thích. KHÔNG bịa thêm."
+        return "Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này. KHÔNG giải thích. KHÔNG bằa thêm."
 
 def ask_gpt_vision(image, mode, api_key):
     buffered = io.BytesIO()
@@ -93,7 +94,7 @@ def ask_gpt_vision(image, mode, api_key):
     if res.status_code == 200:
         return res.json()["choices"][0]["message"]["content"]
     else:
-        raise Exception(f"Lỗi GPT-4o AI.VN: {res.status_code} {res.text}")
+        raise Exception(f"❌ Lỗi GPT-4o AI.VN: {res.status_code} {res.text}")
 
 # ------------------------------
 # 📌 Hàm tạo file Word
@@ -114,7 +115,7 @@ def crop_image(img, box):
     return img.crop((x, y, x + w, y + h))
 
 # ------------------------------
-# 🎯 Giao diện Streamlit Web
+# 🌟 Giao diện Streamlit Web
 # ------------------------------
 st.set_page_config(page_title="📄 PDF to Word/LaTeX", layout="centered")
 st.title("📄 Chuyển PDF sang Word/LaTeX + ảnh minh họa bằng GPT-4o + Gemini 2.0 Flash")
@@ -135,12 +136,17 @@ if api_key and gemini_key and file:
     all_text = ""
     for i, img in enumerate(images):
         st.image(img, caption=f"Trang {i+1}", use_column_width=True)
-        st.info(f"🤖 Gemini Vision đang xác định bảng trên trang {i+1}...")
+        st.info(f"☺️ Gemini Vision đang xác định bảng trên trang {i+1}...")
         try:
             boxes_json = detect_tables_with_gemini(img, gemini_key)
-            boxes = json.loads(boxes_json)
-        except:
-            st.error("❌ Lỗi phân tích kết quả từ Gemini. Định dạng JSON không hợp lệ.")
+            match = re.search(r'\[.*\]', boxes_json, re.DOTALL)
+            if match:
+                boxes = json.loads(match.group(0))
+            else:
+                st.error("❌ Không tìm thấy định dạng JSON hợp lệ trong phản hồi Gemini.")
+                continue
+        except Exception as e:
+            st.error(f"❌ Lỗi phân tích kết quả từ Gemini: {e}")
             continue
 
         for j, box in enumerate(boxes):
@@ -154,8 +160,8 @@ if api_key and gemini_key and file:
 
     if mode == "latex":
         st.code(all_text, language="latex")
-        st.download_button("📥 Tải LaTeX (.tex)", all_text, file_name="output.tex", mime="text/plain")
+        st.download_button("📅 Tải LaTeX (.tex)", all_text, file_name="output.tex", mime="text/plain")
     else:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
             build_docx(all_text, tmp.name)
-            st.download_button("📥 Tải Word (.docx)", open(tmp.name, "rb"), file_name="output.docx")
+            st.download_button("📅 Tải Word (.docx)", open(tmp.name, "rb"), file_name="output.docx")
