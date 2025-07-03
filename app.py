@@ -15,7 +15,7 @@ gemini_key = st.text_input(
     "🔑 Nhập Google Gemini API Key (https://makersuite.google.com/app/apikey)", type="password"
 )
 
-GPT4O_API_URL = "https://api.sv2.llm.ai.vn/v1/chat/completions"
+GPT4O_API_URL = "https://api.sv2.llm.ai.vn/v1"
 
 PROMPT_LATEX = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
 1. Với câu hỏi trắc nghiệm không lời giải (bắt đầu bằng 'Câu X:' hoặc 'Câu X.'):
@@ -84,16 +84,44 @@ def detect_image_regions(image: Image.Image):
         headers = {"Content-Type": "application/json"}
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp-01-21:generateContent?key={gemini_key}"
         r = requests.post(url, json=payload, headers=headers, timeout=60)
-        if r.status_code != 200:
-            st.warning(f"Lỗi Gemini: {r.status_code} - {r.text}")
-            return []
         resp = r.json()
-        st.write("Phản hồi Gemini:", resp)   # Debug xem Gemini trả về gì!
+        # st.write("Phản hồi Gemini:", resp)   # debug
+
         if "candidates" in resp:
             text = resp["candidates"][0]["content"]["parts"][0]["text"]
-            return json.loads(text)
+            # Lấy phần nằm trong ``` hoặc ```json block
+            code_blocks = re.findall(r"```(?:json)?(.*?)```", text, re.DOTALL)
+            if code_blocks:
+                code = code_blocks[0]
+            else:
+                code = text
+
+            # Loại bỏ các dòng thừa/newline và thử sửa lỗi JSON nếu có
+            code = code.strip()
+            # Thử thêm ngoặc vuông nếu thiếu
+            if not code.startswith("["):
+                code = "[" + code
+            if not code.endswith("]"):
+                code = code + "]"
+            # Thay dấu ] [ giữa 2 object thành dấu phẩy
+            code = code.replace("]\n[", ",\n")
+            code = code.replace("],\n[", ",\n")
+            # Thay đổi 'label' bị nằm ngoài {} thành object hợp lệ
+            code = re.sub(r"\[\s*\"label\":", "{\n\"label\":", code)
+            code = re.sub(r"\}\s*\]\s*,", "},", code)
+            code = code.replace("]\n]", "]")
+
+            try:
+                data = json.loads(code)
+                return data
+            except Exception as e:
+                st.error(f"Lỗi parse JSON từ Gemini: {e}\nNội dung nhận được:\n{code}")
+                return []
+        elif "error" in resp:
+            st.error(f"Lỗi Gemini: {resp['error']}")
+            return []
         else:
-            st.warning(f"Lỗi Gemini (không có candidates): {resp}")
+            st.error("Gemini không trả về kết quả phân vùng ảnh!")
             return []
     except Exception as e:
         st.warning(f"Lỗi Gemini: {e}")
