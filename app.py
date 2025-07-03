@@ -58,26 +58,43 @@ PROMPT_GEMINI = """Trong ảnh sau, hãy tìm ra các vùng ảnh minh họa (bi
 ]"""
 
 def detect_image_regions(image: Image.Image):
+    # Cho phép nhập Gemini API key riêng
+    gemini_key = st.session_state.get("gemini_key", "")
+    if not gemini_key:
+        gemini_key = st.text_input("🔑 Nhập Google Gemini API Key (lấy ở https://makersuite.google.com/app/apikey):", key="gemini_api_key", type="password")
+        st.session_state["gemini_key"] = gemini_key
+
+    if not gemini_key:
+        st.warning("Vui lòng nhập Gemini API Key để dùng chức năng tách ảnh minh họa bằng Google Gemini!")
+        return []
     try:
         buffered = io.BytesIO()
         image.save(buffered, format="PNG")
         image_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
         payload = {
-            "contents": [{
-                "parts": [
-                    {"text": PROMPT_GEMINI},
-                    {"inline_data": {"mime_type": "image/png", "data": image_b64}}
-                ]
-            }]
+            "contents": [
+                {
+                    "parts": [
+                        {"text": PROMPT_GEMINI},
+                        {
+                            "inline_data": {
+                                "mime_type": "image/png",
+                                "data": image_b64
+                            }
+                        }
+                    ]
+                }
+            ]
         }
-        headers = {"Authorization": f"Bearer {API_KEY}"}
-        r = requests.post(GEMINI_API_URL, json=payload, headers=headers, timeout=60)
-        data = r.json()
-        if "candidates" in data:
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
+        headers = {"Content-Type": "application/json"}
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}"
+        r = requests.post(url, json=payload, headers=headers, timeout=60)
+        resp = r.json()
+        if "candidates" in resp:
+            text = resp["candidates"][0]["content"]["parts"][0]["text"]
             return json.loads(text)
         else:
-            st.warning(f"Lỗi Gemini: {data.get('error', data)}")
+            st.warning(f"Lỗi Gemini: {resp.get('error', resp)}")
             return []
     except Exception as e:
         st.warning(f"Lỗi Gemini: {e}")
