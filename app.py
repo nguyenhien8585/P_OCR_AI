@@ -10,7 +10,7 @@ import os
 # Cấu hình API
 GPT4O_API_URL = "https://api.sv2.llm.ai.vn/v1/chat/completions"
 GEMINI_API_URL = "https://api.sv2.llm.ai.vn/v1/models/gemini:gemini-2.5-pro-preview-06-05:generate-content"
-API_KEY = os.getenv("sk-j4DkzI7htsVqEZqC272d3b58B0Fb49A183573dD2Fc04F71d", "demo-key")
+API_KEY = os.getenv("sk-j4DkzI7htsVqEZqC272d3b58B0Fb49A183573dD2Fc04F71d")
 
 PROMPT_LATEX = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
 1. Với câu hỏi trắc nghiệm không lời giải (bắt đầu bằng 'Câu X:' hoặc 'Câu X.'):
