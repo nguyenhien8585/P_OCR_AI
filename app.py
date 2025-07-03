@@ -8,8 +8,8 @@ import json
 import os
 
 # Cấu hình API
-GPT4O_API_URL = "https://api.sv2.llm.ai.vn/v1"
-GEMINI_API_URL = "https://api.sv2.llm.ai.vn/v1"
+GPT4O_API_URL = "https://api.sv2.llm.ai.vn/v1/chat/completions"
+GEMINI_API_URL = "https://api.sv2.llm.ai.vn/v1/models/gemini:gemini-2.5-pro-preview-06-05:generate-content"
 API_KEY = os.getenv("sk-j4DkzI7htsVqEZqC272d3b58B0Fb49A183573dD2Fc04F71d", "demo-key")
 
 PROMPT_LATEX = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
@@ -52,6 +52,7 @@ PROMPT_GEMINI = """Trong ảnh sau, hãy tìm ra các vùng ảnh minh họa (bi
   {"label": "hinh_1", "x": 120, "y": 230, "width": 300, "height": 200},
   {"label": "hinh_2", "x": 450, "y": 700, "width": 280, "height": 180}
 ]"""
+
 def detect_image_regions(image: Image.Image):
     try:
         buffered = io.BytesIO()
@@ -102,7 +103,12 @@ def call_gpt4o(image: Image.Image, mode="latex"):
         }
         headers = {"Authorization": f"Bearer {API_KEY}"}
         r = requests.post(GPT4O_API_URL, json=payload, headers=headers, timeout=120)
-        return r.json()["choices"][0]["message"]["content"]
+        data = r.json()
+        if "choices" in data:
+            return data["choices"][0]["message"]["content"]
+        else:
+            # Hiển thị rõ nội dung trả về từ API để debug
+            return f"Lỗi GPT-4o: {data.get('error', data)}"
     except Exception as e:
         return f"Lỗi gọi GPT-4o: {e}"
 
