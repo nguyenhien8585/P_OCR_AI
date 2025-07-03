@@ -82,15 +82,18 @@ def detect_image_regions(image: Image.Image):
             ]
         }
         headers = {"Content-Type": "application/json"}
-        # Đổi endpoint Gemini tùy ý, ví dụ:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-thinking-exp-01-21:generateContent?key={gemini_key}"
         r = requests.post(url, json=payload, headers=headers, timeout=60)
+        if r.status_code != 200:
+            st.warning(f"Lỗi Gemini: {r.status_code} - {r.text}")
+            return []
         resp = r.json()
+        st.write("Phản hồi Gemini:", resp)   # Debug xem Gemini trả về gì!
         if "candidates" in resp:
             text = resp["candidates"][0]["content"]["parts"][0]["text"]
             return json.loads(text)
         else:
-            st.warning(f"Lỗi Gemini: {resp.get('error', resp)}")
+            st.warning(f"Lỗi Gemini (không có candidates): {resp}")
             return []
     except Exception as e:
         st.warning(f"Lỗi Gemini: {e}")
