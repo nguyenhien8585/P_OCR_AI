@@ -7,11 +7,26 @@ import io
 import json
 import os
 
-# Cấu hình API
-GPT4O_API_URL = "https://api.sv2.llm.ai.vn/v1/chat/completions"
-GEMINI_API_URL = "https://api.sv2.llm.ai.vn/v1/models/gemini:gemini-2.5-pro-preview-06-05:generate-content"
-API_KEY = os.getenv("sk-j4DkzI7htsVqEZqC272d3b58B0Fb49A183573dD2Fc04F71d")
+# ==== Nhập KEY ngay trên web ====
+st.set_page_config(page_title="PDF sang LaTeX/Word", layout="wide")
+st.markdown("""
+    <style>
+    .stApp {background-color: #f6f7fa;}
+    .block-container {padding-top: 2rem;}
+    </style>
+""", unsafe_allow_html=True)
+st.title("📄 Chuyển PDF sang LaTeX hoặc Word kèm hình minh họa")
 
+st.markdown("""
+- 📂 **Bước 1:** Nhập API key, chọn file PDF
+- ⚙️ **Bước 2:** Chọn chế độ xuất (LaTeX hoặc Word)
+- 🚀 **Bước 3:** Nhấn nút chuyển đổi, chờ 10–20 giây
+""")
+
+api_key_input = st.text_input("🔑 Nhập AI_API_KEY lấy từ https://api.sv2.llm.ai.vn (bảo mật, không lưu lại):", type="password")
+API_KEY = api_key_input.strip() if api_key_input.strip() else os.getenv("AI_API_KEY", "demo-key")
+
+# ======= PROMPT & CODE như cũ =======
 PROMPT_LATEX = """Gõ lại CHÍNH XÁC toàn bộ nội dung văn bản có trong ảnh này và áp dụng các quy tắc định dạng LaTeX sau:
 1. Với câu hỏi trắc nghiệm không lời giải (bắt đầu bằng 'Câu X:' hoặc 'Câu X.'):
    - Thay 'Câu X:' bằng \begin{ex}
@@ -71,6 +86,7 @@ def detect_image_regions(image: Image.Image):
         text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
         return json.loads(text)
     except Exception as e:
+        st.warning(f"Lỗi Gemini: {e}")
         return []
 
 def extract_cropped_images(image: Image.Image, regions: list):
@@ -80,7 +96,8 @@ def extract_cropped_images(image: Image.Image, regions: list):
             x, y, w, h = region["x"], region["y"], region["width"], region["height"]
             cropped = image.crop((x, y, x + w, y + h))
             output.append({"label": region.get("label", "minh_hoa"), "image": cropped})
-        except:
+        except Exception as e:
+            st.warning(f"Lỗi cắt hình: {e}")
             continue
     return output
 
@@ -107,7 +124,6 @@ def call_gpt4o(image: Image.Image, mode="latex"):
         if "choices" in data:
             return data["choices"][0]["message"]["content"]
         else:
-            # Hiển thị rõ nội dung trả về từ API để debug
             return f"Lỗi GPT-4o: {data.get('error', data)}"
     except Exception as e:
         return f"Lỗi gọi GPT-4o: {e}"
@@ -131,10 +147,7 @@ def process_pdf(uploaded_file, mode):
         st.error(f"Lỗi xử lý PDF: {e}")
     return results
 
-st.set_page_config(page_title="PDF sang LaTeX/Word", layout="wide")
-st.title("📄 Chuyển PDF sang LaTeX hoặc Word kèm hình minh họa")
-
-uploaded_file = st.file_uploader("📂 Chọn file PDF", type=["pdf"])
+uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"])
 mode = st.radio("Chế độ xuất", ["latex", "word"], horizontal=True)
 
 if uploaded_file:
