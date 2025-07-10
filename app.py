@@ -43,14 +43,16 @@ def extract_structured_content_with_gemini(image):
     image.save(buffered, format="PNG")
     img_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
+    st.write("📦 Image base64 size (KB):", len(img_b64) // 1024)
+
     payload = {
         "contents": [{
             "parts": [
                 {"text": """
-Phân tích ảnh trang đề thi sau. Trả về nội dung dưới dạng JSON:
+Trích xuất văn bản và ảnh minh họa trong ảnh đề thi sau. Trả JSON:
 {
-  "text_parts": ["... đoạn văn bản ..."],
-  "images": [{"bbox": [x1, y1, x2, y2], "caption": "mô tả"}]
+  "text_parts": ["..."],
+  "images": [{"bbox": [x1,y1,x2,y2], "caption": "..."}]
 }
 """ },
                 {"inline_data": {
@@ -63,31 +65,31 @@ Phân tích ảnh trang đề thi sau. Trả về nội dung dưới dạng JSON
 
     try:
         response = requests.post(f"{ENDPOINT}?key={API_KEY}", json=payload)
+        st.write("🔁 Response code:", response.status_code)
+        st.write("🔁 Response raw text:", response.text[:500])  # show preview
+
         if response.status_code != 200:
-            st.error(f"❌ Gemini API lỗi {response.status_code}: {response.text}")
-            raise ValueError("Gemini API không trả về JSON hợp lệ.")
+            st.error(f"Gemini API lỗi {response.status_code}: {response.text}")
+            return {"text_parts": ["[ERROR]"], "images": [], "original_image": image}
 
         result_json = response.json()
         if "candidates" not in result_json or not result_json["candidates"]:
-            st.error("⚠️ Gemini không trả về nội dung nào (candidates rỗng).")
-            raise ValueError("Empty response from Gemini")
+            st.error("❗ Gemini không trả về nội dung nào.")
+            return {"text_parts": ["[EMPTY]"], "images": [], "original_image": image}
 
         raw_text = result_json["candidates"][0]["content"]["parts"][0].get("text", "")
         if not raw_text.strip():
             st.error("⚠️ Gemini trả về văn bản rỗng.")
-            raise ValueError("Empty text content")
+            return {"text_parts": ["[BLANK]"], "images": [], "original_image": image}
 
         parsed = json.loads(raw_text)
         parsed['original_image'] = image
         return parsed
 
     except Exception as e:
-        st.warning(f"Gemini parsing failed: {e}")
-        return {
-            "text_parts": ["[ERROR]"],
-            "images": [],
-            "original_image": image
-        }
+        st.error(f"Gemini parsing failed: {e}")
+        return {"text_parts": ["[EXCEPTION]"], "images": [], "original_image": image}
+
 
 # Export to Word
 def export_structured_to_word(structured_data_list):
