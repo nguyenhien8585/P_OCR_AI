@@ -1,5 +1,6 @@
 streamlit
-requests
-PyMuPDF==1.23.7
+pdf2image
+python-docx
 Pillow
-ultralytics
+python-dotenv
+requests
