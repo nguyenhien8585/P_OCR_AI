@@ -83,9 +83,10 @@ Trích xuất văn bản và ảnh minh họa trong ảnh đề thi sau. Trả J
             st.error("⚠️ Gemini trả về văn bản rỗng.")
             return {"text_parts": ["[BLANK]"], "images": [], "original_image": image}
 
-        # Strip ```json ... ``` block
-        matches = re.findall(r"```(?:json)?\\n(.*?)```", raw_text.strip(), re.DOTALL)
-        raw_text_clean = matches[0] if matches else raw_text.strip()
+        # Strip ```json ... ``` block (cố định lỗi \n thay vì xuống dòng thật)
+        raw_text_fixed = raw_text.replace("\\n", "\n")  # decode escaped newlines
+        matches = re.findall(r"```(?:json)?\n(.*?)```", raw_text_fixed.strip(), re.DOTALL)
+        raw_text_clean = matches[0] if matches else raw_text_fixed.strip()
 
         parsed = json.loads(raw_text_clean)
         parsed['original_image'] = image
