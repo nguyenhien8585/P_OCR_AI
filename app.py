@@ -10,6 +10,7 @@ from docx import Document
 from docx.shared import Inches
 import os
 from dotenv import load_dotenv
+import re
 
 # Load API key
 load_dotenv()
@@ -82,7 +83,8 @@ Trích xuất văn bản và ảnh minh họa trong ảnh đề thi sau. Trả J
             st.error("⚠️ Gemini trả về văn bản rỗng.")
             return {"text_parts": ["[BLANK]"], "images": [], "original_image": image}
 
-        parsed = json.loads(raw_text)
+        raw_text_clean = re.sub(r"```json\\n|```|```json", "", raw_text.strip())
+        parsed = json.loads(raw_text_clean)
         parsed['original_image'] = image
         return parsed
 
