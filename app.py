@@ -60,10 +60,12 @@ Phân tích ảnh trang đề thi sau. Trả về nội dung dưới dạng JSON
     response = requests.post(f"{ENDPOINT}?key={API_KEY}", json=payload)
     try:
         text = response.json()['candidates'][0]['content']['parts'][0]['text']
+        st.code(text)  # Thêm dòng này để xem chính xác Gemini trả về gì
         result = json.loads(text)
         result['original_image'] = image
         return result
     except Exception as e:
+        st.error(f"Gemini parsing failed: {e}")
         return {"text_parts": ["[ERROR]"], "images": [], "original_image": image}
 
 # Export to Word
