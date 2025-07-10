@@ -19,7 +19,7 @@ ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-f
 st.set_page_config(layout="wide", page_title="PDF to Word/LaTeX with Images")
 st.title("📄➡️📝 PDF to Word/LaTeX Converter with Gemini 2.0")
 
-uploaded_file = st.file_uploader("Upload a PDF file", type="pdf")
+uploaded_file = st.file_uploader("📎 Upload a PDF file", type="pdf")
 output_format = st.radio("Select Output Format", ["Word (.docx)", "LaTeX (.tex)"])
 
 # Convert image to stream
@@ -29,11 +29,15 @@ def image_to_stream(image):
     buf.seek(0)
     return buf
 
-# Crop image
+# Crop image with safe boundary check
 def crop_image_by_bbox(image, bbox):
-    return image.crop(bbox)
+    width, height = image.size
+    x1, y1, x2, y2 = bbox
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(width, x2), min(height, y2)
+    return image.crop((x1, y1, x2, y2))
 
-# Call Gemini API
+# Call Gemini 2.0 Flash API
 def extract_structured_content_with_gemini(image):
     buffered = BytesIO()
     image.save(buffered, format="PNG")
@@ -48,7 +52,7 @@ Phân tích ảnh trang đề thi sau. Trả về nội dung dưới dạng JSON
   "text_parts": ["... đoạn văn bản ..."],
   "images": [{"bbox": [x1, y1, x2, y2], "caption": "mô tả"}]
 }
-"""},
+""" },
                 {"inline_data": {
                     "mime_type": "image/png",
                     "data": img_b64
@@ -62,6 +66,7 @@ Phân tích ảnh trang đề thi sau. Trả về nội dung dưới dạng JSON
         result_json = response.json()
         raw_text = result_json['candidates'][0]['content']['parts'][0]['text']
         if not raw_text.strip():
+            st.error("⚠️ Gemini trả về rỗng.")
             raise ValueError("Empty content from Gemini")
         parsed = json.loads(raw_text)
         parsed['original_image'] = image
@@ -117,24 +122,30 @@ def export_structured_to_latex(structured_data_list):
         f.write("\n".join(lines))
     return path
 
+# Main flow
 if uploaded_file:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
         tmp_file.write(uploaded_file.read())
         pdf_path = tmp_file.name
 
     images = convert_from_path(pdf_path, dpi=200)
-    st.success(f"Extracted {len(images)} page(s).")
+    st.success(f"✅ Extracted {len(images)} page(s).")
 
     structured_data = []
     for i, img in enumerate(images):
         col1, col2 = st.columns(2)
-        col1.image(img, caption=f"Page {i+1}")
-        with st.spinner(f"Analyzing Page {i+1}..."):
+        col1.image(img, caption=f"📄 Page {i+1}")
+        with st.spinner(f"🧠 Analyzing Page {i+1} with Gemini..."):
             data = extract_structured_content_with_gemini(img)
         with col2:
-            st.markdown("\n\n".join(data["text_parts"]))
+            for part in data["text_parts"]:
+                st.markdown(part)
+            for img_data in data["images"]:
+                cropped = crop_image_by_bbox(img, img_data["bbox"])
+                st.image(cropped, caption=img_data.get("caption", "Minh họa"))
         structured_data.append(data)
 
+    # Export
     if output_format.startswith("Word"):
         file_path = export_structured_to_word(structured_data)
         with open(file_path, "rb") as f:
