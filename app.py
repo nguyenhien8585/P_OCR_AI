@@ -67,7 +67,7 @@ Trích xuất văn bản và ảnh minh họa trong ảnh đề thi sau. Trả J
     try:
         response = requests.post(f"{ENDPOINT}?key={API_KEY}", json=payload)
         st.write("🔁 Response code:", response.status_code)
-        st.write("🔁 Response raw text:", response.text[:500])  # show preview
+        st.write("🔁 Response raw text:", response.text[:500])
 
         if response.status_code != 200:
             st.error(f"Gemini API lỗi {response.status_code}: {response.text}")
@@ -83,7 +83,10 @@ Trích xuất văn bản và ảnh minh họa trong ảnh đề thi sau. Trả J
             st.error("⚠️ Gemini trả về văn bản rỗng.")
             return {"text_parts": ["[BLANK]"], "images": [], "original_image": image}
 
-        raw_text_clean = re.sub(r"```json\\n|```|```json", "", raw_text.strip())
+        # Strip ```json ... ``` block
+        matches = re.findall(r"```(?:json)?\\n(.*?)```", raw_text.strip(), re.DOTALL)
+        raw_text_clean = matches[0] if matches else raw_text.strip()
+
         parsed = json.loads(raw_text_clean)
         parsed['original_image'] = image
         return parsed
