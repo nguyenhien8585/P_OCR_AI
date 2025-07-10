@@ -61,16 +61,26 @@ Phân tích ảnh trang đề thi sau. Trả về nội dung dưới dạng JSON
         }]
     }
 
-    response = requests.post(f"{ENDPOINT}?key={API_KEY}", json=payload)
     try:
+        response = requests.post(f"{ENDPOINT}?key={API_KEY}", json=payload)
+        if response.status_code != 200:
+            st.error(f"❌ Gemini API lỗi {response.status_code}: {response.text}")
+            raise ValueError("Gemini API không trả về JSON hợp lệ.")
+
         result_json = response.json()
-        raw_text = result_json['candidates'][0]['content']['parts'][0]['text']
+        if "candidates" not in result_json or not result_json["candidates"]:
+            st.error("⚠️ Gemini không trả về nội dung nào (candidates rỗng).")
+            raise ValueError("Empty response from Gemini")
+
+        raw_text = result_json["candidates"][0]["content"]["parts"][0].get("text", "")
         if not raw_text.strip():
-            st.error("⚠️ Gemini trả về rỗng.")
-            raise ValueError("Empty content from Gemini")
+            st.error("⚠️ Gemini trả về văn bản rỗng.")
+            raise ValueError("Empty text content")
+
         parsed = json.loads(raw_text)
         parsed['original_image'] = image
         return parsed
+
     except Exception as e:
         st.warning(f"Gemini parsing failed: {e}")
         return {
