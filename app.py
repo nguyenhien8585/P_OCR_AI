@@ -45,8 +45,8 @@ def extract_structured_content_with_gemini(image):
                 {"text": """
 Phân tích ảnh trang đề thi sau. Trả về nội dung dưới dạng JSON:
 {
-  "text_parts": ["...", "..."],
-  "images": [{"bbox": [x1, y1, x2, y2], "caption": "..."}]
+  "text_parts": ["... đoạn văn bản ..."],
+  "images": [{"bbox": [x1, y1, x2, y2], "caption": "mô tả"}]
 }
 """},
                 {"inline_data": {
@@ -59,14 +59,20 @@ Phân tích ảnh trang đề thi sau. Trả về nội dung dưới dạng JSON
 
     response = requests.post(f"{ENDPOINT}?key={API_KEY}", json=payload)
     try:
-        text = response.json()['candidates'][0]['content']['parts'][0]['text']
-        st.code(text)  # Thêm dòng này để xem chính xác Gemini trả về gì
-        result = json.loads(text)
-        result['original_image'] = image
-        return result
+        result_json = response.json()
+        raw_text = result_json['candidates'][0]['content']['parts'][0]['text']
+        if not raw_text.strip():
+            raise ValueError("Empty content from Gemini")
+        parsed = json.loads(raw_text)
+        parsed['original_image'] = image
+        return parsed
     except Exception as e:
-        st.error(f"Gemini parsing failed: {e}")
-        return {"text_parts": ["[ERROR]"], "images": [], "original_image": image}
+        st.warning(f"Gemini parsing failed: {e}")
+        return {
+            "text_parts": ["[ERROR]"],
+            "images": [],
+            "original_image": image
+        }
 
 # Export to Word
 def export_structured_to_word(structured_data_list):
