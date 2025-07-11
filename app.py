@@ -12,12 +12,24 @@ import os
 from dotenv import load_dotenv
 import re
 
-# Load all available Gemini API keys
+# Load dotenv nếu chạy local
 load_dotenv()
-API_KEYS = [
-    v for k, v in os.environ.items()
-    if k.startswith("GEMINI_API_KEY") and v.strip()
-]
+
+# Tự động lấy tất cả key Gemini từ môi trường, secrets và dotenv
+def get_gemini_keys():
+    keys = []
+    # Streamlit Cloud secrets
+    if hasattr(st.secrets, "_secrets") or hasattr(st.secrets, "to_dict"):
+        for k, v in dict(st.secrets).items():
+            if k.upper().startswith("GEMINI_API_KEY") and v.strip():
+                keys.append(v)
+    # Biến môi trường OS hoặc dotenv
+    for k, v in os.environ.items():
+        if k.upper().startswith("GEMINI_API_KEY") and v.strip():
+            keys.append(v)
+    return list(set(keys))
+
+API_KEYS = get_gemini_keys()
 ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
 st.set_page_config(layout="wide", page_title="PDF to Word/LaTeX with Inline Images")
@@ -83,7 +95,7 @@ Chỉ trả JSON hợp lệ, không markdown, không mã hóa, không thêm chú
             parts = result_json.get("candidates", [{}])[0].get("content", {}).get("parts", [])
             raw_text = parts[0].get("text", "") if parts else ""
 
-            # Loại bỏ markdown ```json ... ```
+            # Loại bỏ markdown ```json ... ``` hoặc các block tương tự
             raw_text = re.sub(r'^```[a-zA-Z]*\n|```$|^"""|"""$', '', raw_text.strip(), flags=re.DOTALL)
             parsed = json.loads(raw_text)
             elements = parsed.get("elements", [])
@@ -93,7 +105,7 @@ Chỉ trả JSON hợp lệ, không markdown, không mã hóa, không thêm chú
             st.warning(f"Key {key[:10]}... failed: {e}")
             continue
 
-    st.error("❌ All Gemini keys failed. Check your .env configuration.")
+    st.error("❌ All Gemini keys failed. Check your .env or secrets config.")
     return [], image
 
 def export_to_word(elements, original_image):
@@ -138,7 +150,8 @@ if uploaded_file:
 
     images = convert_from_path(pdf_path, dpi=200)
     st.success(f"✅ Extracted {len(images)} page(s).")
-
+    if not API_KEYS:
+        st.error("⚠️ No Gemini API Key found! Please add to .env or Streamlit secrets.")
     for page_num, img in enumerate(images, 1):
         col1, col2 = st.columns(2)
         col1.image(img, caption=f"📄 Page {page_num}")
