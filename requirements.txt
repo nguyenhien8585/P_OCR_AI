@@ -2,5 +2,5 @@ streamlit
 pdf2image
 Pillow
 requests
-python-docx
 python-dotenv
+python-docx
