@@ -75,12 +75,18 @@ Không bọc kết quả trong markdown.
         parts = result_json.get("candidates", [{}])[0].get("content", {}).get("parts", [])
         raw_text = parts[0].get("text", "") if parts else ""
 
+        # Strip markdown code block if present
         if raw_text.startswith("```"):
             raw_text = re.sub(r"^```[a-zA-Z]*\\n|```$", "", raw_text.strip(), flags=re.DOTALL)
 
-        raw_text = raw_text.replace("\\n", "\n")
-        elements = json.loads(raw_text).get("elements", [])
+        # Decode escaped newline characters
+        raw_text = raw_text.encode('utf-8').decode('unicode_escape')
+
+        # Parse final JSON safely
+        parsed = json.loads(raw_text)
+        elements = parsed.get("elements", [])
         return elements, image
+
     except Exception as e:
         st.error(f"Gemini parsing failed: {e}")
         return [], image
