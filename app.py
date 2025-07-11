@@ -9,15 +9,12 @@ from io import BytesIO
 from docx import Document
 from docx.shared import Inches
 import os
-from dotenv import load_dotenv
 import re
+from dotenv import load_dotenv
 
-# Load all available Gemini API keys
+# Load API keys từ .env
 load_dotenv()
-API_KEYS = [
-    v for k, v in os.environ.items()
-    if k.startswith("GEMINI_API_KEY") and v.strip()
-]
+API_KEYS = [v for k, v in os.environ.items() if k.startswith("GEMINI_API_KEY") and v.strip()]
 ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
 st.set_page_config(layout="wide", page_title="PDF to Word/LaTeX with Inline Images")
@@ -26,14 +23,12 @@ st.title("📄➡️📘 PDF to Word/LaTeX (Inline Images) using Gemini 2.0")
 uploaded_file = st.file_uploader("📎 Upload a PDF file", type="pdf")
 output_format = st.radio("Select Output Format", ["Word (.docx)", "LaTeX (.tex)"])
 
-# Convert image to stream
 def image_to_stream(image):
     buf = BytesIO()
     image.save(buf, format='PNG')
     buf.seek(0)
     return buf
 
-# Crop image with safe boundary check
 def crop_image_by_bbox(image, bbox):
     width, height = image.size
     x1, y1, x2, y2 = bbox
@@ -41,7 +36,6 @@ def crop_image_by_bbox(image, bbox):
     x2, y2 = min(width, x2), min(height, y2)
     return image.crop((x1, y1, x2, y2))
 
-# Call Gemini API with retry logic
 def extract_structured_content_with_gemini(image):
     buffered = BytesIO()
     image.save(buffered, format="PNG")
@@ -51,15 +45,15 @@ def extract_structured_content_with_gemini(image):
         "contents": [{
             "parts": [
                 {"text": """
-Trích xuất nội dung đề thi có công thức Toán, biểu thức và ảnh minh họa. Trả về JSON với:
+Hãy trích xuất chính xác nội dung đề thi gồm công thức Toán học, biểu thức và ảnh minh họa (đồ thị, bảng biến thiên, hình học...). Trả về kết quả JSON chuẩn với định dạng:
 {
   "elements": [
     {"type": "text", "content": "..."},
-    {"type": "image", "bbox": [...], "caption": "..."},
+    {"type": "image", "bbox": [x1,y1,x2,y2], "caption": "..."},
     ...
   ]
 }
-Không bọc kết quả trong markdown.
+Chỉ trả về JSON, không thêm chú thích, markdown hoặc văn bản ngoài JSON.
 """},
                 {"inline_data": {
                     "mime_type": "image/png",
@@ -78,27 +72,20 @@ Không bọc kết quả trong markdown.
 
             result_json = response.json()
             parts = result_json.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-            if not parts or "text" not in parts[0]:
-                st.warning(f"Key {key[:10]}... no text returned")
-                continue
-            raw_text = parts[0]["text"]
+            raw_text = parts[0].get("text", "") if parts else ""
 
-            if raw_text.startswith("```") or raw_text.startswith('"""'):
-                raw_text = re.sub(r'^```[a-zA-Z]*\n|```$|^"""|"""$', '', raw_text.strip(), flags=re.DOTALL)
-
+            raw_text = raw_text.strip().strip("```json").strip("```").strip()
             raw_text = raw_text.encode('utf-8').decode('unicode_escape')
             parsed = json.loads(raw_text)
-            elements = parsed.get("elements", [])
-            return elements, image
+            return parsed.get("elements", []), image
 
         except Exception as e:
             st.warning(f"Key {key[:10]}... failed: {e}")
             continue
 
-    st.error("❌ All Gemini keys failed. Check your .env configuration.")
+    st.error("❌ All Gemini keys failed. Check your .env file.")
     return [], image
 
-# Export to Word
 def export_to_word(elements, original_image):
     doc = Document()
     for el in elements:
@@ -113,7 +100,6 @@ def export_to_word(elements, original_image):
     doc.save(path)
     return path
 
-# Export to LaTeX
 def export_to_latex(elements, original_image, page_idx=1):
     lines = ["\\documentclass{article}", "\\usepackage{graphicx}", "\\usepackage{amsmath}", "\\begin{document}"]
     for i, el in enumerate(elements):
@@ -155,9 +141,8 @@ if uploaded_file:
                     st.markdown(el["content"])
                 elif el["type"] == "image":
                     cropped = crop_image_by_bbox(original_img, el["bbox"])
-                    st.image(cropped, caption=el.get("caption", "Hình minh hoạ"))
+                    st.image(cropped, caption=el.get("caption", "Hình minh họa"))
 
-        # Export
         if output_format.startswith("Word"):
             file_path = export_to_word(elements, original_img)
             with open(file_path, "rb") as f:
