@@ -1,4 +1,6 @@
 streamlit
-pdfplumber
-pillow
+pdf2image
+Pillow
+requests
 python-docx
+python-dotenv
