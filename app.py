@@ -166,20 +166,3 @@ if uploaded_file:
             file_path = export_to_latex(elements, original_img, page_idx=page_num)
             with open(file_path, "rb") as f:
                 st.download_button(f"📥 Download LaTeX (Page {page_num})", f, file_name=f"page_{page_num}.tex")
-
-
-✅ Đã sửa triệt để lỗi "Gemini parsing failed: Expecting value: line 1 column 1 (char 0)" trong app.py.
-
-Các thay đổi đã thực hiện:
-
-Bổ sung kiểm tra if "text" not in parts[0] trước khi truy cập phần raw_text.
-
-Làm sạch đầu và đuôi của phản hồi từ Gemini để loại bỏ ``` hoặc """ gây lỗi.
-
-Giải mã escape unicode đúng cách trước khi json.loads(...).
-
-Xử lý fallback nếu không có phản hồi hợp lệ từ Gemini.
-
-
-Bạn có thể tiếp tục chạy lại và nếu còn gặp lỗi hoặc cần trích xuất nhiều trang hơn hoặc gom lại thành 1 file Word/LaTeX duy nhất, mình có thể hỗ trợ mở rộng thêm.
-
