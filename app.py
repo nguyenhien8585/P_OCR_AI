@@ -39,7 +39,6 @@ def crop_image_by_bbox(image, bbox):
     return image.crop((x1, y1, x2, y2))
 
 # Call Gemini API
-
 def extract_structured_content_with_gemini(image):
     buffered = BytesIO()
     image.save(buffered, format="PNG")
@@ -69,8 +68,16 @@ Không bọc kết quả trong markdown.
 
     try:
         response = requests.post(f"{ENDPOINT}?key={API_KEY}", json=payload)
+        if response.status_code != 200:
+            raise ValueError(f"HTTP {response.status_code}: {response.text}")
+
         result_json = response.json()
-        raw_text = result_json["candidates"][0]["content"]["parts"][0].get("text", "")
+        parts = result_json.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        raw_text = parts[0].get("text", "") if parts else ""
+
+        if raw_text.startswith("```"):
+            raw_text = re.sub(r"^```[a-zA-Z]*\\n|```$", "", raw_text.strip(), flags=re.DOTALL)
+
         raw_text = raw_text.replace("\\n", "\n")
         elements = json.loads(raw_text).get("elements", [])
         return elements, image
@@ -135,7 +142,7 @@ if uploaded_file:
                     st.markdown(el["content"])
                 elif el["type"] == "image":
                     cropped = crop_image_by_bbox(original_img, el["bbox"])
-                    st.image(cropped, caption=el.get("caption", "Hình minh họa"))
+                    st.image(cropped, caption=el.get("caption", "Hình minh hoạ"))
 
         # Export
         if output_format.startswith("Word"):
