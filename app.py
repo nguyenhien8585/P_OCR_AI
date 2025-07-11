@@ -12,9 +12,12 @@ import os
 from dotenv import load_dotenv
 import re
 
-# Load API key
+# Load all available Gemini API keys
 load_dotenv()
-API_KEY = os.getenv("GOOGLE_API_KEY")
+API_KEYS = [
+    v for k, v in os.environ.items()
+    if k.startswith("GEMINI_API_KEY") and v.strip()
+]
 ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
 st.set_page_config(layout="wide", page_title="PDF to Word/LaTeX with Inline Images")
@@ -38,7 +41,7 @@ def crop_image_by_bbox(image, bbox):
     x2, y2 = min(width, x2), min(height, y2)
     return image.crop((x1, y1, x2, y2))
 
-# Call Gemini API
+# Call Gemini API with retry logic
 def extract_structured_content_with_gemini(image):
     buffered = BytesIO()
     image.save(buffered, format="PNG")
@@ -66,30 +69,30 @@ Không bọc kết quả trong markdown.
         }]
     }
 
-    try:
-        response = requests.post(f"{ENDPOINT}?key={API_KEY}", json=payload)
-        if response.status_code != 200:
-            raise ValueError(f"HTTP {response.status_code}: {response.text}")
+    for key in API_KEYS:
+        try:
+            response = requests.post(f"{ENDPOINT}?key={key}", json=payload)
+            if response.status_code != 200:
+                st.warning(f"Key {key[:10]}... HTTP {response.status_code}")
+                continue
 
-        result_json = response.json()
-        parts = result_json.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        raw_text = parts[0].get("text", "") if parts else ""
+            result_json = response.json()
+            parts = result_json.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+            raw_text = parts[0].get("text", "") if parts else ""
 
-        # Strip markdown code block if present
-        if raw_text.startswith("```"):
-            raw_text = re.sub(r"^```[a-zA-Z]*\\n|```$", "", raw_text.strip(), flags=re.DOTALL)
+            if raw_text.startswith("```"):
+                raw_text = re.sub(r"^```[a-zA-Z]*\\n|```$", "", raw_text.strip(), flags=re.DOTALL)
+            raw_text = raw_text.encode('utf-8').decode('unicode_escape')
+            parsed = json.loads(raw_text)
+            elements = parsed.get("elements", [])
+            return elements, image
 
-        # Decode escaped newline characters
-        raw_text = raw_text.encode('utf-8').decode('unicode_escape')
+        except Exception as e:
+            st.warning(f"Key {key[:10]}... failed: {e}")
+            continue
 
-        # Parse final JSON safely
-        parsed = json.loads(raw_text)
-        elements = parsed.get("elements", [])
-        return elements, image
-
-    except Exception as e:
-        st.error(f"Gemini parsing failed: {e}")
-        return [], image
+    st.error("❌ All Gemini keys failed. Check your .env configuration.")
+    return [], image
 
 # Export to Word
 def export_to_word(elements, original_image):
