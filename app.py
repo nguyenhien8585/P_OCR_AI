@@ -53,12 +53,13 @@ def extract_structured_content_with_gemini(image):
                 {"text": """
 Trích xuất nội dung đề thi có công thức Toán, biểu thức và ảnh minh họa. Trả về JSON với:
 {
-  \"elements\": [
-    {\"type\": \"text\", \"content\": \"...\"},
-    {\"type\": \"image\", \"bbox\": [...], \"caption\": \"...\"},
+  "elements": [
+    {"type": "text", "content": "..."},
+    {"type": "image", "bbox": [...], "caption": "..."},
     ...
   ]
 }
+Không bọc kết quả trong markdown.
 """},
                 {"inline_data": {
                     "mime_type": "image/png",
@@ -78,13 +79,12 @@ Trích xuất nội dung đề thi có công thức Toán, biểu thức và ả
             result_json = response.json()
             parts = result_json.get("candidates", [{}])[0].get("content", {}).get("parts", [])
             if not parts or "text" not in parts[0]:
-                st.warning(f"Key {key[:10]}... no valid text returned.")
+                st.warning(f"Key {key[:10]}... no text returned")
                 continue
-
             raw_text = parts[0]["text"]
 
-            if raw_text.startswith("```) or raw_text.startswith("\"\"\""):
-                raw_text = re.sub(r"^```[a-zA-Z]*\\n|```$|^\"\"\"|\"\"\"$", "", raw_text.strip(), flags=re.DOTALL)
+            if raw_text.startswith("```") or raw_text.startswith('"""'):
+                raw_text = re.sub(r'^```[a-zA-Z]*\n|```$|^"""|"""$', '', raw_text.strip(), flags=re.DOTALL)
 
             raw_text = raw_text.encode('utf-8').decode('unicode_escape')
             parsed = json.loads(raw_text)
