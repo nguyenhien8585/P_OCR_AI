@@ -1,159 +1,148 @@
-# app.py
 import streamlit as st
-import pdfplumber
+from pdf2image import convert_from_path
 from PIL import Image
-from docx import Document
-import io
-import os
+import requests
 import base64
-import re
+import json
 import tempfile
+from io import BytesIO
+from docx import Document
+from docx.shared import Inches
+import os
+from dotenv import load_dotenv
+import re
 
-# Thiết lập trang Streamlit
-st.set_page_config(layout="wide", page_title="PDF to Word/LaTeX Converter")
+# Load API key
+load_dotenv()
+API_KEY = os.getenv("GOOGLE_API_KEY")
+ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
-# Tiêu đề ứng dụng
-st.title("PDF to Word/LaTeX Converter with Image Preservation")
+st.set_page_config(layout="wide", page_title="PDF to Word/LaTeX with Inline Images")
+st.title("📄➡️📘 PDF to Word/LaTeX (Inline Images) using Gemini 2.0")
 
-# Mô tả ứng dụng
-st.markdown("""
-This tool converts PDF files to Word (.docx) or LaTeX format while preserving:
-- Text content
-- Page layouts
-- Embedded images
-""")
+uploaded_file = st.file_uploader("📎 Upload a PDF file", type="pdf")
+output_format = st.radio("Select Output Format", ["Word (.docx)", "LaTeX (.tex)"])
 
-# Tạo layout 2 cột
-main_col1, main_col2 = st.columns([1, 1], gap="large")
+# Convert image to stream
+def image_to_stream(image):
+    buf = BytesIO()
+    image.save(buf, format='PNG')
+    buf.seek(0)
+    return buf
 
-def extract_images_from_page(page, temp_dir):
-    """Trích xuất hình ảnh từ trang PDF"""
-    images = []
-    image_objects = page.images
-    for img in image_objects:
-        try:
-            img_data = img["stream"].get_data()
-            img_obj = Image.open(io.BytesIO(img_data))
-            img_path = os.path.join(temp_dir, f"img_{len(images)}.png")
-            img_obj.save(img_path)
-            images.append(img_path)
-        except Exception as e:
-            st.warning(f"Could not extract image: {e}")
-    return images
+# Crop image with safe boundary check
+def crop_image_by_bbox(image, bbox):
+    width, height = image.size
+    x1, y1, x2, y2 = bbox
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(width, x2), min(height, y2)
+    return image.crop((x1, y1, x2, y2))
 
-def pdf_to_word(pdf_path, temp_dir):
-    """Chuyển PDF sang Word với hình ảnh"""
+# Call Gemini API
+
+def extract_structured_content_with_gemini(image):
+    buffered = BytesIO()
+    image.save(buffered, format="PNG")
+    img_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": """
+Trích xuất nội dung đề thi có công thức Toán, biểu thức và ảnh minh họa. Trả về JSON với:
+{
+  "elements": [
+    {"type": "text", "content": "..."},
+    {"type": "image", "bbox": [...], "caption": "..."},
+    ...
+  ]
+}
+Không bọc kết quả trong markdown.
+"""},
+                {"inline_data": {
+                    "mime_type": "image/png",
+                    "data": img_b64
+                }}
+            ]
+        }]
+    }
+
+    try:
+        response = requests.post(f"{ENDPOINT}?key={API_KEY}", json=payload)
+        result_json = response.json()
+        raw_text = result_json["candidates"][0]["content"]["parts"][0].get("text", "")
+        raw_text = raw_text.replace("\\n", "\n")
+        elements = json.loads(raw_text).get("elements", [])
+        return elements, image
+    except Exception as e:
+        st.error(f"Gemini parsing failed: {e}")
+        return [], image
+
+# Export to Word
+def export_to_word(elements, original_image):
     doc = Document()
-    with pdfplumber.open(pdf_path) as pdf:
-        for i, page in enumerate(pdf.pages):
-            # Thêm văn bản
-            text = page.extract_text()
-            if text:
-                doc.add_paragraph(text)
-            
-            # Thêm hình ảnh
-            images = extract_images_from_page(page, temp_dir)
-            for img_path in images:
-                doc.add_picture(img_path, width=Inches(4))  # Điều chỉnh kích thước ảnh
-            
-            # Thêm ngắt trang (trừ trang cuối)
-            if i < len(pdf.pages) - 1:
-                doc.add_page_break()
-    
-    return doc
+    for el in elements:
+        if el["type"] == "text":
+            doc.add_paragraph(el["content"])
+        elif el["type"] == "image" and "bbox" in el:
+            cropped = crop_image_by_bbox(original_image, el["bbox"])
+            doc.add_picture(image_to_stream(cropped), width=Inches(4))
+            if el.get("caption"):
+                doc.add_paragraph(el["caption"], style='Caption')
+    path = tempfile.NamedTemporaryFile(delete=False, suffix=".docx").name
+    doc.save(path)
+    return path
 
-def format_latex_image(img_path):
-    """Tạo mã LaTeX cho hình ảnh"""
-    return f"""
-\\begin{{figure}}[h]
-\\centering
-\\includegraphics[width=0.8\\textwidth]{{{img_path}}}
-\\caption{{Image extracted from PDF}}
-\\label{{fig:img_{os.path.basename(img_path)}}}
-\\end{{figure}}
-"""
+# Export to LaTeX
+def export_to_latex(elements, original_image, page_idx=1):
+    lines = ["\\documentclass{article}", "\\usepackage{graphicx}", "\\usepackage{amsmath}", "\\begin{document}"]
+    for i, el in enumerate(elements):
+        if el["type"] == "text":
+            lines.append(el["content"])
+        elif el["type"] == "image" and "bbox" in el:
+            cropped = crop_image_by_bbox(original_image, el["bbox"])
+            img_path = f"figure_{page_idx}_{i}.png"
+            cropped.save(img_path)
+            lines.append("\\begin{figure}[h]")
+            lines.append("\\centering")
+            lines.append(f"\\includegraphics[width=0.8\\textwidth]{{{img_path}}}")
+            if el.get("caption"):
+                lines.append(f"\\caption{{{el['caption']}}}")
+            lines.append("\\end{figure}")
+    lines.append("\\end{document}")
+    path = tempfile.NamedTemporaryFile(delete=False, suffix=".tex").name
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    return path
 
-def pdf_to_latex(pdf_path, temp_dir):
-    """Chuyển PDF sang LaTeX với hình ảnh"""
-    latex_content = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n"
-    
-    with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text()
-            if text:
-                latex_content += text.replace("\\", "\\textbackslash").replace("&", "\\&") + "\n\n"
-            
-            images = extract_images_from_page(page, temp_dir)
-            for img_path in images:
-                latex_content += format_latex_image(img_path)
-    
-    latex_content += "\\end{document}"
-    return latex_content
+# Main flow
+if uploaded_file:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+        tmp_file.write(uploaded_file.read())
+        pdf_path = tmp_file.name
 
-def get_binary_file_downloader_html(bin_data, file_label, file_name):
-    """Tạo link download file"""
-    bin_str = base64.b64encode(bin_data).decode()
-    href = f'<a href="data:application/octet-stream;base64,{bin_str}" download="{file_name}">{file_label}</a>'
-    return href
+    images = convert_from_path(pdf_path, dpi=200)
+    st.success(f"✅ Extracted {len(images)} page(s).")
 
-def main():
-    with main_col1:
-        uploaded_file = st.file_uploader("Choose a PDF file", type="pdf")
-        output_format = st.radio("Select output format:", ["Word (.docx)", "LaTeX (.tex)"])
-    
-    if uploaded_file is not None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_pdf_path = os.path.join(temp_dir, "uploaded.pdf")
-            with open(temp_pdf_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            
-            with pdfplumber.open(temp_pdf_path) as pdf:
-                first_page = pdf.pages[0]
-                text = first_page.extract_text()
-                
-                # Hiển thị văn bản và hình ảnh trong giao diện
-                with main_col1:
-                    st.subheader("Extracted Text")
-                    if text:
-                        st.text_area("Text from first page (preview):", value=text, height=300)
-                    else:
-                        st.warning("No text found in the first page")
-                    
-                    # Hiển thị hình ảnh từ trang đầu tiên
-                    images = extract_images_from_page(first_page, temp_dir)
-                    if images:
-                        st.subheader("Extracted Images")
-                        for img_path in images:
-                            st.image(img_path, use_column_width=True)
-                    else:
-                        st.warning("No images found in the first page")
-                
-                with main_col2:
-                    if output_format == "Word (.docx)":
-                        st.subheader("Word Document Generation")
-                        doc = pdf_to_word(temp_pdf_path, temp_dir)
-                        output_path = os.path.join(temp_dir, "output.docx")
-                        doc.save(output_path)
-                        
-                        with open(output_path, "rb") as f:
-                            st.markdown(get_binary_file_downloader_html(
-                                f.read(), "Download Word Document", "converted.docx"),
-                                unsafe_allow_html=True)
-                    
-                    elif output_format == "LaTeX (.tex)":
-                        st.subheader("LaTeX Document Generation")
-                        latex_content = pdf_to_latex(temp_pdf_path, temp_dir)
-                        st.text_area("LaTeX Output Preview:", value=latex_content[:5000] + ("..." if len(latex_content) > 5000 else ""), height=300)
-                        
-                        output_path = os.path.join(temp_dir, "output.tex")
-                        with open(output_path, "w", encoding="utf-8") as f:
-                            f.write(latex_content)
-                        
-                        with open(output_path, "rb") as f:
-                            st.markdown(get_binary_file_downloader_html(
-                                f.read(), "Download LaTeX File", "converted.tex"),
-                                unsafe_allow_html=True)
+    for page_num, img in enumerate(images, 1):
+        col1, col2 = st.columns(2)
+        col1.image(img, caption=f"📄 Page {page_num}")
+        with st.spinner(f"🧠 Analyzing Page {page_num} with Gemini..."):
+            elements, original_img = extract_structured_content_with_gemini(img)
+        with col2:
+            for el in elements:
+                if el["type"] == "text":
+                    st.markdown(el["content"])
+                elif el["type"] == "image":
+                    cropped = crop_image_by_bbox(original_img, el["bbox"])
+                    st.image(cropped, caption=el.get("caption", "Hình minh họa"))
 
-if __name__ == "__main__":
-    from docx.shared import Inches  # Import sau để tránh lỗi với Streamlit
-    main()
+        # Export
+        if output_format.startswith("Word"):
+            file_path = export_to_word(elements, original_img)
+            with open(file_path, "rb") as f:
+                st.download_button(f"📥 Download Word (Page {page_num})", f, file_name=f"page_{page_num}.docx")
+        else:
+            file_path = export_to_latex(elements, original_img, page_idx=page_num)
+            with open(file_path, "rb") as f:
+                st.download_button(f"📥 Download LaTeX (Page {page_num})", f, file_name=f"page_{page_num}.tex")
