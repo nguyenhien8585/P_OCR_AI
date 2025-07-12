@@ -1,62 +1,23 @@
-import requests
+import pytesseract
+from pdf2image import convert_from_bytes
+from PIL import Image
 import base64
-import time
+import io
 
-class SmartOCRClient:
-    def __init__(self, api_url, api_key, webhook_url=None, timeout=120, max_retries=3):
-        self.api_url = api_url
-        self.api_key = api_key
-        self.webhook_url = webhook_url
-        self.timeout = timeout
-        self.max_retries = max_retries
-
-    def _request(self, payload, retries=0):
-        try:
-            resp = requests.post(
-                self.api_url,
-                json=payload,
-                timeout=self.timeout
-            )
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as e:
-            if retries < self.max_retries:
-                time.sleep(2 ** retries)
-                return self._request(payload, retries + 1)
-            raise e
-
-    def get_account(self):
-        payload = {"endpoint": "account", "apiKey": self.api_key}
-        return self._request(payload)
-
-    def get_usage(self, period="month"):
-        payload = {"endpoint": "usage", "apiKey": self.api_key, "period": period}
-        return self._request(payload)
-
-    def get_status(self):
-        payload = {"endpoint": "status"}
-        return self._request(payload)
-
-    def convert(self, file_bytes, file_name, mime_type, options=None):
-        if options is None:
-            options = {}
-        file_data = f"data:{mime_type};base64,{base64.b64encode(file_bytes).decode()}"
-        payload = {
-            "endpoint": "convert",
-            "apiKey": self.api_key,
-            "file_data": file_data,
-            "file_name": file_name,
-            "options": {
-                "language": options.get("language", "auto"),
-                "include_page_numbers": options.get("includePageNumbers", True),
-                "include_images": True,         # Bắt buộc tách ảnh
-                "custom_prompt": options.get("customPrompt", ""),
-                "output_format": options.get("outputFormat", "text"),
-            },
-            "metadata": {
-                "client_version": "3.0",
-                "processing_started": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "client_request_id": f"req_{int(time.time()*1000)}"
-            }
-        }
-        return self._request(payload)
+def extract_text_and_images(pdf_bytes, lang='vie+eng'):
+    # Chuyển PDF thành từng trang ảnh
+    pages = convert_from_bytes(pdf_bytes)
+    results = []
+    for idx, img in enumerate(pages):
+        # OCR text toàn trang
+        text = pytesseract.image_to_string(img, lang=lang)
+        # Encode ảnh thành base64 để nhúng vào file Word/LaTeX
+        buf = io.BytesIO()
+        img.save(buf, format='PNG')
+        img_b64 = base64.b64encode(buf.getvalue()).decode()
+        results.append({
+            "text": text,
+            "image_b64": img_b64,
+            "page_num": idx + 1
+        })
+    return results
