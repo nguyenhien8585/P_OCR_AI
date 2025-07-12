@@ -5,32 +5,46 @@ import base64
 import io
 
 def insert_images_to_word_from_markdown(text, image_list, output_path):
-    doc = Document()
+    """
+    Chuyển văn bản OCR + marker ảnh ![img](img-x.jpeg) thành file Word.
+    - Tự động chuyển tất cả $...$ về ${...}$ (MathType)
+    - Chèn ảnh đúng vị trí gọi marker
+    - Đoạn văn cách nhau 1 dòng
+    - Ảnh không tìm thấy sẽ cảnh báo trong file Word
+    """
+    def convert_math_expr(s):
+        return re.sub(r'\$(.+?)\$', r'${\1}$', s, flags=re.DOTALL)
+
     pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
+    text = convert_math_expr(text)
+
+    doc = Document()
     pos = 0
     for match in re.finditer(pattern, text):
         start, end = match.span()
         caption, img_name = match.groups()
-        before_img = text[pos:start]
-        if before_img.strip():
-            doc.add_paragraph(before_img)
+
+        # Thêm văn bản trước ảnh (theo đoạn, tách \n)
+        before = text[pos:start].strip("\n")
+        for para in before.split("\n"):
+            if para.strip():
+                doc.add_paragraph(para)
         # Chèn đúng ảnh theo tên
         found = False
         for img in image_list:
             if img["name"] == img_name:
                 img_bytes = base64.b64decode(img["base64"])
-                p = doc.add_paragraph()
-                run = p.add_run()
-                run.add_picture(io.BytesIO(img_bytes), width=Inches(3.5))
-                p.alignment = 1  # 0: left, 1: center, 2: right
-                if caption:
-                    doc.add_paragraph(f"(Hình: {caption})")
+                doc.add_picture(io.BytesIO(img_bytes), width=Inches(3.7))
                 found = True
+                if caption and not caption.startswith("img-"):
+                    doc.add_paragraph(f"(Hình: {caption})").italic = True
                 break
         if not found:
-            doc.add_paragraph(f"[Không tìm thấy ảnh: {img_name}]")
+            doc.add_paragraph(f"[Không tìm thấy ảnh: {img_name}]").italic = True
         pos = end
-    # Add phần còn lại cuối (nếu có)
-    if text[pos:].strip():
-        doc.add_paragraph(text[pos:])
+    # Thêm phần cuối văn bản
+    after = text[pos:].strip("\n")
+    for para in after.split("\n"):
+        if para.strip():
+            doc.add_paragraph(para)
     doc.save(output_path)
