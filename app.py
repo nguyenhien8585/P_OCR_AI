@@ -52,7 +52,6 @@ with tab1:
                 uploaded_pdf.seek(0)
                 pdf_bytes = uploaded_pdf.read()
                 result = client.convert(pdf_bytes, file_name, mime_type)
-                
                 # --- Tách từng trang PDF thành ảnh và tách minh hoạ từng trang ---
                 from pdf2image import convert_from_bytes
                 pdf_images = convert_from_bytes(pdf_bytes)
@@ -61,8 +60,8 @@ with tab1:
                     buf = io.BytesIO()
                     im.save(buf, format="JPEG")
                     page_bytes = buf.getvalue()
-                    page_figs = extract_figures_from_image(page_bytes, min_area=1500)
-                    # Đánh số ảnh theo page để tránh trùng
+                    page_figs = extract_figures_from_image(page_bytes, min_area=1200, max_figures=7)
+                    # Đánh số ảnh theo page
                     for fig in page_figs:
                         fig['name'] = f"page-{i+1}-{fig['name']}"
                     images.extend(page_figs)
@@ -97,33 +96,39 @@ with tab1:
                     use_container_width=True,
                 )
             with col2:
+                # Tích hợp xuất Word chỉ với các hình đã tick!
                 word_btn = st.button("📝 Tạo và tải file Word", use_container_width=True, key="word_pdf")
-                if word_btn:
-                    with st.spinner("Đang tạo file Word..."):
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                            insert_images_to_word_from_markdown(text_content, images, tmp_word.name)
-                        with open(tmp_word.name, "rb") as f:
-                            word_data = f.read()
-                        st.success("✅ Đã tạo file Word thành công!")
-                        st.download_button(
-                            "⬇️ Tải về file Word",
-                            word_data,
-                            file_name="ket_qua_ocr.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            use_container_width=True
-                        )
-                        os.remove(tmp_word.name)
+
         with tab_pdf_img:
+            selected_fig_names = []
             if images:
-                st.success(f"🖼️ Đã tách được {len(images)} hình minh hoạ từ PDF!")
-                for img in images:
-                    try:
-                        img_bytes = base64.b64decode(img["base64"])
-                        st.image(img_bytes, caption=img["name"], use_container_width=True)
-                    except Exception as e:
-                        st.error(f"Không đọc được ảnh {img['name']}: {e}")
+                st.success(f"🖼️ Đã tách {len(images)} vùng nghi là hình minh hoạ. Tick chọn đúng hình bên dưới trước khi xuất Word:")
+                cols = st.columns(2)
+                for i, fig in enumerate(images):
+                    with cols[i % 2]:
+                        checked = st.checkbox(f"Chọn {fig['name']}", value=True, key=f"pdf_figcheck{i}")
+                        st.image(base64.b64decode(fig["base64"]), caption=fig["name"], use_container_width=True)
+                        if checked:
+                            selected_fig_names.append(fig["name"])
             else:
-                st.warning("Không phát hiện được ảnh minh hoạ thực sự trong PDF!")
+                st.warning("Không phát hiện được vùng nghi là hình minh hoạ.")
+            export_figures = [fig for fig in images if fig["name"] in selected_fig_names]
+            # Nút xuất Word ở tab text sẽ dùng export_figures
+            if 'word_btn' in locals() and word_btn:
+                with st.spinner("Đang tạo file Word..."):
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
+                        insert_images_to_word_from_markdown(text_content, export_figures, tmp_word.name)
+                    with open(tmp_word.name, "rb") as f:
+                        word_data = f.read()
+                    st.success("✅ Đã tạo file Word thành công!")
+                    st.download_button(
+                        "⬇️ Tải về file Word",
+                        word_data,
+                        file_name="ket_qua_ocr.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True
+                    )
+                    os.remove(tmp_word.name)
 
 # ================= TAB 2: OCR Image ================
 with tab2:
@@ -155,7 +160,7 @@ with tab2:
 
         # --- Tách hình minh hoạ tự động ---
         with st.spinner("Đang tách các hình minh hoạ..."):
-            figures = extract_figures_from_image(img_bytes, min_area=1500)
+            figures = extract_figures_from_image(img_bytes, min_area=1200, max_figures=10)
         st.session_state["ocr_img_figures"] = figures
 
         # --- Xử lý OCR ---
@@ -180,7 +185,7 @@ with tab2:
 
         tab_img_text, tab_img_fig = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
         with tab_img_text:
-            st.markdown("#### 📋 Kết quả OCR Image:")
+            st.markdown("#### 📋 Kết quả OCR Ảnh:")
             st.text_area("Kết quả OCR Ảnh:", text_content, height=350, label_visibility="collapsed")
 
             col1, col2 = st.columns(2)
@@ -194,29 +199,36 @@ with tab2:
                 )
             with col2:
                 word_btn = st.button("📝 Tạo và tải file Word", use_container_width=True, key="word_img")
-                if word_btn:
-                    with st.spinner("Đang tạo file Word..."):
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                            insert_images_to_word_from_markdown(text_content, figures, tmp_word.name)
-                        with open(tmp_word.name, "rb") as f:
-                            word_data = f.read()
-                        st.success("✅ Đã tạo file Word thành công!")
-                        st.download_button(
-                            "⬇️ Tải về file Word",
-                            word_data,
-                            file_name="ket_qua_ocr_anh.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            use_container_width=True
-                        )
-                        os.remove(tmp_word.name)
+
         with tab_img_fig:
+            selected_fig_names = []
             if figures:
-                st.success(f"🖼️ Đã tách được {len(figures)} hình minh hoạ từ ảnh!")
-                for fig in figures:
-                    fig_bytes = base64.b64decode(fig["base64"])
-                    st.image(fig_bytes, caption=fig["name"], use_container_width=True)
+                st.success(f"🖼️ Đã tách {len(figures)} vùng nghi là hình minh hoạ. Tick chọn đúng hình bên dưới trước khi xuất Word:")
+                cols = st.columns(2)
+                for i, fig in enumerate(figures):
+                    with cols[i % 2]:
+                        checked = st.checkbox(f"Chọn {fig['name']}", value=True, key=f"img_figcheck{i}")
+                        st.image(base64.b64decode(fig["base64"]), caption=fig["name"], use_container_width=True)
+                        if checked:
+                            selected_fig_names.append(fig["name"])
             else:
-                st.warning("Không phát hiện được hình minh hoạ!")
+                st.warning("Không phát hiện được vùng nghi là hình minh hoạ.")
+            export_figures = [fig for fig in figures if fig["name"] in selected_fig_names]
+            if 'word_btn' in locals() and word_btn:
+                with st.spinner("Đang tạo file Word..."):
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
+                        insert_images_to_word_from_markdown(text_content, export_figures, tmp_word.name)
+                    with open(tmp_word.name, "rb") as f:
+                        word_data = f.read()
+                    st.success("✅ Đã tạo file Word thành công!")
+                    st.download_button(
+                        "⬇️ Tải về file Word",
+                        word_data,
+                        file_name="ket_qua_ocr_anh.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True
+                    )
+                    os.remove(tmp_word.name)
 
 st.markdown("---")
 st.caption("🔖 <b>OCR PDF & Ảnh: hỗ trợ MathType, ảnh minh hoạ, xuất Word/TXT. Giao diện hiện đại.</b>", unsafe_allow_html=True)
