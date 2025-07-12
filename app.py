@@ -2,7 +2,7 @@ import streamlit as st
 from config import API_URL, API_KEY
 from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
-from extract_figures_from_image import extract_figures_from_image
+from extract_figures_from_image_pillow import extract_figures_from_image
 from word_export import insert_images_to_word_from_markdown
 import os
 import base64
@@ -139,20 +139,20 @@ with tab2:
             st.write(f"**Tên file:** {img_file_name}")
             st.write(f"**Loại file:** {img_mime_type}")
             st.write(f"**Kích thước:** {size_mb:.1f} MB")
-        # KHÔNG để caption là base64 hoặc tên file base64
         st.image(img_bytes, caption="Ảnh đã upload", use_container_width=True)
 
         # --- Nút tách hình minh hoạ ---
+        num_parts = st.number_input("Số vùng muốn tách (chia dọc):", min_value=2, max_value=10, value=2, step=1)
         if st.button("🔎 Tách ảnh minh hoạ trong ảnh", key="split_img_btn", use_container_width=True):
             with st.spinner("Đang tách các hình minh hoạ..."):
-                figures = extract_figures_from_image(img_bytes)
+                figures = extract_figures_from_image(img_bytes, num_parts=int(num_parts))
             if figures:
                 st.success(f"Đã tách được {len(figures)} hình minh hoạ!")
                 for fig in figures:
                     fig_bytes = base64.b64decode(fig["base64"])
                     st.image(fig_bytes, caption=fig["name"], use_container_width=True)
             else:
-                st.warning("Không phát hiện được hình minh hoạ nổi bật trong ảnh này!")
+                st.warning("Không phát hiện được hình minh hoạ!")
 
         # --- Nút OCR Ảnh ---
         if st.button("🚀 Xử lý OCR Ảnh", key="ocr_img_btn", use_container_width=True):
