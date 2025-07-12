@@ -13,6 +13,7 @@ def insert_images_to_word_from_markdown(text, image_list, output_path):
     - Ảnh không tìm thấy sẽ cảnh báo trong file Word
     """
     def convert_math_expr(s):
+        # Chuyển tất cả $...$ thành ${...}$ (MathType)
         return re.sub(r'\$(.+?)\$', r'${\1}$', s, flags=re.DOTALL)
 
     pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
