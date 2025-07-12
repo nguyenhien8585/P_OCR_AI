@@ -12,7 +12,7 @@ def extract_figures_from_image(img_bytes, min_area=2000):
     img = Image.open(io.BytesIO(img_bytes)).convert("L")  # Gray
     arr = np.array(img)
     # Threshold: các pixel tối hơn ngưỡng là vùng hình vẽ
-    mask = arr < 180  # Ngưỡng có thể chỉnh
+    mask = arr < 180  # Ngưỡng này có thể chỉnh cho phù hợp tài liệu
     # Label các vùng connected (liên thông)
     labeled, num = label(mask)
     objects = find_objects(labeled)
