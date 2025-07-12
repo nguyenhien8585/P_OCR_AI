@@ -5,14 +5,13 @@ import base64
 import io
 
 def insert_images_to_word_from_markdown(text, image_list, output_path):
-    # image_list: list dict {"name": ..., "base64": ...}
     doc = Document()
     pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
     pos = 0
     for match in re.finditer(pattern, text):
         start, end = match.span()
         caption, img_name = match.groups()
-        # Add text before image
+        # Add text trước ảnh
         doc.add_paragraph(text[pos:start])
         # Chèn đúng ảnh theo tên
         found = False
