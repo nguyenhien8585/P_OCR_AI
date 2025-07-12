@@ -4,4 +4,4 @@ python-docx
 pillow
 pymupdf
 PyPDF2
-opencv-python
+scipy
