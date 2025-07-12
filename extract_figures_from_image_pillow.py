@@ -5,30 +5,25 @@ import io
 from scipy.ndimage import label, find_objects
 
 def preprocess_img(img):
-    # Tăng sáng và tương phản, làm nét nhẹ
     img = img.convert("L")
     enhancer = ImageEnhance.Contrast(img)
-    img = enhancer.enhance(1.8)  # tăng tương phản
+    img = enhancer.enhance(1.7)
     enhancer = ImageEnhance.Brightness(img)
-    img = enhancer.enhance(1.1)  # tăng sáng
-    img = img.filter(ImageFilter.MedianFilter(3)) # giảm nhiễu
-    img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=200)) # làm nét
+    img = enhancer.enhance(1.08)
+    img = img.filter(ImageFilter.MedianFilter(3))
+    img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=150))
     return img
 
 def extract_figures_from_image(
     img_bytes,
     max_figures=3,
-    min_area=1200,
-    min_aspect=0.25,
-    max_aspect=5.0,
-    min_area_ratio=0.005,
-    max_area_ratio=0.45,
+    min_area=900,
+    min_aspect=0.18,
+    max_aspect=6.0,
+    min_area_ratio=0.004,
+    max_area_ratio=0.50,
     margin=0.01
 ):
-    """
-    Tự động tăng nét & tách đúng các hình vẽ lớn + bảng biến thiên.
-    """
-    # --- Tiền xử lý ảnh ---
     orig_img = Image.open(io.BytesIO(img_bytes))
     img = preprocess_img(orig_img)
     arr = np.array(img)
@@ -51,32 +46,28 @@ def extract_figures_from_image(
         crop_arr = arr[y0:y1, x0:x1]
         mean_pixel = crop_arr.mean()
         std_pixel = crop_arr.std()
-        # Không lấy block nhỏ, block dị, block sát mép, block có nhiều text (mean thấp, std thấp)
+        percent_white = np.mean(crop_arr > 200)
+        # LOẠI các block có quá nhiều nét (std thấp), toàn nền tối (mean thấp), ít khoảng trắng
         if (
             area > min_area and
             min_aspect < aspect < max_aspect and
             min_area_ratio < area_ratio < max_area_ratio and
             x0 > margin*w and x1 < (1-margin)*w and y0 > margin*h and y1 < (1-margin)*h and
-            mean_pixel > 90 and std_pixel > 13
+            mean_pixel > 90 and
+            std_pixel > 17 and
+            percent_white > 0.18   # Tối thiểu 18% là nền trắng (hình vẽ/bảng sẽ thoáng)
         ):
-            candidates.append((area, x0, y0, x1, y1, aspect))
-    # Ưu tiên chọn: 1 hình gần vuông (aspect gần 1), 1 hình chữ nhật (bảng biến thiên)
-    if not candidates:
-        return []
-    # Sắp xếp theo diện tích giảm dần
+            candidates.append((area, x0, y0, x1, y1, aspect, std_pixel, percent_white))
+    # Sắp xếp theo diện tích lớn nhất
     candidates = sorted(candidates, key=lambda x: -x[0])
-    # Chọn 1 hình aspect ~1 (vuông) + 1-2 hình aspect >1.7 (bảng)
-    shapes = [c for c in candidates if 0.75 < c[5] < 1.35]
-    tables = [c for c in candidates if c[5] >= 1.4 or c[5] <= 0.7]
-    chosen = []
-    if shapes: chosen.append(shapes[0])
-    if tables: chosen.append(tables[0])
-    # Nếu thiếu, bổ sung các block lớn tiếp theo
-    for c in candidates:
-        if c not in chosen and len(chosen) < max_figures:
-            chosen.append(c)
+    # Ưu tiên block có std_pixel cao (nhiều nét to, không phải text), percent_white cao (nhiều khoảng trắng)
+    good = [c for c in candidates if c[6] > 20 and c[7] > 0.21]
+    if good:
+        chosen = good[:max_figures]
+    else:
+        chosen = candidates[:max_figures]
     results = []
-    for idx, (area, x0, y0, x1, y1, _) in enumerate(chosen[:max_figures]):
+    for idx, (area, x0, y0, x1, y1, *_ ) in enumerate(chosen):
         crop = color_img.crop((x0, y0, x1, y1))
         buf = io.BytesIO()
         crop.save(buf, format="JPEG")
