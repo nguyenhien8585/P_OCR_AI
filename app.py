@@ -18,9 +18,38 @@ tab1, tab2 = st.tabs([
     "🖼️ OCR Image"
 ])
 
-# ===== Hàm xử lý làm sạch văn bản trước khi xuất Word =====
+# ==== Hàm tự động bọc ${...}$ cho công thức, điểm, số, biến ====
+def wrap_math(text):
+    lines = text.split("\n")
+    new_lines = []
+    for line in lines:
+        # Không wrap các dòng đáp án đầu dòng (A., B., C., D.)
+        if re.match(r"^\s*[A-D]\.", line.strip()):
+            new_lines.append(line)
+            continue
+        # Không wrap số câu hỏi
+        if re.match(r"^\s*Câu\s*\d+\s*:", line):
+            new_lines.append(line)
+            continue
+        # Bọc O.ABC (chữ cái hoa, có thể thêm dấu chấm)
+        line = re.sub(r"\b([A-Z]\.[A-Z]{2,})\b", r"${\1}$", line)
+        # Bọc các cụm như ABC, OAB, OA, OB, ... (2-3 ký tự viết hoa)
+        line = re.sub(r"\b([A-Z]{2,3})\b", r"${\1}$", line)
+        # (ABC), (MNP), (Oxyz)
+        line = re.sub(r"\(([A-Z]{2,}|Oxyz)\)", lambda m: "${(" + m.group(1) + ")}$", line)
+        # OA = 2, AB = 3, AC = 6, x = 1, y = 5,...
+        line = re.sub(r"([A-Za-z]{1,3}\s*=\s*-?\d+)", r"${\1}$", line)
+        # Số đơn đứng một mình sau dấu chấm hoặc trong câu toán học (tránh bọc số câu hỏi)
+        line = re.sub(r"(?<!Câu )(?<!\d)(?<!\w)(\d+)(?![.:])", lambda m: f"${{{m.group(1)}}}$", line)
+        # Oxyz riêng lẻ
+        line = re.sub(r"\bOxyz\b", "${Oxyz}$", line)
+        # Các biến toán học độc lập (x, y, z, n, m, k, ...)
+        line = re.sub(r"\b([xyzabcnmkij])\b", r"${\1}$", line)
+        new_lines.append(line)
+    return "\n".join(new_lines)
+
+# ===== Hàm xử lý làm sạch văn bản trước khi hiển thị =====
 def clean_ocr_text(text):
-    # Xoá **...** và *...*
     text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
     text = re.sub(r'\*(.*?)\*', r'\1', text)
     # Chỉ chuyển $...$ ngắn thành ${...}$
@@ -36,7 +65,6 @@ def clean_ocr_text(text):
     text = re.sub(r'\*\$\}', '', text)
     # Loại bỏ các ký tự {, } còn dư do OCR lỗi
     text = text.replace("{", "").replace("}", "")
-    # Loại bỏ **, * còn dư
     text = text.replace("**", "").replace("*", "")
     return text.strip()
 
@@ -127,8 +155,10 @@ with tab1:
             export_figures = [fig for fig in images if fig["name"] in selected_fig_names]
             if st.button("📝 Tạo và tải file Word", key="word_pdf_create", use_container_width=True):
                 with st.spinner("Đang tạo file Word..."):
+                    # Áp dụng wrap_math cho text xuất file Word
+                    text_for_word = wrap_math(text_content)
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                        insert_images_to_word_from_markdown(text_content, export_figures, tmp_word.name)
+                        insert_images_to_word_from_markdown(text_for_word, export_figures, tmp_word.name)
                     with open(tmp_word.name, "rb") as f:
                         word_data = f.read()
                     st.success("✅ Đã tạo file Word thành công!")
@@ -218,8 +248,9 @@ with tab2:
             export_figures = [fig for fig in figures if fig["name"] in selected_fig_names]
             if st.button("📝 Tạo và tải file Word", key="word_img_create", use_container_width=True):
                 with st.spinner("Đang tạo file Word..."):
+                    text_for_word = wrap_math(text_content)
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                        insert_images_to_word_from_markdown(text_content, export_figures, tmp_word.name)
+                        insert_images_to_word_from_markdown(text_for_word, export_figures, tmp_word.name)
                     with open(tmp_word.name, "rb") as f:
                         word_data = f.read()
                     st.success("✅ Đã tạo file Word thành công!")
