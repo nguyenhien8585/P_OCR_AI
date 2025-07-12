@@ -1,5 +1,5 @@
 import streamlit as st
-from config import API_URL, API_KEY
+from app_config import API_URL, API_KEY
 from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from extract_figures_from_image_pillow import extract_figures_from_image
@@ -141,29 +141,21 @@ with tab2:
             st.write(f"**Kích thước:** {size_mb:.1f} MB")
         st.image(img_bytes, caption="Ảnh đã upload", use_container_width=True)
 
-        # --- Nút tách hình minh hoạ ---
-        num_parts = st.number_input("Số vùng muốn tách (chia dọc):", min_value=2, max_value=10, value=2, step=1)
-        if st.button("🔎 Tách ảnh minh hoạ trong ảnh", key="split_img_btn", use_container_width=True):
-            with st.spinner("Đang tách các hình minh hoạ..."):
-                figures = extract_figures_from_image(img_bytes, num_parts=int(num_parts))
-            if figures:
-                st.success(f"Đã tách được {len(figures)} hình minh hoạ!")
-                for fig in figures:
-                    fig_bytes = base64.b64decode(fig["base64"])
-                    st.image(fig_bytes, caption=fig["name"], use_container_width=True)
-            else:
-                st.warning("Không phát hiện được hình minh hoạ!")
-
-        # --- Nút OCR Ảnh ---
-        if st.button("🚀 Xử lý OCR Ảnh", key="ocr_img_btn", use_container_width=True):
-            st.info("⏳ Đang xử lý OCR Ảnh...")
-            with st.spinner("Đang nhận diện văn bản từ ảnh..."):
+        # Chọn số vùng muốn tách (chia dọc)
+        num_parts = st.number_input("Số vùng muốn tách (chia dọc):", min_value=2, max_value=10, value=2, step=1, key="num_parts_img")
+        
+        # OCR + Tách hình minh họa
+        if st.button("🚀 Xử lý OCR Ảnh & tách minh họa", key="ocr_img_btn", use_container_width=True):
+            st.info("⏳ Đang xử lý OCR Ảnh và tách minh họa...")
+            with st.spinner("Đang nhận diện văn bản từ ảnh và tách hình minh họa..."):
                 client = EnhancedSmartOCRClient(API_URL, API_KEY)
                 result = client.convert(img_bytes, img_file_name, img_mime_type)
+                figures = extract_figures_from_image(img_bytes, num_parts=int(num_parts))
             if not result.get("success"):
                 st.error("❌ Xử lý OCR ảnh thất bại: " + str(result.get("error")))
                 st.stop()
             st.session_state["ocr_img_text_raw"] = result["data"].get("text_content", "")
+            st.session_state["ocr_img_figures"] = figures
             st.session_state["ocr_img_done"] = True
             st.success("✅ Xử lý OCR Ảnh hoàn tất thành công!")
 
@@ -172,37 +164,47 @@ with tab2:
             return re.sub(r'\$(.+?)\$', r'${\1}$', s)
         raw_text = st.session_state.get("ocr_img_text_raw", "")
         text_content = dollar_to_mathptn(raw_text)
-        st.markdown("#### 📋 Kết quả OCR Ảnh:")
-        st.text_area("Kết quả OCR Ảnh:", text_content, height=350, label_visibility="collapsed")
+        figures = st.session_state.get("ocr_img_figures", [])
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.download_button(
-                "📄 Tải văn bản (TXT)",
-                text_content,
-                file_name="ket_qua_ocr_anh.txt",
-                mime="text/plain",
-                use_container_width=True,
-            )
-        with col2:
-            word_btn = st.button("📝 Tạo và tải file Word", use_container_width=True, key="word_img")
-            if word_btn:
-                with st.spinner("Đang tạo file Word..."):
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                        images = []
-                        images.append({"name": img_file_name, "base64": base64.b64encode(img_bytes).decode()})
-                        insert_images_to_word_from_markdown(text_content, images, tmp_word.name)
-                    with open(tmp_word.name, "rb") as f:
-                        word_data = f.read()
-                    st.success("✅ Đã tạo file Word thành công!")
-                    st.download_button(
-                        "⬇️ Tải về file Word",
-                        word_data,
-                        file_name="ket_qua_ocr_anh.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        use_container_width=True
-                    )
-                    os.remove(tmp_word.name)
+        tab_img_text, tab_img_fig = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
+        with tab_img_text:
+            st.markdown("#### 📋 Kết quả OCR Ảnh:")
+            st.text_area("Kết quả OCR Ảnh:", text_content, height=350, label_visibility="collapsed")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    "📄 Tải văn bản (TXT)",
+                    text_content,
+                    file_name="ket_qua_ocr_anh.txt",
+                    mime="text/plain",
+                    use_container_width=True,
+                )
+            with col2:
+                word_btn = st.button("📝 Tạo và tải file Word", use_container_width=True, key="word_img")
+                if word_btn:
+                    with st.spinner("Đang tạo file Word..."):
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
+                            insert_images_to_word_from_markdown(text_content, figures, tmp_word.name)
+                        with open(tmp_word.name, "rb") as f:
+                            word_data = f.read()
+                        st.success("✅ Đã tạo file Word thành công!")
+                        st.download_button(
+                            "⬇️ Tải về file Word",
+                            word_data,
+                            file_name="ket_qua_ocr_anh.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            use_container_width=True
+                        )
+                        os.remove(tmp_word.name)
+        with tab_img_fig:
+            if figures:
+                st.success(f"🖼️ Đã tách được {len(figures)} hình minh hoạ!")
+                for fig in figures:
+                    fig_bytes = base64.b64decode(fig["base64"])
+                    st.image(fig_bytes, caption=fig["name"], use_container_width=True)
+            else:
+                st.warning("Không phát hiện được hình minh hoạ!")
 
 st.markdown("---")
 st.caption("🔖 <b>OCR PDF & Ảnh: hỗ trợ MathType, ảnh minh hoạ, xuất Word/TXT. Giao diện hiện đại.</b>", unsafe_allow_html=True)
