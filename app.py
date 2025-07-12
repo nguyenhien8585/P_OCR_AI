@@ -11,42 +11,49 @@ import tempfile
 from PIL import Image
 import io
 
-# ===== Hàm format tự động công thức toán học Toán THPT QG style =====
-def math_format_qa_text(text):
-    lines = text.split('\n')
-    res = []
-    for line in lines:
-        # Bỏ Câu n: ở đầu dòng
-        line = re.sub(r'^Câu\s*\d+\s*:?', '', line, flags=re.IGNORECASE).strip()
-        # Bỏ các đáp án trắc nghiệm đầu dòng (A. ..., B. ..., C. ..., D. ...)
-        line = re.sub(r'^[A-D]\.\s*', '', line)
-        if not line: continue
-
-        # Bao các đoạn có toán học đặc trưng vào ${...}$
-        # 1. Điểm & nhóm ký hiệu: OA, OB, OC, O.ABC, OA', A', B', ABC, Oxyz, ...
-        line = re.sub(r'(?<!\$)(\b(?:O|A|B|C|D|E|F|G|H|K|L|M|N|P|Q|R|S|T|X|Y|Z)(?:[.]?[A-Z]{1,5})?(?:\'?)\b)(?![\w\'])', r'${\1}$', line)
-        # 2. Các nhóm trong ngoặc (ABC), (P), (d), (O), (A'B'C'),...
-        line = re.sub(r'(?<!\$)(\([A-Za-z0-9\'\.\s]{1,8}\))', r'${\1}$', line)
-        # 3. Toán tử và số: x = 2, OA = 3, x + 3 = 4, a^2 + b^2 = c^2,...
-        line = re.sub(r'([a-zA-Z]+\s*[=<>]\s*[\d\w\/\+\-\*\^]+)', r'${\1}$', line)
-        # 4. Chỉ số: n̄, v̄, x̄
-        line = re.sub(r'([a-zA-Z])̄', r'${\1̄}$', line)
-        # 5. Oxyz, Oxy, Oxz, Oyz
-        line = re.sub(r'\b(Oxyz|Oxy|Oxz|Oyz)\b', r'${\1}$', line)
-        # 6. Số độc lập đứng sau đáp án: "A. 36." thành "36."
-        line = re.sub(r'^([A-D])\.\s*([-\d\.\/]+)', r'\2', line)
-        # 7. Số trong bảng: chỉ số toán độc lập
-        line = re.sub(r'(?<!\$)\b(\d{1,3})\b(?!\.\d)', r'${\1}$', line)
-        # Giữ nguyên marker ảnh
-        res.append(line)
-    return '\n'.join(res)
-
 st.set_page_config(page_title="OCR PDF & Image", layout="centered")
 
 tab1, tab2 = st.tabs([
     "📄 OCR PDF",
     "🖼️ OCR Image"
 ])
+
+# ===== Hàm làm sạch và format toán học =====
+def clean_and_format_math_text(text):
+    # Xóa các dấu * đơn và **
+    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
+    text = re.sub(r'\*([^*]+)\*', r'\1', text)
+    text = text.replace('*', '')
+
+    # Các pattern toán học cần bọc ${...}$
+    patterns = [
+        r'\b([A-Z]{1,4}(?:\.[A-Z]{2,4})?)\b',      # điểm/tập hợp O.ABC, ABC, Oxyz
+        r'\bOxyz\b',
+        r'\bO[A-Z]{1,3}\b',                        # OA, OB, ...
+        r'\b[0-9]+(?:/[0-9]+)?\b',                 # số nguyên, phân số
+        r'\([A-Z][A-Z0-9\' ]+\)',                  # (ABC), (A'B'C')
+        r'[a-zA-Z]=[0-9]+',                        # OA=2
+        r'[-+]?[0-9]+',                            # số âm/dương đơn lẻ
+        r'(?<=\^)\{?.+?\}?',                       # mũ
+    ]
+    def math_replacer(m):
+        s = m.group(0)
+        # Không bọc lại nếu đã nằm trong ${...}$, hoặc là marker ảnh
+        if re.search(r'\$\{.*'+re.escape(s)+'.*\}\$', text) or re.match(r'!\[', s):
+            return s
+        return '${' + s + '}$'
+    for patt in patterns:
+        text = re.sub(patt, math_replacer, text)
+
+    # Bỏ bọc các đáp án trắc nghiệm
+    text = re.sub(r'\${([ABCD])}\$\.', r'\1.', text)
+    text = re.sub(r'\${([ABCD])}\$[\.:]', r'\1.', text)
+
+    # Xóa khoảng trắng, dòng thừa
+    text = re.sub(r'\n{2,}', '\n\n', text)
+    text = re.sub(r' +', ' ', text)
+
+    return text.strip()
 
 # ================ TAB 1: OCR PDF ==================
 with tab1:
@@ -104,7 +111,7 @@ with tab1:
 
     if st.session_state.get("ocr_pdf_done"):
         raw_text = st.session_state.get("ocr_pdf_text_raw", "")
-        text_content = math_format_qa_text(raw_text)
+        text_content = clean_and_format_math_text(raw_text)
         images = st.session_state.get("ocr_pdf_images", [])
 
         tab_pdf_text, tab_pdf_img = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
@@ -195,7 +202,7 @@ with tab2:
 
     if st.session_state.get("ocr_img_done"):
         raw_text = st.session_state.get("ocr_img_text_raw", "")
-        text_content = math_format_qa_text(raw_text)
+        text_content = clean_and_format_math_text(raw_text)
         figures = st.session_state.get("ocr_img_figures", [])
 
         tab_img_text, tab_img_fig = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
