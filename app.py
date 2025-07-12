@@ -1,77 +1,63 @@
 import streamlit as st
-import base64
-from ocr_client_api import EnhancedSmartOCRClient
 from config import API_URL, API_KEY
-from word_export import save_to_word
-from latex_export import save_to_latex, save_images_to_files
+from ocr_client_api import EnhancedSmartOCRClient
+from extract_images import extract_images_from_pdf
+from word_export import insert_images_to_word_from_markdown
+from latex_export import save_images_to_files, insert_images_to_latex_from_markdown
 import os
 
-st.set_page_config(page_title="Smart OCR - Streamlit", layout="centered")
-st.title("📄 Smart OCR (API) – Xuất Word/LaTeX, kèm ảnh minh hoạ")
+st.set_page_config(page_title="Smart OCR - PDF/Image to Word/LaTeX + Images", layout="centered")
+st.title("📄 Smart OCR (API + Python image extract) – Xuất Word/LaTeX, ảnh minh hoạ đúng vị trí")
 
-client = EnhancedSmartOCRClient(API_URL, API_KEY)
+st.write("- Nhận diện text bằng API (dùng key)\n- Trích xuất ảnh minh hoạ trực tiếp từ PDF\n- Khi xuất Word/LaTeX: ảnh sẽ được chèn đúng vị trí tên ảnh trong text")
 
-st.write("**Nhận diện văn bản + trích xuất ảnh từ PDF/ảnh, dùng API key. Xuất Word/LaTeX chèn đúng vị trí ảnh.**")
-
-uploaded_file = st.file_uploader("Chọn file PDF/ảnh (multi-page)", type=["pdf", "jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"])
 if uploaded_file:
-    file_bytes = uploaded_file.read()
-    mime_type = uploaded_file.type
+    pdf_bytes = uploaded_file.read()
     file_name = uploaded_file.name
+    mime_type = "application/pdf"
 
-    with st.spinner("Đang nhận diện OCR qua API..."):
-        result = client.convert(file_bytes, file_name, mime_type)
+    with st.spinner("Đang nhận diện văn bản (OCR API)..."):
+        client = EnhancedSmartOCRClient(API_URL, API_KEY)
+        result = client.convert(pdf_bytes, file_name, mime_type)
     
     if not result.get("success"):
         st.error("OCR thất bại: " + str(result.get("error")))
     else:
-        data = result["data"]
-        st.success(f"OCR thành công! Số trang: {data.get('page_count')}, Ngôn ngữ: {data.get('language_detected')}")
-        st.text_area("Văn bản trích xuất", data.get("text_content", ""), height=250)
+        text_content = result["data"].get("text_content", "")
+        st.subheader("Văn bản nhận diện (có tên ảnh):")
+        st.text_area("Text OCR", text_content, height=350)
 
-        # ======= HIỂN THỊ VÀ XUẤT ẢNH ==========
-        images_b64 = data.get("images", [])  # API trả về mảng base64 ảnh (nếu hỗ trợ)
-        text_blocks, images_blocks = [], []
-        if images_b64:
-            st.subheader("Các ảnh minh hoạ tách được:")
-            for idx, img_b64 in enumerate(images_b64):
-                st.image(img_b64, caption=f"Hình {idx+1}", use_column_width=True)
-                text_blocks.append({"text": f"Ảnh minh hoạ {idx+1}", "has_image": True, "img_idx": idx})
-                images_blocks.append({"image_b64": img_b64})
+        # Tách mọi ảnh thực sự từ PDF
+        with st.spinner("Đang trích xuất ảnh minh hoạ từ PDF..."):
+            images = extract_images_from_pdf(pdf_bytes)   # List dict {"name":..., "base64":...}
+        
+        if images:
+            st.success(f"Trích xuất được {len(images)} ảnh minh hoạ!")
+            for img in images:
+                st.image(img["base64"], caption=img["name"], use_column_width=True)
         else:
-            st.info("Không tìm thấy ảnh minh hoạ hoặc API chưa trả về.")
+            st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
 
-        # Bổ sung 1 block text chính cho Word/LaTeX demo (ghép text chính với các ảnh)
-        text_blocks.insert(0, {"text": data.get("text_content", ""), "has_image": False})
-
-        # Xuất Word
+        # Export Word
         if st.button("📥 Xuất file Word (.docx)"):
             word_file = "ket_qua_ocr.docx"
-            save_to_word(text_blocks, images_blocks, word_file)
+            insert_images_to_word_from_markdown(text_content, images, word_file)
             with open(word_file, "rb") as f:
                 st.download_button("Tải về file Word", f, file_name=word_file)
             os.remove(word_file)
 
-        # Xuất LaTeX
+        # Export LaTeX
         if st.button("📥 Xuất file LaTeX (.tex, kèm ảnh PNG)"):
-            latex_file = "ket_qua_ocr.tex"
-            save_images_to_files(images_blocks, prefix="image_")
-            save_to_latex(text_blocks, images_blocks, latex_file, image_prefix="image_")
-            with open(latex_file, "r", encoding="utf-8") as f:
-                st.download_button("Tải về file LaTeX", f, file_name=latex_file)
-            os.remove(latex_file)
-            for idx in range(len(images_blocks)):
-                if os.path.exists(f"image_{idx}.png"):
-                    os.remove(f"image_{idx}.png")
-
-    # Các chức năng kiểm tra tài khoản/usage nếu muốn:
-    with st.expander("Kiểm tra tài khoản/usage"):
-        if st.button("Xem tài khoản"):
-            st.json(client.get_account())
-        if st.button("Xem usage"):
-            st.json(client.get_usage("month"))
-        if st.button("Xem status API"):
-            st.json(client.get_status())
+            tex_file = "ket_qua_ocr.tex"
+            save_images_to_files(images, prefix="")
+            insert_images_to_latex_from_markdown(text_content, images, tex_file, image_prefix="")
+            with open(tex_file, "r", encoding="utf-8") as f:
+                st.download_button("Tải về file LaTeX", f, file_name=tex_file)
+            os.remove(tex_file)
+            for img in images:
+                if os.path.exists(img["name"]):
+                    os.remove(img["name"])
 
 st.markdown("---")
-st.caption("Phiên bản dùng API key giống GAS, code Python/Streamlit xuất Word/LaTeX.")
+st.caption("Code Python hoàn chỉnh: API key nhận diện text, trích xuất ảnh trực tiếp, mapping đúng tên ảnh khi xuất Word/LaTeX.")
