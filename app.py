@@ -18,11 +18,21 @@ tab1, tab2 = st.tabs([
     "🖼️ OCR Image"
 ])
 
-# Hàm chuyển công thức toán sang dạng ${...}$
-def preprocess_text(s):
-    # Chuyển $...$ => ${...}$ và *...* => ${...}$
-    s = re.sub(r'\$(.+?)\$', r'${\1}$', s, flags=re.DOTALL)
-    s = re.sub(r'\*([^\*]+)\*', r'${\1}$', s)
+# --- Hàm xử lý công thức toán học ---
+def preprocess_for_word(s):
+    # Chỉ chuyển $...$ ngắn thành ${...}$ và *...* chỉ nếu là toán học
+    def _math_replacer(match):
+        content = match.group(1)
+        if "\n" in content or len(content) > 80:
+            return f"${content}$"
+        return f"${{{content}}}$"
+    s = re.sub(r'\$(.+?)\$', _math_replacer, s)
+    def _star_replacer(match):
+        content = match.group(1)
+        if re.search(r'[=+\-\^\/\\]|(\d+)', content):
+            return f"${{{content}}}$"
+        return f"*{content}*"
+    s = re.sub(r'\*([^\*]+)\*', _star_replacer, s)
     return s
 
 # ================ TAB 1: OCR PDF ==================
@@ -81,7 +91,7 @@ with tab1:
 
     if st.session_state.get("ocr_pdf_done"):
         raw_text = st.session_state.get("ocr_pdf_text_raw", "")
-        text_content = preprocess_text(raw_text)  # DÙNG hàm chuyển công thức!
+        text_content = preprocess_for_word(raw_text)
         images = st.session_state.get("ocr_pdf_images", [])
 
         tab_pdf_text, tab_pdf_img = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
@@ -173,7 +183,7 @@ with tab2:
 
     if st.session_state.get("ocr_img_done"):
         raw_text = st.session_state.get("ocr_img_text_raw", "")
-        text_content = preprocess_text(raw_text)  # DÙNG hàm chuyển công thức!
+        text_content = preprocess_for_word(raw_text)
         figures = st.session_state.get("ocr_img_figures", [])
 
         tab_img_text, tab_img_fig = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
