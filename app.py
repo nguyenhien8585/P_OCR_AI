@@ -115,8 +115,8 @@ with tab1:
 
 # ================= TAB 2: OCR Image ================
 with tab2:
-    st.markdown("### 🖼️ OCR cho file Ảnh (PNG, JPG)")
-    uploaded_img = st.file_uploader("Chọn file ảnh để xử lý OCR", type=["png", "jpg", "jpeg"])
+    st.markdown("### 🖼️ OCR cho hình ảnh")
+    uploaded_img = st.file_uploader("Chọn hình ảnh để xử lý OCR", type=["png", "jpg", "jpeg", "webp"])
     img_file_name = None
 
     if uploaded_img:
@@ -141,21 +141,21 @@ with tab2:
             st.write(f"**Kích thước:** {size_mb:.1f} MB")
         st.image(img_bytes, caption="Ảnh đã upload", use_container_width=True)
 
-        # Chọn số vùng muốn tách (chia dọc)
-        num_parts = st.number_input("Số vùng muốn tách (chia dọc):", min_value=2, max_value=10, value=2, step=1, key="num_parts_img")
-        
-        # OCR + Tách hình minh họa
-        if st.button("🚀 Xử lý OCR Ảnh & tách minh họa", key="ocr_img_btn", use_container_width=True):
-            st.info("⏳ Đang xử lý OCR Ảnh và tách minh họa...")
-            with st.spinner("Đang nhận diện văn bản từ ảnh và tách hình minh họa..."):
+        # --- Tự động tách hình minh hoạ ---
+        with st.spinner("Đang tách các hình minh hoạ..."):
+            figures = extract_figures_from_image(img_bytes, min_area=2000)
+        st.session_state["ocr_img_figures"] = figures
+
+        # --- Xử lý OCR ---
+        if st.button("🚀 Xử lý OCR Image", key="ocr_img_btn", use_container_width=True):
+            st.info("⏳ Đang xử lý OCR Ảnh...")
+            with st.spinner("Đang nhận diện văn bản từ ảnh..."):
                 client = EnhancedSmartOCRClient(API_URL, API_KEY)
                 result = client.convert(img_bytes, img_file_name, img_mime_type)
-                figures = extract_figures_from_image(img_bytes, num_parts=int(num_parts))
             if not result.get("success"):
                 st.error("❌ Xử lý OCR ảnh thất bại: " + str(result.get("error")))
                 st.stop()
             st.session_state["ocr_img_text_raw"] = result["data"].get("text_content", "")
-            st.session_state["ocr_img_figures"] = figures
             st.session_state["ocr_img_done"] = True
             st.success("✅ Xử lý OCR Ảnh hoàn tất thành công!")
 
@@ -168,7 +168,7 @@ with tab2:
 
         tab_img_text, tab_img_fig = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
         with tab_img_text:
-            st.markdown("#### 📋 Kết quả OCR Ảnh:")
+            st.markdown("#### 📋 Kết quả OCR Image:")
             st.text_area("Kết quả OCR Ảnh:", text_content, height=350, label_visibility="collapsed")
 
             col1, col2 = st.columns(2)
