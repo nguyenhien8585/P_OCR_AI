@@ -1,36 +1,35 @@
+from PIL import Image, ImageFilter
+import numpy as np
+import base64
+import io
+from scipy.ndimage import label, find_objects
+
 def extract_figures_from_image(
     img_bytes,
-    max_figures=6,  # Show nhiều block để user tick đúng
-    min_area=800,
-    min_aspect=0.15,
-    max_aspect=8.0,
-    min_area_ratio=0.003,
-    max_area_ratio=0.6,
-    margin=0.01
+    min_area=1800,
+    blur_radius=1,
+    max_figures=10,
+    min_aspect=0.20,
+    max_aspect=5.0,
+    min_area_ratio=0.004,
+    max_area_ratio=0.7,
+    min_mean_pixel=160,
+    min_std_pixel=12
 ):
-    from PIL import Image, ImageEnhance, ImageFilter
-    import numpy as np
-    import base64
-    import io
-    from scipy.ndimage import label, find_objects
-
-    orig_img = Image.open(io.BytesIO(img_bytes))
-    img = orig_img.convert("L")
-    enhancer = ImageEnhance.Contrast(img)
-    img = enhancer.enhance(1.7)
-    enhancer = ImageEnhance.Brightness(img)
-    img = enhancer.enhance(1.08)
-    img = img.filter(ImageFilter.MedianFilter(3))
-    img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=150))
+    """
+    Tách các vùng nghi ngờ là hình minh hoạ để người dùng chọn lại
+    """
+    img = Image.open(io.BytesIO(img_bytes)).convert("L")
     arr = np.array(img)
     h, w = arr.shape
-    img_blur = img.filter(ImageFilter.GaussianBlur(1))
+    img_blur = img.filter(ImageFilter.GaussianBlur(blur_radius))
     arr_blur = np.array(img_blur)
     edge = np.abs(arr.astype(np.int16) - arr_blur.astype(np.int16))
-    edge = (edge > 7).astype(np.uint8)
+    edge = (edge > 10).astype(np.uint8)
     labeled, num = label(edge)
     objects = find_objects(labeled)
-    color_img = orig_img.convert("RGB")
+    color_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    results = []
     candidates = []
     for obj in objects:
         if obj is None: continue
@@ -42,19 +41,17 @@ def extract_figures_from_image(
         crop_arr = arr[y0:y1, x0:x1]
         mean_pixel = crop_arr.mean()
         std_pixel = crop_arr.std()
-        percent_white = np.mean(crop_arr > 200)
-        # Lấy tất cả block lớn, cho user tick lại, không cố loại tiêu đề/mã đề nữa
         if (
             area > min_area and
             min_aspect < aspect < max_aspect and
             min_area_ratio < area_ratio < max_area_ratio and
-            x0 > margin*w and x1 < (1-margin)*w and
-            mean_pixel > 85 and std_pixel > 10 and percent_white > 0.13
+            x0 > 0.005*w and x1 < 0.995*w and y0 > 0.005*h and y1 < 0.995*h and
+            mean_pixel > min_mean_pixel and
+            std_pixel > min_std_pixel
         ):
             candidates.append((area, x0, y0, x1, y1))
-    # Sắp xếp theo diện tích lớn nhất
+    # Lấy block lớn nhất trước
     candidates = sorted(candidates, key=lambda x: -x[0])[:max_figures]
-    results = []
     for idx, (area, x0, y0, x1, y1) in enumerate(candidates):
         crop = color_img.crop((x0, y0, x1, y1))
         buf = io.BytesIO()
