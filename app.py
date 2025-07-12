@@ -43,28 +43,28 @@ class SmartOCRClient:
         return {"success": False, "error": f"Failed after {max_retries} retries"}
 
     def convert(self, file_bytes, filename, mime_type, options=None):
-        # --- CHẮC CHẮN GỬI KEY ---
-        data = {
-            "api_key": self.api_key,
-            "file": {
-                "name": filename,
-                "mimeType": mime_type,
-                "base64": base64.b64encode(file_bytes).decode()
-            },
-            "options": options or {
-                "language": "auto",
-                "output_format": "json"
-            }
+    data = {
+        "endpoint": "convert",   # DÒNG QUAN TRỌNG!
+        "api_key": self.api_key,
+        "file": {
+            "name": filename,
+            "mimeType": mime_type,
+            "base64": base64.b64encode(file_bytes).decode()
+        },
+        "options": options or {
+            "language": "auto",
+            "output_format": "json"
         }
-        # Debug gửi lên (bỏ nếu không muốn lộ key)
-        # st.write("DEBUG gửi lên SmartOCR:", data)
-        result = self._make_request(data)
-        self.usage["total"] += 1
-        if result.get("success"):
-            self.usage["success"] += 1
-        else:
-            self.usage["fail"] += 1
-        return result
+    }
+    # st.write("DEBUG gửi lên SmartOCR:", data)
+    result = self._make_request(data)
+    self.usage["total"] += 1
+    if result.get("success"):
+        self.usage["success"] += 1
+    else:
+        self.usage["fail"] += 1
+    return result
+
 
 def image_from_base64(base64_str):
     try:
