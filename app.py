@@ -36,14 +36,14 @@ if uploaded_file:
         with st.spinner("Đang trích xuất ảnh minh hoạ từ PDF..."):
             images = extract_images_from_pdf(pdf_bytes)
 
-       if images:
+        if images:
             st.success(f"Trích xuất được {len(images)} ảnh minh hoạ!")
             for img in images:
                 try:
-                     img_bytes = base64.b64decode(img["base64"])
-                     st.image(img_bytes, caption=img["name"], use_container_width=True)
-            except Exception as e:
-                      st.error(f"Không đọc được ảnh {img['name']}: {e}")
+                    img_bytes = base64.b64decode(img["base64"])
+                    st.image(img_bytes, caption=img["name"], use_container_width=True)
+                except Exception as e:
+                    st.error(f"Không đọc được ảnh {img['name']}: {e}")
         else:
             st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
 
