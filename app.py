@@ -10,10 +10,10 @@ from docx import Document
 from docx.shared import Inches
 import time
 
-# ==== NHẬP KEY THẬT TẠI ĐÂY (KHÔNG DÙNG .env) ====
+# ==== NHẬP KEY THẬT TẠI ĐÂY ====
 OCR_CLIENT_CONFIG = {
     "API_URL": "https://script.google.com/macros/s/AKfycby6GUWKFttjWTDJuQuX5IAeGAzS5tQULLja3SHbSfZIhQyaWVMuxyRNAE-fykxnznkqIw/exec",
-    "API_KEY": "sk_nguyenhien21022020_pro_mcwzovbjz11wklh8zk",  # <-- ĐIỀN API KEY BẠN VÀO ĐÂY!
+    "API_KEY": "sk_nguyenhien21022020_pro_mcwzovbjz11wklh8zk",   # <-- Nhập nguyên vẹn key, KHÔNG có dấu cách!
     "TIMEOUT": 120,
     "MAX_RETRIES": 3,
     "RETRY_DELAY_BASE": 2,
@@ -26,14 +26,18 @@ class SmartOCRClient:
         self.config = config or OCR_CLIENT_CONFIG
         self.api_url = self.config["API_URL"]
         self.api_key = self.config["API_KEY"]
-        self.webhook_url = self.config.get("WEBHOOK_URL")
         self.usage = {"total": 0, "success": 0, "fail": 0}
 
     def _make_request(self, data, max_retries=None):
         max_retries = max_retries if max_retries is not None else self.config["MAX_RETRIES"]
         for attempt in range(max_retries):
             try:
-                resp = requests.post(self.api_url, headers={'Content-Type': 'application/json'}, json=data, timeout=self.config["TIMEOUT"])
+                resp = requests.post(
+                    self.api_url,
+                    headers={'Content-Type': 'application/json'},
+                    json=data,
+                    timeout=self.config["TIMEOUT"]
+                )
                 if resp.status_code != 200:
                     time.sleep(self.config["RETRY_DELAY_BASE"] * (attempt + 1))
                     continue
@@ -44,8 +48,8 @@ class SmartOCRClient:
 
     def convert(self, file_bytes, filename, mime_type, options=None):
         data = {
-            "endpoint": "convert",   # DÒNG QUAN TRỌNG!
-            "api_key": self.api_key,
+            "endpoint": "convert",        # <-- PHẢI CÓ TRƯỜNG NÀY!
+            "api_key": self.api_key,      # <-- Đúng tên là "api_key"
             "file": {
                 "name": filename,
                 "mimeType": mime_type,
@@ -56,7 +60,6 @@ class SmartOCRClient:
                 "output_format": "json"
             }
         }
-        # st.write("DEBUG gửi lên SmartOCR:", data)
         result = self._make_request(data)
         self.usage["total"] += 1
         if result.get("success"):
