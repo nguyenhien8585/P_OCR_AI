@@ -8,15 +8,12 @@ import tempfile
 from io import BytesIO
 from docx import Document
 from docx.shared import Inches
-import os
-from dotenv import load_dotenv
 import time
 
-# ======= CONFIG =======
-load_dotenv()
+# ==== NHẬP KEY THẬT TẠI ĐÂY (KHÔNG DÙNG .env) ====
 OCR_CLIENT_CONFIG = {
     "API_URL": "https://script.google.com/macros/s/AKfycby6GUWKFttjWTDJuQuX5IAeGAzS5tQULLja3SHbSfZIhQyaWVMuxyRNAE-fykxnznkqIw/exec",
-    "API_KEY": "sk_nguyenhien21022020_pro_mcwzovbjz11wklh8zk",    # <-- ĐIỀN KEY THẬT VÀO ĐÂY
+    "API_KEY": "sk_nguyenhien21022020_pro_mcwzovbjz11wklh8zk",  # <-- ĐIỀN API KEY BẠN VÀO ĐÂY!
     "TIMEOUT": 120,
     "MAX_RETRIES": 3,
     "RETRY_DELAY_BASE": 2,
@@ -46,21 +43,21 @@ class SmartOCRClient:
         return {"success": False, "error": f"Failed after {max_retries} retries"}
 
     def convert(self, file_bytes, filename, mime_type, options=None):
-        # Thêm "endpoint": "convert" đúng yêu cầu GAS server!
-        base64_str = base64.b64encode(file_bytes).decode()
+        # --- CHẮC CHẮN GỬI KEY ---
         data = {
-            "endpoint": "convert",    # Fix: THÊM trường này
             "api_key": self.api_key,
             "file": {
                 "name": filename,
                 "mimeType": mime_type,
-                "base64": base64_str
+                "base64": base64.b64encode(file_bytes).decode()
             },
             "options": options or {
                 "language": "auto",
                 "output_format": "json"
             }
         }
+        # Debug gửi lên (bỏ nếu không muốn lộ key)
+        # st.write("DEBUG gửi lên SmartOCR:", data)
         result = self._make_request(data)
         self.usage["total"] += 1
         if result.get("success"):
@@ -68,16 +65,6 @@ class SmartOCRClient:
         else:
             self.usage["fail"] += 1
         return result
-
-    def convert_batch(self, files, options=None, progress_cb=None):
-        results = []
-        for i, f in enumerate(files):
-            res = self.convert(f["bytes"], f["name"], f["mime"], options)
-            if progress_cb:
-                progress_cb(i+1, len(files), res)
-            results.append(res)
-            time.sleep(self.config["BATCH_DELAY"])
-        return results
 
 def image_from_base64(base64_str):
     try:
@@ -138,6 +125,7 @@ def image_to_stream(image):
     buf.seek(0)
     return buf
 
+# ==== STREAMLIT UI ====
 st.set_page_config(layout="wide", page_title="Smart OCR Client (API)")
 st.title("📄➡️📘 Smart OCR Client (API) — PDF/Image to Word/LaTeX + Minh họa")
 
@@ -146,7 +134,6 @@ output_format = st.radio("Select Output Format", ["Word (.docx)", "LaTeX (.tex)"
 client = SmartOCRClient()
 
 if uploaded_file:
-    # Convert PDF to image(s)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
         tmp_file.write(uploaded_file.read())
         pdf_path = tmp_file.name
@@ -155,7 +142,6 @@ if uploaded_file:
     st.success(f"✅ Extracted {len(images)} page(s).")
     all_elements = []
 
-    # Batch process
     for page_num, img in enumerate(images, 1):
         col1, col2 = st.columns(2)
         col1.image(img, caption=f"📄 Page {page_num}")
@@ -172,7 +158,6 @@ if uploaded_file:
                 options={"output_format": "json"}
             )
 
-        # Parse response
         elements = []
         if result.get("success"):
             try:
@@ -186,7 +171,6 @@ if uploaded_file:
             st.error(f"Lỗi SmartOCR: {result.get('error')}")
         all_elements.append(elements)
 
-        # Hiển thị kết quả OCR
         with col2:
             for el in elements:
                 if el["type"] == "text":
@@ -198,7 +182,6 @@ if uploaded_file:
                         with st.expander("Base64"):
                             st.code(el["base64"][:200] + "...", language="text")
 
-    # EXPORT FULL DOC
     if output_format.startswith("Word"):
         doc = Document()
         for elements in all_elements:
