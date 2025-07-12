@@ -235,4 +235,3 @@ if uploaded_file:
 # ========== BATCH, USAGE, ANALYTICS UI (Optional) ==========
 with st.expander("📊 Usage / Batch Log"):
     st.write(f"Total: {client.usage['total']} | Success: {client.usage['success']} | Fail: {client.usage['fail']}")
-
