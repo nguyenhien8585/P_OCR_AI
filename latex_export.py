@@ -1,29 +1,29 @@
-import fitz  # PyMuPDF
+import re
 import base64
-import io
-from PIL import Image
 
-def extract_images_from_pdf(pdf_bytes):
-    images = []
-    pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
-    img_idx = 0
-    for page_number in range(len(pdf)):
-        page = pdf[page_number]
-        image_list = page.get_images(full=True)
+def save_images_to_files(image_list, prefix=""):
+    for img in image_list:
+        img_path = f"{prefix}{img['name']}"
+        with open(img_path, "wb") as f:
+            f.write(base64.b64decode(img["base64"]))
+
+def insert_images_to_latex_from_markdown(text, image_list, tex_path, image_prefix=""):
+    latex = "\\documentclass{article}\n\\usepackage{graphicx}\n\\usepackage[utf8]{inputenc}\n\\begin{document}\n"
+    pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
+    pos = 0
+    for match in re.finditer(pattern, text):
+        start, end = match.span()
+        caption, img_name = match.groups()
+        latex += text[pos:start].replace('\n', '\\\\') + "\n"
+        found = False
         for img in image_list:
-            xref = img[0]
-            base = pdf.extract_image(xref)
-            image_bytes = base["image"]
-            ext = base["ext"]
-            img_name = f"img-{img_idx}.jpeg"
-            # Đảm bảo về JPEG
-            try:
-                pil_img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-                buf = io.BytesIO()
-                pil_img.save(buf, format="JPEG")
-                img_b64 = base64.b64encode(buf.getvalue()).decode()
-            except:
-                img_b64 = base64.b64encode(image_bytes).decode()
-            images.append({"name": img_name, "base64": img_b64})
-            img_idx += 1
-    return images
+            if img["name"] == img_name:
+                latex += f"\\begin{{center}}\\includegraphics[width=0.6\\linewidth]{{{image_prefix}{img_name}}}\\end{{center}}\n"
+                found = True
+                break
+        if not found:
+            latex += f"[Không tìm thấy ảnh: {img_name}]\n"
+        pos = end
+    latex += text[pos:].replace('\n', '\\\\') + "\n\\end{document}"
+    with open(tex_path, "w", encoding="utf-8") as f:
+        f.write(latex)
