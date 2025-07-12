@@ -167,7 +167,7 @@ with tab2:
 
     if st.session_state.get("ocr_img_done"):
         import re
-        # Chuyển toàn bộ công thức $...$ thành ${...}$
+        # Chuyển $...$ → ${...}$ cho MathType
         def dollar_to_mathptn(s):
             return re.sub(r'\$(.+?)\$', r'${\1}$', s)
         raw_text = st.session_state.get("ocr_img_text_raw", "")
@@ -191,30 +191,35 @@ with tab2:
             st.session_state["ocr_img_selected_figs"] = [fig for fig in figures if fig["name"] in selected_fig_names]
 
         with tab_img_text:
-            st.markdown("#### 📋 Kết quả OCR Ảnh:")
-            if figures:
-                st.info(
-                    "👉 **Muốn chèn bảng biến thiên hoặc ảnh vào đúng vị trí, hãy copy & dán đoạn dưới đây vào vị trí mong muốn trong văn bản:**\n\n" +
-                    "\n".join([f"`![{fig['name']}]({fig['name']})`" for fig in figures]) +
-                    "\n\nNếu không dán marker, ảnh sẽ chèn cuối văn bản."
-                )
-            text_content = st.text_area(
-                "Kết quả OCR Ảnh (bạn có thể thêm marker ảnh/bảng vào đúng vị trí):",
-                text_content, height=400, label_visibility="collapsed"
+            st.markdown("#### 📋 Kết quả OCR Ảnh (ảnh minh hoạ sẽ tự động chèn vào cuối các đoạn):")
+            auto_figures = st.session_state.get("ocr_img_selected_figs", [])
+            # Chia đoạn theo \n\n hoặc \n\r\n, tự động gắn marker vào cuối mỗi đoạn
+            segments = [seg.strip() for seg in re.split(r'\n{2,}', text_content) if seg.strip()]
+            auto_text = ""
+            for idx, seg in enumerate(segments):
+                auto_text += seg
+                if idx < len(auto_figures):
+                    fig = auto_figures[idx]
+                    auto_text += f"\n\n![{fig['name']}]({fig['name']})\n"
+                auto_text += "\n\n"
+            for fig in auto_figures[len(segments):]:
+                auto_text += f"\n\n![{fig['name']}]({fig['name']})\n"
+            auto_text = st.text_area(
+                "Kết quả OCR Ảnh (ảnh minh hoạ tự động chèn vào sau mỗi đoạn):",
+                auto_text, height=500, label_visibility="collapsed"
             )
             st.download_button(
                 "📄 Tải văn bản (TXT)",
-                text_content,
+                auto_text,
                 file_name="ket_qua_ocr_anh.txt",
                 mime="text/plain",
                 use_container_width=True,
             )
-            # NÚT TẠO WORD ở tab VĂN BẢN!
             if st.button("📝 Tạo và tải file Word", key="word_img_create", use_container_width=True):
                 with st.spinner("Đang tạo file Word..."):
-                    export_figures = st.session_state.get("ocr_img_selected_figs", [])
+                    export_figures = auto_figures
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                        insert_images_to_word_from_markdown(text_content, export_figures, tmp_word.name)
+                        insert_images_to_word_from_markdown(auto_text, export_figures, tmp_word.name)
                     with open(tmp_word.name, "rb") as f:
                         word_data = f.read()
                     st.success("✅ Đã tạo file Word thành công!")
@@ -226,6 +231,7 @@ with tab2:
                         use_container_width=True
                     )
                     os.remove(tmp_word.name)
+
 st.markdown("---")
 st.caption(
     "<b>OCR PDF & Ảnh: hỗ trợ MathType, ảnh minh hoạ, xuất Word/TXT. Giao diện hiện đại.</b>", 
