@@ -9,7 +9,6 @@ import re
 from PyPDF2 import PdfReader
 import tempfile
 
-# ============ HEADER & GIAO DIỆN ============
 st.set_page_config(page_title="OCR cho file PDF", layout="centered")
 st.markdown(
     """
@@ -23,9 +22,8 @@ uploaded_file = st.file_uploader(
     "Chọn file PDF để xử lý OCR", type=["pdf"], label_visibility="collapsed"
 )
 
-file_info = None
+# ---------- Thông tin file ----------
 num_pages = None
-
 if uploaded_file:
     pdf_bytes = uploaded_file.read()
     file_name = uploaded_file.name
@@ -46,35 +44,34 @@ if uploaded_file:
         st.write(f"**Kích thước:** {size_mb:.1f} MB")
         st.write(f"**Số trang:** {num_pages}")
 
-# ----- CHO BẤM NÚT MỚI XỬ LÝ -----
+# ---------- Nút xử lý OCR ----------
 if uploaded_file:
-    run_ocr = st.button("🚀 Xử lý OCR PDF", type="primary", use_container_width=True)
-else:
-    run_ocr = False
+    if st.button("🚀 Xử lý OCR PDF", type="primary", use_container_width=True):
+        st.info("⏳ Đang xử lý OCR PDF... (quá trình này có thể mất vài phút)")
+        with st.spinner("Đang nhận diện văn bản và trích xuất hình ảnh..."):
+            client = EnhancedSmartOCRClient(API_URL, API_KEY)
+            uploaded_file.seek(0)
+            pdf_bytes = uploaded_file.read()
+            result = client.convert(pdf_bytes, file_name, mime_type)
+            images = extract_images_from_pdf(pdf_bytes)
+        if not result.get("success"):
+            st.error("❌ Xử lý OCR PDF thất bại: " + str(result.get("error")))
+            st.stop()
 
-# ========== XỬ LÝ KHI BẤM NÚT ==========
-if uploaded_file and run_ocr:
-    st.info("⏳ Đang xử lý OCR PDF... (quá trình này có thể mất vài phút)")
-    with st.spinner("Đang nhận diện văn bản và trích xuất hình ảnh..."):
-        client = EnhancedSmartOCRClient(API_URL, API_KEY)
-        uploaded_file.seek(0)
-        pdf_bytes = uploaded_file.read()
-        result = client.convert(pdf_bytes, file_name, mime_type)
-        images = extract_images_from_pdf(pdf_bytes)
+        # Lưu vào session_state để không bị mất khi bấm nút khác
+        st.session_state["ocr_text_raw"] = result["data"].get("text_content", "")
+        st.session_state["ocr_images"] = images
+        st.session_state["ocr_done"] = True
+        st.success("✅ Xử lý OCR PDF hoàn tất thành công!")
 
-    if not result.get("success"):
-        st.error("❌ Xử lý OCR PDF thất bại: " + str(result.get("error")))
-        st.stop()
-
-    # Chuyển đổi $...$ thành ${...}$ tự động cho MathType
+# ---------- Hiển thị kết quả nếu đã OCR ----------
+if st.session_state.get("ocr_done"):
     def dollar_to_mathptn(s):
         return re.sub(r'\$(.+?)\$', r'${\1}$', s)
-    raw_text = result["data"].get("text_content", "")
+    raw_text = st.session_state.get("ocr_text_raw", "")
     text_content = dollar_to_mathptn(raw_text)
+    images = st.session_state.get("ocr_images", [])
 
-    st.success("✅ Xử lý OCR PDF hoàn tất thành công!")
-
-    # ==== GIAO DIỆN TABS ====
     tab1, tab2 = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
     with tab1:
         st.markdown("#### 📋 Kết quả OCR PDF:")
@@ -90,8 +87,7 @@ if uploaded_file and run_ocr:
                 use_container_width=True,
             )
         with col2:
-            # Chỉ tạo/tải file Word sau khi bấm nút
-            word_btn = st.button("📝 Tạo và tải file Word", use_container_width=True)
+            word_btn = st.button("📝 Tạo và tải file Word", use_container_width=True, key="word")
             if word_btn:
                 with st.spinner("Đang tạo file Word..."):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
