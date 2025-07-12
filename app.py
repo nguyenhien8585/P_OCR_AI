@@ -18,22 +18,27 @@ tab1, tab2 = st.tabs([
     "🖼️ OCR Image"
 ])
 
-# --- Hàm xử lý công thức toán học ---
-def preprocess_for_word(s):
-    # Chỉ chuyển $...$ ngắn thành ${...}$ và *...* chỉ nếu là toán học
+# ===== Hàm xử lý làm sạch văn bản trước khi xuất Word =====
+def clean_ocr_text(text):
+    # Xoá **...** và *...*
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.*?)\*', r'\1', text)
+    # Chỉ chuyển $...$ ngắn thành ${...}$
     def _math_replacer(match):
         content = match.group(1)
         if "\n" in content or len(content) > 80:
             return f"${content}$"
         return f"${{{content}}}$"
-    s = re.sub(r'\$(.+?)\$', _math_replacer, s)
-    def _star_replacer(match):
-        content = match.group(1)
-        if re.search(r'[=+\-\^\/\\]|(\d+)', content):
-            return f"${{{content}}}$"
-        return f"*{content}*"
-    s = re.sub(r'\*([^\*]+)\*', _star_replacer, s)
-    return s
+    text = re.sub(r'\$(.+?)\$', _math_replacer, text)
+    # Loại bỏ các trường hợp wrap lỗi: }$*, $*, *}$
+    text = re.sub(r'\}\$\*', '\n', text)
+    text = re.sub(r'\$\*', '', text)
+    text = re.sub(r'\*\$\}', '', text)
+    # Loại bỏ các ký tự {, } còn dư do OCR lỗi
+    text = text.replace("{", "").replace("}", "")
+    # Loại bỏ **, * còn dư
+    text = text.replace("**", "").replace("*", "")
+    return text.strip()
 
 # ================ TAB 1: OCR PDF ==================
 with tab1:
@@ -91,7 +96,7 @@ with tab1:
 
     if st.session_state.get("ocr_pdf_done"):
         raw_text = st.session_state.get("ocr_pdf_text_raw", "")
-        text_content = preprocess_for_word(raw_text)
+        text_content = clean_ocr_text(raw_text)
         images = st.session_state.get("ocr_pdf_images", [])
 
         tab_pdf_text, tab_pdf_img = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
@@ -106,7 +111,6 @@ with tab1:
                 use_container_width=True,
             )
 
-            # Chọn ảnh và xuất Word ngay trong tab văn bản
             selected_fig_names = []
             with st.expander("🖼️ Chọn hình minh hoạ cho file Word"):
                 if images:
@@ -183,7 +187,7 @@ with tab2:
 
     if st.session_state.get("ocr_img_done"):
         raw_text = st.session_state.get("ocr_img_text_raw", "")
-        text_content = preprocess_for_word(raw_text)
+        text_content = clean_ocr_text(raw_text)
         figures = st.session_state.get("ocr_img_figures", [])
 
         tab_img_text, tab_img_fig = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
