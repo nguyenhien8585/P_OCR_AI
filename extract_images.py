@@ -4,10 +4,9 @@ import io
 from PIL import Image
 
 def extract_images_from_pdf(pdf_bytes):
-    # Trả về: danh sách dict {"name": ..., "base64": ...}
     images = []
     pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
-    img_idx = 1
+    img_idx = 0
     for page_number in range(len(pdf)):
         page = pdf[page_number]
         image_list = page.get_images(full=True)
@@ -17,7 +16,7 @@ def extract_images_from_pdf(pdf_bytes):
             image_bytes = base["image"]
             ext = base["ext"]
             img_name = f"img-{img_idx}.jpeg"
-            # Đảm bảo về JPEG/PNG (tuỳ ext)
+            # Đảm bảo về JPEG
             try:
                 pil_img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
                 buf = io.BytesIO()
