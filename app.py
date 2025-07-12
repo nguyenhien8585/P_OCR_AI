@@ -15,13 +15,13 @@ import time
 # ======= CONFIG =======
 load_dotenv()
 OCR_CLIENT_CONFIG = {
-    "API_URL": os.getenv("OCR_API_URL", "https://script.google.com/macros/s/AKfycby6GUWKFttjWTDJuQuX5IAeGAzS5tQULLja3SHbSfZIhQyaWVMuxyRNAE-fykxnznkqIw/exec"),
-    "API_KEY": os.getenv("OCR_API_KEY", "sk_nguyenhien21022020_pro_mcwzovbjz11wklh8zk"),  # <-- ĐỔI thành API key thật!
+    "API_URL": "https://script.google.com/macros/s/AKfycby6GUWKFttjWTDJuQuX5IAeGAzS5tQULLja3SHbSfZIhQyaWVMuxyRNAE-fykxnznkqIw/exec",
+    "API_KEY": "sk_nguyenhien21022020_pro_mcwzovbjz11wklh8zk",    # <-- ĐIỀN KEY THẬT VÀO ĐÂY
     "TIMEOUT": 120,
     "MAX_RETRIES": 3,
     "RETRY_DELAY_BASE": 2,
     "BATCH_DELAY": 2,
-    "WEBHOOK_URL": os.getenv("OCR_WEBHOOK_URL", "")
+    "WEBHOOK_URL": ""
 }
 
 class SmartOCRClient:
