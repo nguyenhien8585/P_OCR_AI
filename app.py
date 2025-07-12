@@ -18,86 +18,65 @@ tab1, tab2 = st.tabs([
     "🖼️ OCR Image"
 ])
 
-# ===== Hàm làm sạch và format toán học =====
-def clean_and_format_math_text(text):
-    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
-    text = re.sub(r'\*([^*]+)\*', r'\1', text)
-    text = text.replace('*', '')
+def format_math_ocr(text):
+    """
+    - Chỉ bọc ${...}$ cho ký hiệu, số, mặt phẳng, cụm đặc biệt toán học
+    - Không bọc đáp án trắc nghiệm (A., B., C., D.)
+    - Không bọc các heading/trang/mã đề/Thời gian làm bài
+    - Loại bỏ #
+    - Ảnh lên đầu (nếu muốn), hoặc để đúng vị trí marker
+    """
+    # 1. Xoá dấu #, heading, trang, mã đề, tiêu đề
+    text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
+    text = re.sub(r'=== Page.*?===', '', text)
+    text = re.sub(r'^Trang\s+\$\{\d+/\d+\}\s*-\s*Mã\s+đề\s+thi\s+\$\{\d+\}\$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'(^|\n)(KỲ\s*\$\{?THI\}?\$?\s*TỐT\s*NGHIỆP.*\n|ĐỀ\s*\$\{?THI\}?\$?\s*CHÍNH\s*THỨC.*\n|Môn\s*thi:.*\n|\(Đề thi.*\n|Thời gian làm bài.*\n|Mã đề:.*\n|Họ, tên thí sinh:.*\n|PHẦN\s*\$\{?I\}?\$?.*\n|Trang.*|^\s*#.*$)', '', text, flags=re.IGNORECASE)
+    text = text.replace('\n# ', '\n')
+    text = re.sub(r'^\s*$', '', text, flags=re.MULTILINE)
 
-    lines = text.splitlines()
-    result_lines = []
-    for idx, line in enumerate(lines):
-        orig = line
+    # Đưa ảnh lên trên nếu muốn (hoặc để nguyên đúng vị trí marker)
+    img_pattern = r'!\[([^\]]*)\]\((img-\d+\.jpeg)\)'
+    img_lines = re.findall(img_pattern, text)
+    img_block = ""
+    if img_lines:
+        for _, img in img_lines:
+            img_block += f'![{img}]({img})\n'
+        text = re.sub(img_pattern, '', text)
+        text = img_block + "\n" + text
 
-        # Không bọc các dòng tiêu đề/phụ
-        skip_keywords = [
-            'BỘ GIÁO DỤC', 'KỲ THI', 'KỲ', 'TỐT NGHIỆP', 'CHÍNH THỨC',
-            'ĐỀ THI', 'Môn thi', 'Đề thi có', 'Thời gian làm bài',
-            'Họ, tên thí sinh', 'Sổ báo danh', 'Mã đề', 'Trang', 'phút',
-            'PHẦN', 'Số trang', 'Mã đề thi'
-        ]
-        if any(kw.upper() in line.upper() for kw in skip_keywords):
-            result_lines.append(line)
-            continue
-
-        # Không bọc dòng cuối trang
-        if re.search(r'Trang.*- Mã đề thi', line, re.IGNORECASE):
-            result_lines.append(line)
-            continue
-
-        # Loại số câu hỏi đầu dòng khỏi bọc (Câu 1:, Câu 2:, ...)
-        m_cau = re.match(r'^(Câu\s+)(\d+)(:.*)', line)
-        if m_cau:
-            prefix, num, suffix = m_cau.groups()
-            # Không bọc số câu hỏi
-            line_new = f"{prefix}{num}{suffix}"
-            # Phần còn lại vẫn bọc như bình thường (áp dụng tiếp)
-            line_proc = line_new
-            # Bọc điểm, biến, toán học
-            def repl_point(m):
-                s = m.group(0)
-                if re.match(r'^[A-D]\.$', s):
-                    return s
-                return '${' + s + '}$'
-            line_proc = re.sub(r'\b(Oxyz|[A-Z]{1,3}(?:\.[A-Z]{2,4})?|O[A-Z]|n̄)\b', repl_point, line_proc)
-            # Bọc số (trừ đầu dòng đã xử lý)
-            def repl_number(m):
-                s = m.group(0)
-                if len(s) > 4:
-                    return s
-                return '${' + s + '}$'
-            # Chỉ bọc số sau tiền tố đã tách
-            line_proc = re.sub(r'(?<!\d)([0-9]+(/[0-9]+)?)(?!\d)', repl_number, line_proc)
-            # Bọc (ABC), (P), (Q)...
-            line_proc = re.sub(r'(\([A-Z][A-Z0-9\' ]+\))', lambda m: '${'+m.group(1)+'}$', line_proc)
-            line_proc = re.sub(r'([A-Z]{1,3}\s*=\s*\d+)', lambda m: '${'+m.group(1)+'}$', line_proc)
-            line_proc = re.sub(r'(\d+/\d+)', lambda m: '${'+m.group(1)+'}$', line_proc)
-            line_proc = re.sub(r'^\$\{([ABCD])\}\.\$', r'\1.', line_proc)
-            line_proc = re.sub(r' +', ' ', line_proc)
-            result_lines.append(line_proc.strip())
-            continue
-
-        # Các dòng khác: bọc bình thường
-        def repl_point(m):
-            s = m.group(0)
-            if re.match(r'^[A-D]\.$', s):
-                return s
-            return '${' + s + '}$'
-        line = re.sub(r'\b(Oxyz|[A-Z]{1,3}(?:\.[A-Z]{2,4})?|O[A-Z]|n̄)\b', repl_point, line)
-        def repl_number(m):
-            s = m.group(0)
-            if len(s) > 4:
-                return s
-            return '${' + s + '}$'
-        if not re.search(r'(phút|trang|Mã đề)', orig, re.IGNORECASE):
-            line = re.sub(r'(?<!\d)([0-9]+(/[0-9]+)?)(?!\d)', repl_number, line)
-        line = re.sub(r'(\([A-Z][A-Z0-9\' ]+\))', lambda m: '${'+m.group(1)+'}$', line)
-        line = re.sub(r'([A-Z]{1,3}\s*=\s*\d+)', lambda m: '${'+m.group(1)+'}$', line)
-        line = re.sub(r'(\d+/\d+)', lambda m: '${'+m.group(1)+'}$', line)
-        line = re.sub(r'^\$\{([ABCD])\}\.\$', r'\1.', line)
-        line = re.sub(r' +', ' ', line)
-        result_lines.append(line.strip())
-    return '\n'.join(result_lines).strip()
+    # Không bọc dòng đáp án A. ... (bắt đầu bằng A., B., C., D.)
+    # Chỉ bọc các cụm toán đặc biệt
+    math_patterns = [
+        r'\bO\.?A?B?C?\b',
+        r'\bOxyz\b',
+        r'\bOA\b', r'\bOB\b', r'\bOC\b', r'\bAB\b', r'\bAC\b', r'\bBC\b', r"\bA'\b", r"\bB'\b", r"\bC'\b",
+        r'\b[Pp]\b', r'\bn̄\b', r'\b[a-zA-Z]\d+\b',           # Cụm kiểu n̄, P, n1...
+        r'\b\d{1,3}(?:/\d{1,3})?\b',                         # số hoặc phân số
+        r'\([A-Z\' ]+\)',                                    # mặt phẳng (ABC)
+        r'[-+]?\d+'                                          # số nguyên
+    ]
+    def wrap_math(match):
+        s = match.group(0)
+        # Không bọc nếu là đáp án trắc nghiệm
+        if re.match(r'^\s*[A-D]\.', s.strip()):
+            return s
+        if re.match(r'^\$\{.*\}\$$', s):
+            return s
+        return f"${{{s}}}$"
+    # Bọc math nhưng không bọc câu hỏi/câu số
+    for pat in math_patterns:
+        text = re.sub(pat, wrap_math, text)
+    # Không bọc cho Câu ${1}$: -> Câu 1:
+    text = re.sub(r'Câu\s*\$\{(\d+)\}\$', r'Câu \1', text)
+    # Đáp án dạng ${A}$., ... về A., B., ...
+    text = re.sub(r'\$\{([A-D])\}\$\.', r'\1.', text)
+    # Loại trùng lặp liên tiếp
+    text = re.sub(r'(\$\{[^}]+\}\$)(\s*\1)+', r'\1', text)
+    # Dọn dòng trống
+    text = re.sub(r'\n\s*\n', '\n', text)
+    # Dọn extra spaces trước marker ảnh
+    text = re.sub(r'\n{2,}', '\n', text)
+    return text.strip()
 
 # ================ TAB 1: OCR PDF ==================
 with tab1:
@@ -155,13 +134,29 @@ with tab1:
 
     if st.session_state.get("ocr_pdf_done"):
         raw_text = st.session_state.get("ocr_pdf_text_raw", "")
-        text_content = clean_and_format_math_text(raw_text)
+        text_content = format_math_ocr(raw_text)
         images = st.session_state.get("ocr_pdf_images", [])
 
         tab_pdf_text, tab_pdf_img = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
+        with tab_pdf_img:
+            # Ảnh lên trên
+            if images:
+                st.success(f"🖼️ Đã tách {len(images)} vùng nghi là hình minh hoạ. Tick chọn đúng hình bên dưới trước khi xuất Word:")
+                cols = st.columns(2)
+                selected_fig_names = []
+                for i, fig in enumerate(images):
+                    with cols[i % 2]:
+                        checked = st.checkbox(f"Chọn {fig['name']}", value=True, key=f"pdf_figcheck{i}")
+                        st.image(base64.b64decode(fig["base64"]), caption=fig["name"], use_container_width=True)
+                        if checked:
+                            selected_fig_names.append(fig["name"])
+            else:
+                st.warning("Không phát hiện được vùng nghi là hình minh hoạ.")
+            export_figures = [fig for fig in images if fig["name"] in selected_fig_names] if images else []
+
         with tab_pdf_text:
             st.markdown("#### 📋 Kết quả OCR PDF:")
-            st.text_area("Kết quả OCR PDF:", text_content, height=350, label_visibility="collapsed")
+            st.text_area("Kết quả OCR PDF:", text_content, height=400, label_visibility="collapsed")
             st.download_button(
                 "📄 Tải văn bản (TXT)",
                 text_content,
@@ -169,21 +164,6 @@ with tab1:
                 mime="text/plain",
                 use_container_width=True,
             )
-
-            selected_fig_names = []
-            with st.expander("🖼️ Chọn hình minh hoạ cho file Word"):
-                if images:
-                    st.success(f"🖼️ Đã tách {len(images)} vùng nghi là hình minh hoạ. Tick chọn đúng hình bên dưới trước khi xuất Word:")
-                    cols = st.columns(2)
-                    for i, fig in enumerate(images):
-                        with cols[i % 2]:
-                            checked = st.checkbox(f"Chọn {fig['name']}", value=True, key=f"pdf_figcheck{i}")
-                            st.image(base64.b64decode(fig["base64"]), caption=fig["name"], use_container_width=True)
-                            if checked:
-                                selected_fig_names.append(fig["name"])
-                else:
-                    st.warning("Không phát hiện được vùng nghi là hình minh hoạ.")
-            export_figures = [fig for fig in images if fig["name"] in selected_fig_names]
             if st.button("📝 Tạo và tải file Word", key="word_pdf_create", use_container_width=True):
                 with st.spinner("Đang tạo file Word..."):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
@@ -246,13 +226,28 @@ with tab2:
 
     if st.session_state.get("ocr_img_done"):
         raw_text = st.session_state.get("ocr_img_text_raw", "")
-        text_content = clean_and_format_math_text(raw_text)
+        text_content = format_math_ocr(raw_text)
         figures = st.session_state.get("ocr_img_figures", [])
 
         tab_img_text, tab_img_fig = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
+        with tab_img_fig:
+            if figures:
+                st.success(f"🖼️ Đã tách {len(figures)} vùng nghi là hình minh hoạ. Tick chọn đúng hình bên dưới trước khi xuất Word:")
+                cols = st.columns(2)
+                selected_fig_names = []
+                for i, fig in enumerate(figures):
+                    with cols[i % 2]:
+                        checked = st.checkbox(f"Chọn {fig['name']}", value=True, key=f"img_figcheck{i}")
+                        st.image(base64.b64decode(fig["base64"]), caption=fig["name"], use_container_width=True)
+                        if checked:
+                            selected_fig_names.append(fig["name"])
+            else:
+                st.warning("Không phát hiện được vùng nghi là hình minh hoạ.")
+            export_figures = [fig for fig in figures if fig["name"] in selected_fig_names] if figures else []
+
         with tab_img_text:
             st.markdown("#### 📋 Kết quả OCR Ảnh:")
-            st.text_area("Kết quả OCR Ảnh:", text_content, height=350, label_visibility="collapsed")
+            st.text_area("Kết quả OCR Ảnh:", text_content, height=400, label_visibility="collapsed")
             st.download_button(
                 "📄 Tải văn bản (TXT)",
                 text_content,
@@ -260,21 +255,6 @@ with tab2:
                 mime="text/plain",
                 use_container_width=True,
             )
-
-            selected_fig_names = []
-            with st.expander("🖼️ Chọn hình minh hoạ cho file Word"):
-                if figures:
-                    st.success(f"🖼️ Đã tách {len(figures)} vùng nghi là hình minh hoạ. Tick chọn đúng hình bên dưới trước khi xuất Word:")
-                    cols = st.columns(2)
-                    for i, fig in enumerate(figures):
-                        with cols[i % 2]:
-                            checked = st.checkbox(f"Chọn {fig['name']}", value=True, key=f"img_figcheck{i}")
-                            st.image(base64.b64decode(fig["base64"]), caption=fig["name"], use_container_width=True)
-                            if checked:
-                                selected_fig_names.append(fig["name"])
-                else:
-                    st.warning("Không phát hiện được vùng nghi là hình minh hoạ.")
-            export_figures = [fig for fig in figures if fig["name"] in selected_fig_names]
             if st.button("📝 Tạo và tải file Word", key="word_img_create", use_container_width=True):
                 with st.spinner("Đang tạo file Word..."):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
