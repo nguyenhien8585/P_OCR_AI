@@ -21,7 +21,7 @@ class EnhancedSmartOCRClient:
             "options": {
                 "language": options.get("language", "auto"),
                 "include_page_numbers": options.get("includePageNumbers", True),
-                "include_images": True,   # Để API tách ảnh minh hoạ!
+                "include_images": True,
                 "custom_prompt": options.get("customPrompt", ""),
                 "output_format": options.get("outputFormat", "text"),
             },
@@ -45,15 +45,3 @@ class EnhancedSmartOCRClient:
                     time.sleep(2 ** retry)
                 else:
                     raise e
-
-    def get_account(self):
-        payload = {"endpoint": "account", "apiKey": self.api_key}
-        return requests.post(self.api_url, json=payload, timeout=self.timeout).json()
-
-    def get_usage(self, period="month"):
-        payload = {"endpoint": "usage", "apiKey": self.api_key, "period": period}
-        return requests.post(self.api_url, json=payload, timeout=self.timeout).json()
-
-    def get_status(self):
-        payload = {"endpoint": "status"}
-        return requests.post(self.api_url, json=payload, timeout=self.timeout).json()
