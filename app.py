@@ -11,21 +11,30 @@ import tempfile
 from PIL import Image
 import io
 
-# === Hàm chèn marker ảnh sau từng câu hỏi trong văn bản ảnh ===
-def insert_figures_by_question(text_content, figures):
+# ==== Hàm tự động gắn ảnh vào sau từng khối câu hỏi ====
+def insert_figures_by_question_block(text_content, figures):
     """
-    Chèn marker ảnh sau từng câu hỏi bắt đầu bằng 'Câu' hoặc 'Bài'.
+    Chèn marker ảnh vào sau từng khối câu hỏi (mỗi khối bắt đầu bằng 'Câu' hoặc 'Bài').
     """
     lines = text_content.splitlines()
-    out_lines = []
-    fig_idx = 0
+    blocks = []
+    block = []
     for line in lines:
-        out_lines.append(line)
-        if fig_idx < len(figures) and re.match(r"^(Câu|Bài)\s*\d+[.:]", line.strip()):
-            out_lines.append(f"\n![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})\n")
-            fig_idx += 1
-    # Nếu còn ảnh chưa gắn thì chèn cuối
-    for fig in figures[fig_idx:]:
+        # Nếu gặp dòng bắt đầu bằng 'Câu' hoặc 'Bài', mở khối mới
+        if re.match(r"^(Câu|Bài)\s*\d+[.: ]", line.strip()) and block:
+            blocks.append(block)
+            block = []
+        block.append(line)
+    if block:
+        blocks.append(block)
+    out_lines = []
+    for i, block in enumerate(blocks):
+        out_lines.extend(block)
+        if i < len(figures):
+            out_lines.append(f"\n![{figures[i]['name']}]({figures[i]['name']})\n")
+        out_lines.append("")  # dòng trống ngăn cách giữa các khối
+    # Nếu còn ảnh dư, chèn cuối văn bản
+    for fig in figures[len(blocks):]:
         out_lines.append(f"\n![{fig['name']}]({fig['name']})\n")
     return "\n".join(out_lines)
 
@@ -208,11 +217,11 @@ with tab2:
             st.session_state["ocr_img_selected_figs"] = [fig for fig in figures if fig["name"] in selected_fig_names]
 
         with tab_img_text:
-            st.markdown("#### 📋 Kết quả OCR Ảnh (ảnh minh hoạ sẽ tự động chèn sau mỗi Câu):")
+            st.markdown("#### 📋 Kết quả OCR Ảnh (ảnh minh hoạ sẽ tự động chèn sau mỗi câu hỏi):")
             auto_figures = st.session_state.get("ocr_img_selected_figs", [])
-            auto_text = insert_figures_by_question(text_content, auto_figures)
+            auto_text = insert_figures_by_question_block(text_content, auto_figures)
             auto_text = st.text_area(
-                "Kết quả OCR Ảnh (ảnh minh hoạ tự động chèn vào sau mỗi Câu):",
+                "Kết quả OCR Ảnh (ảnh minh hoạ tự động chèn vào sau mỗi câu hỏi):",
                 auto_text, height=500, label_visibility="collapsed"
             )
             st.download_button(
