@@ -6,17 +6,17 @@ from scipy.ndimage import label, find_objects
 
 def extract_figures_from_image(
     img_bytes,
-    min_area=3000,          # vùng nhỏ hơn sẽ bỏ qua (tăng lên nếu còn nhiều rác)
+    min_area=900,           # nhỏ hơn để bắt bảng nhỏ
     blur_radius=1,
-    max_figures=2,          # chỉ lấy đúng 2 hình lớn nhất
-    min_aspect=0.8,         # hình vẽ thường gần vuông/hình chữ nhật
-    max_aspect=1.5,
-    min_area_ratio=0.01,    # nhỏ nhất chiếm 1% diện tích ảnh
-    max_area_ratio=0.4,     # lớn nhất chiếm 40% diện tích ảnh
-    margin=0.04             # bỏ vùng sát mép (4% mỗi cạnh)
+    max_figures=4,          # lấy cả hình vẽ và bảng biến thiên
+    min_aspect=0.3,         # nới cho bảng dài/ngang/dọc
+    max_aspect=4.0,
+    min_area_ratio=0.005,
+    max_area_ratio=0.45,
+    margin=0.01             # bỏ sát mép nhẹ thôi
 ):
     """
-    Tách đúng 2 hình lớn nhất, chỉ giữ minh hoạ thực sự.
+    Tách cả hình vẽ & bảng biến thiên (2-3 hình lớn nhất, nhiều hình chữ nhật).
     """
     img = Image.open(io.BytesIO(img_bytes)).convert("L")
     arr = np.array(img)
@@ -36,15 +36,12 @@ def extract_figures_from_image(
         area = (x1-x0)*(y1-y0)
         aspect = (x1-x0)/(y1-y0+1e-5)
         area_ratio = area/(h*w)
-        # bỏ block sát mép
         if (x0 < margin*w or x1 > (1-margin)*w or y0 < margin*h or y1 > (1-margin)*h):
             continue
-        # chỉ lấy block lớn, gần vuông, tỷ lệ hợp lý
         if (area > min_area and
             min_aspect < aspect < max_aspect and
             min_area_ratio < area_ratio < max_area_ratio):
             candidates.append((area, x0, y0, x1, y1))
-    # chỉ lấy 2 block lớn nhất
     candidates = sorted(candidates, key=lambda x: -x[0])[:max_figures]
     results = []
     for idx, (area, x0, y0, x1, y1) in enumerate(candidates):
