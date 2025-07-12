@@ -1,5 +1,5 @@
 streamlit
-pytesseract
-pdf2image
+requests
 python-docx
-Pillow
+pillow
+pymupdf
