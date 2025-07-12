@@ -5,11 +5,15 @@ from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 from latex_export import save_images_to_files, insert_images_to_latex_from_markdown
 import os
+import base64
 
-st.set_page_config(page_title="Smart OCR - PDF/Image to Word/LaTeX + Images", layout="centered")
+st.set_page_config(page_title="Smart OCR - API + Python Image Extract", layout="centered")
 st.title("📄 Smart OCR (API + Python image extract) – Xuất Word/LaTeX, ảnh minh hoạ đúng vị trí")
-
-st.write("- Nhận diện text bằng API (dùng key)\n- Trích xuất ảnh minh hoạ trực tiếp từ PDF\n- Khi xuất Word/LaTeX: ảnh sẽ được chèn đúng vị trí tên ảnh trong text")
+st.write(
+    "- Nhận diện text bằng API (dùng key)\n"
+    "- Trích xuất ảnh minh hoạ thực sự từ PDF bằng Python\n"
+    "- Khi xuất Word/LaTeX: ảnh sẽ được chèn đúng vị trí tên ảnh trong text"
+)
 
 uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"])
 if uploaded_file:
@@ -20,7 +24,7 @@ if uploaded_file:
     with st.spinner("Đang nhận diện văn bản (OCR API)..."):
         client = EnhancedSmartOCRClient(API_URL, API_KEY)
         result = client.convert(pdf_bytes, file_name, mime_type)
-    
+
     if not result.get("success"):
         st.error("OCR thất bại: " + str(result.get("error")))
     else:
@@ -30,12 +34,13 @@ if uploaded_file:
 
         # Tách mọi ảnh thực sự từ PDF
         with st.spinner("Đang trích xuất ảnh minh hoạ từ PDF..."):
-            images = extract_images_from_pdf(pdf_bytes)   # List dict {"name":..., "base64":...}
-        
+            images = extract_images_from_pdf(pdf_bytes)
+
         if images:
             st.success(f"Trích xuất được {len(images)} ảnh minh hoạ!")
             for img in images:
-                st.image(img["base64"], caption=img["name"], use_column_width=True)
+                img_bytes = base64.b64decode(img["base64"])
+                st.image(img_bytes, caption=img["name"], use_container_width=True)
         else:
             st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
 
