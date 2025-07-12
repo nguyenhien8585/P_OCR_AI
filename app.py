@@ -166,6 +166,8 @@ with tab2:
             st.success("✅ Xử lý OCR Ảnh hoàn tất thành công!")
 
     if st.session_state.get("ocr_img_done"):
+        import re
+        # Chuyển toàn bộ công thức $...$ thành ${...}$
         def dollar_to_mathptn(s):
             return re.sub(r'\$(.+?)\$', r'${\1}$', s)
         raw_text = st.session_state.get("ocr_img_text_raw", "")
@@ -173,17 +175,31 @@ with tab2:
         figures = st.session_state.get("ocr_img_figures", [])
 
         tab_img_text, tab_img_fig = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
+        with tab_img_fig:
+            selected_fig_names = []
+            if figures:
+                st.success(f"🖼️ Đã tách {len(figures)} vùng nghi là hình minh hoạ (bao gồm bảng biến thiên). Tick chọn đúng hình bên dưới trước khi xuất Word:")
+                cols = st.columns(2)
+                for i, fig in enumerate(figures):
+                    with cols[i % 2]:
+                        checked = st.checkbox(f"Chọn {fig['name']}", value=True, key=f"img_figcheck{i}")
+                        st.image(base64.b64decode(fig["base64"]), caption=fig["name"], use_container_width=True)
+                        if checked:
+                            selected_fig_names.append(fig["name"])
+            else:
+                st.warning("Không phát hiện được vùng nghi là hình minh hoạ.")
+            st.session_state["ocr_img_selected_figs"] = [fig for fig in figures if fig["name"] in selected_fig_names]
+
         with tab_img_text:
             st.markdown("#### 📋 Kết quả OCR Ảnh:")
-            # Nếu có hình, hướng dẫn marker chèn đúng vị trí
             if figures:
                 st.info(
-                    "👉 **Muốn chèn ảnh vào đúng câu trong Word, hãy copy & dán đoạn sau vào vị trí mong muốn:**\n\n" +
+                    "👉 **Muốn chèn bảng biến thiên hoặc ảnh vào đúng vị trí, hãy copy & dán đoạn dưới đây vào vị trí mong muốn trong văn bản:**\n\n" +
                     "\n".join([f"`![{fig['name']}]({fig['name']})`" for fig in figures]) +
-                    "\n\nVí dụ: Sau dòng cần chèn hình, dán `![img-1.jpeg](img-1.jpeg)`."
+                    "\n\nNếu không dán marker, ảnh sẽ chèn cuối văn bản."
                 )
             text_content = st.text_area(
-                "Kết quả OCR Ảnh (bạn có thể thêm marker ảnh vào đúng vị trí):",
+                "Kết quả OCR Ảnh (bạn có thể thêm marker ảnh/bảng vào đúng vị trí):",
                 text_content, height=400, label_visibility="collapsed"
             )
             st.download_button(
@@ -193,37 +209,23 @@ with tab2:
                 mime="text/plain",
                 use_container_width=True,
             )
-
-        with tab_img_fig:
-            selected_fig_names = []
-            if figures:
-                st.success(f"🖼️ Đã tách {len(figures)} vùng nghi là hình minh hoạ. Tick chọn đúng hình bên dưới trước khi xuất Word:")
-                cols = st.columns(2)
-                for i, fig in enumerate(figures):
-                    with cols[i % 2]:
-                        checked = st.checkbox(f"Chọn {fig['name']}", value=True, key=f"img_figcheck{i}")
-                        st.image(base64.b64decode(fig["base64"]), caption=fig["name"], use_container_width=True)
-                        if checked:
-                            selected_fig_names.append(fig["name"])
-                export_figures = [fig for fig in figures if fig["name"] in selected_fig_names]
-                if st.button("📝 Tạo và tải file Word", key="word_img_create", use_container_width=True):
-                    with st.spinner("Đang tạo file Word..."):
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                            insert_images_to_word_from_markdown(text_content, export_figures, tmp_word.name)
-                        with open(tmp_word.name, "rb") as f:
-                            word_data = f.read()
-                        st.success("✅ Đã tạo file Word thành công!")
-                        st.download_button(
-                            "⬇️ Tải về file Word",
-                            word_data,
-                            file_name="ket_qua_ocr_anh.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            use_container_width=True
-                        )
-                        os.remove(tmp_word.name)
-            else:
-                st.warning("Không phát hiện được vùng nghi là hình minh hoạ.")
-
+            # NÚT TẠO WORD ở tab VĂN BẢN!
+            if st.button("📝 Tạo và tải file Word", key="word_img_create", use_container_width=True):
+                with st.spinner("Đang tạo file Word..."):
+                    export_figures = st.session_state.get("ocr_img_selected_figs", [])
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
+                        insert_images_to_word_from_markdown(text_content, export_figures, tmp_word.name)
+                    with open(tmp_word.name, "rb") as f:
+                        word_data = f.read()
+                    st.success("✅ Đã tạo file Word thành công!")
+                    st.download_button(
+                        "⬇️ Tải về file Word",
+                        word_data,
+                        file_name="ket_qua_ocr_anh.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True
+                    )
+                    os.remove(tmp_word.name)
 st.markdown("---")
 st.caption(
     "<b>OCR PDF & Ảnh: hỗ trợ MathType, ảnh minh hoạ, xuất Word/TXT. Giao diện hiện đại.</b>", 
