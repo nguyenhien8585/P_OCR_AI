@@ -1,53 +1,63 @@
 import streamlit as st
-from ocr_client import SmartOCRClient
 import base64
+from ocr_util import extract_text_and_images
+from word_export import save_to_word
+from latex_export import save_to_latex, save_images_to_files
+import os
 
-# ================== CONFIG ==================
-API_URL = "https://script.google.com/macros/s/AKfycby6GUWKFttjWTDJuQuX5IAeGAzS5tQULLja3SHbSfZIhQyaWVMuxyRNAE-fykxnznkqIw/exec"
-API_KEY = "sk_nguyenhien21022020_pro_mcwzovbjz11wklh8zk"  # Thay bằng key thực tế
-WEBHOOK_URL = ""             # Có thể thêm nếu cần
+st.set_page_config(page_title="Smart OCR - PDF/Image to Text + Word/LaTeX", layout="centered")
+st.title("📄 Smart OCR (PDF/Ảnh ➡️ Text + Word + LaTeX + Ảnh minh họa)")
 
-client = SmartOCRClient(API_URL, API_KEY, WEBHOOK_URL)
+st.write("""
+- OCR tài liệu PDF, ảnh (hỗ trợ tiếng Việt/Anh)
+- Tách từng trang thành văn bản và ảnh minh họa
+- **Xuất Word hoặc LaTeX, ảnh chèn đúng vị trí**
+- Code Python, chạy trên Streamlit, không cần API ngoài!
+""")
 
-# ================== UI ======================
-st.title("SMART OCR Client v3.0 (Python + Streamlit)")
-st.write("Chuyển ảnh/PDF sang text và tự động tách ảnh (base64)")
-
-st.sidebar.header("Account & Usage")
-if st.sidebar.button("Get account info"):
-    st.json(client.get_account())
-if st.sidebar.button("Get usage (month)"):
-    st.json(client.get_usage("month"))
-
-st.header("1️⃣ Upload file để OCR và tách ảnh")
-
-uploaded_file = st.file_uploader("Chọn file PDF hoặc ảnh", type=["pdf", "jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Chọn file PDF hoặc ảnh (multi-page)", type=["pdf", "jpg", "jpeg", "png"])
 if uploaded_file:
     file_bytes = uploaded_file.read()
-    mime_type = uploaded_file.type
-    file_name = uploaded_file.name
+    file_type = uploaded_file.type
+    is_pdf = uploaded_file.name.lower().endswith('.pdf')
 
-    with st.spinner("Đang nhận diện OCR..."):
-        ocr_result = client.convert(file_bytes, file_name, mime_type)
+    st.info("⏳ Đang xử lý, vui lòng chờ...")
+    ocr_results = extract_text_and_images(file_bytes)
 
-    st.subheader("Kết quả nhận diện văn bản:")
-    st.text_area("Text content", ocr_result.get("data", {}).get("text_content", ""), height=300)
+    st.success(f"Đã nhận diện {len(ocr_results)} trang!")
 
-    st.subheader("Thông tin tài liệu:")
-    st.json(ocr_result.get("data", {}))
+    # Hiển thị kết quả từng trang
+    text_blocks, images_blocks = [], []
+    for page in ocr_results:
+        st.subheader(f"Trang {page['page_num']}")
+        st.text_area(f"Text (Trang {page['page_num']})", page['text'], height=180)
+        st.image(base64.b64decode(page["image_b64"]), caption=f"Hình (Trang {page['page_num']})", use_column_width=True)
+        text_blocks.append({"text": page['text'], "has_image": True, "img_idx": len(images_blocks)})
+        images_blocks.append({"image_b64": page["image_b64"]})
 
-    # ========== Tách ảnh dưới dạng base64 ==========
-    images = []
-    data = ocr_result.get("data", {})
-    # Giả định kết quả trả về có trường images là mảng base64 (bổ sung endpoint nếu cần)
-    if "images" in data and data["images"]:
-        st.subheader("Ảnh minh họa tách ra từ file:")
-        for idx, img_b64 in enumerate(data["images"], 1):
-            st.image(img_b64, caption=f"Image {idx}", use_column_width=True)
-            # Cho phép tải ảnh
-            href = f'<a href="data:image/png;base64,{img_b64}" download="image{idx}.png">Tải ảnh {idx}</a>'
-            st.markdown(href, unsafe_allow_html=True)
-    else:
-        st.info("Không tìm thấy ảnh minh họa trong file này hoặc API chưa hỗ trợ tách ảnh.")
+    # Xuất file Word
+    if st.button("📥 Xuất file Word (.docx)"):
+        word_file = "ket_qua_ocr.docx"
+        save_to_word(text_blocks, images_blocks, word_file)
+        with open(word_file, "rb") as f:
+            st.download_button("Tải về file Word", f, file_name=word_file)
+        os.remove(word_file)
 
-    st.success("Hoàn thành xử lý!")
+    # Xuất file LaTeX
+    if st.button("📥 Xuất file LaTeX (.tex, kèm ảnh PNG)"):
+        latex_file = "ket_qua_ocr.tex"
+        save_images_to_files(images_blocks, prefix="image_")
+        save_to_latex(text_blocks, images_blocks, latex_file, image_prefix="image_")
+        with open(latex_file, "r", encoding="utf-8") as f:
+            st.download_button("Tải về file LaTeX", f, file_name=latex_file)
+        os.remove(latex_file)
+        # Xóa ảnh tạm
+        for idx in range(len(images_blocks)):
+            if os.path.exists(f"image_{idx}.png"):
+                os.remove(f"image_{idx}.png")
+
+    st.caption("Nếu cần xuất Word/LaTeX nhiều dạng hoặc mapping ảnh vào vị trí khác, hãy liên hệ hoặc gửi file mẫu!")
+
+st.markdown("---")
+st.markdown("**Made by [yourname] - Full code Python/Streamlit, hỗ trợ tiếng Việt**")
+
