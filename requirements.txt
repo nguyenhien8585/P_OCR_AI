@@ -1,7 +1,7 @@
 streamlit
-requests
 python-docx
 pillow
-pymupdf
 PyPDF2
+numpy
 scipy
+pdf2image
