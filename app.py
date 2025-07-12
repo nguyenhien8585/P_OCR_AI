@@ -12,7 +12,8 @@ st.title("📄 Smart OCR (API + Python image extract) – Xuất Word, ảnh min
 st.write(
     "- Nhận diện text bằng API (dùng key)\n"
     "- Trích xuất ảnh minh hoạ thực sự từ PDF bằng Python\n"
-    "- Khi xuất Word: ảnh sẽ được chèn đúng vị trí tên ảnh trong text"
+    "- Khi xuất Word: ảnh sẽ được chèn đúng vị trí tên ảnh trong text\n"
+    "- Tự động chuyển tất cả công thức toán từ `$...$` thành `${...}$` để MathType nhận diện"
 )
 
 uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"])
@@ -33,7 +34,6 @@ if uploaded_file:
             # Regex tìm các cụm $...$
             # Không match với $$...$$ hoặc $ $ rỗng
             return re.sub(r'\$(.+?)\$', r'${\1}$', s)
-
         raw_text = result["data"].get("text_content", "")
         text_content = dollar_to_mathptn(raw_text)
         st.subheader("Văn bản nhận diện (có tên ảnh):")
@@ -54,7 +54,7 @@ if uploaded_file:
         else:
             st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
 
-        # Export Word ONLY (không còn LaTeX)
+        # Chỉ còn nút xuất Word
         if st.button("📥 Xuất file Word (.docx)"):
             word_file = "ket_qua_ocr.docx"
             insert_images_to_word_from_markdown(text_content, images, word_file)
@@ -63,4 +63,4 @@ if uploaded_file:
             os.remove(word_file)
 
 st.markdown("---")
-st.caption("Code Python: API key nhận diện text, trích xuất ảnh trực tiếp, chuyển $...$ sang ${...}$, mapping đúng tên ảnh khi xuất Word.")
+st.caption("Code Python hoàn chỉnh: chỉ xuất Word, tự động chuyển $...$ sang ${...}$, chèn ảnh vào đúng vị trí.")
