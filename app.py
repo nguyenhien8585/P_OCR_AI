@@ -3,16 +3,16 @@ from config import API_URL, API_KEY
 from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
-from latex_export import save_images_to_files, insert_images_to_latex_from_markdown
 import os
 import base64
+import re
 
 st.set_page_config(page_title="Smart OCR - API + Python Image Extract", layout="centered")
-st.title("📄 Smart OCR (API + Python image extract) – Xuất Word/LaTeX, ảnh minh hoạ đúng vị trí")
+st.title("📄 Smart OCR (API + Python image extract) – Xuất Word, ảnh minh hoạ đúng vị trí")
 st.write(
     "- Nhận diện text bằng API (dùng key)\n"
     "- Trích xuất ảnh minh hoạ thực sự từ PDF bằng Python\n"
-    "- Khi xuất Word/LaTeX: ảnh sẽ được chèn đúng vị trí tên ảnh trong text"
+    "- Khi xuất Word: ảnh sẽ được chèn đúng vị trí tên ảnh trong text"
 )
 
 uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"])
@@ -28,7 +28,14 @@ if uploaded_file:
     if not result.get("success"):
         st.error("OCR thất bại: " + str(result.get("error")))
     else:
-        text_content = result["data"].get("text_content", "")
+        # --- Chuyển đổi toàn bộ $...$ thành ${...}$ ---
+        def dollar_to_mathptn(s):
+            # Regex tìm các cụm $...$
+            # Không match với $$...$$ hoặc $ $ rỗng
+            return re.sub(r'\$(.+?)\$', r'${\1}$', s)
+
+        raw_text = result["data"].get("text_content", "")
+        text_content = dollar_to_mathptn(raw_text)
         st.subheader("Văn bản nhận diện (có tên ảnh):")
         st.text_area("Text OCR", text_content, height=350)
 
@@ -47,7 +54,7 @@ if uploaded_file:
         else:
             st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
 
-        # Export Word
+        # Export Word ONLY (không còn LaTeX)
         if st.button("📥 Xuất file Word (.docx)"):
             word_file = "ket_qua_ocr.docx"
             insert_images_to_word_from_markdown(text_content, images, word_file)
@@ -55,17 +62,5 @@ if uploaded_file:
                 st.download_button("Tải về file Word", f, file_name=word_file)
             os.remove(word_file)
 
-        # Export LaTeX
-        if st.button("📥 Xuất file LaTeX (.tex, kèm ảnh PNG)"):
-            tex_file = "ket_qua_ocr.tex"
-            save_images_to_files(images, prefix="")
-            insert_images_to_latex_from_markdown(text_content, images, tex_file, image_prefix="")
-            with open(tex_file, "r", encoding="utf-8") as f:
-                st.download_button("Tải về file LaTeX", f, file_name=tex_file)
-            os.remove(tex_file)
-            for img in images:
-                if os.path.exists(img["name"]):
-                    os.remove(img["name"])
-
 st.markdown("---")
-st.caption("Code Python hoàn chỉnh: API key nhận diện text, trích xuất ảnh trực tiếp, mapping đúng tên ảnh khi xuất Word/LaTeX.")
+st.caption("Code Python: API key nhận diện text, trích xuất ảnh trực tiếp, chuyển $...$ sang ${...}$, mapping đúng tên ảnh khi xuất Word.")
