@@ -20,40 +20,84 @@ tab1, tab2 = st.tabs([
 
 # ===== Hàm làm sạch và format toán học =====
 def clean_and_format_math_text(text):
-    # Xóa các dấu * đơn và **
     text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
     text = re.sub(r'\*([^*]+)\*', r'\1', text)
     text = text.replace('*', '')
 
-    # Các pattern toán học cần bọc ${...}$
-    patterns = [
-        r'\b([A-Z]{1,4}(?:\.[A-Z]{2,4})?)\b',      # điểm/tập hợp O.ABC, ABC, Oxyz
-        r'\bOxyz\b',
-        r'\bO[A-Z]{1,3}\b',                        # OA, OB, ...
-        r'\b[0-9]+(?:/[0-9]+)?\b',                 # số nguyên, phân số
-        r'\([A-Z][A-Z0-9\' ]+\)',                  # (ABC), (A'B'C')
-        r'[a-zA-Z]=[0-9]+',                        # OA=2
-        r'[-+]?[0-9]+',                            # số âm/dương đơn lẻ
-        r'(?<=\^)\{?.+?\}?',                       # mũ
-    ]
-    def math_replacer(m):
-        s = m.group(0)
-        # Không bọc lại nếu đã nằm trong ${...}$, hoặc là marker ảnh
-        if re.search(r'\$\{.*'+re.escape(s)+'.*\}\$', text) or re.match(r'!\[', s):
-            return s
-        return '${' + s + '}$'
-    for patt in patterns:
-        text = re.sub(patt, math_replacer, text)
+    lines = text.splitlines()
+    result_lines = []
+    for idx, line in enumerate(lines):
+        orig = line
 
-    # Bỏ bọc các đáp án trắc nghiệm
-    text = re.sub(r'\${([ABCD])}\$\.', r'\1.', text)
-    text = re.sub(r'\${([ABCD])}\$[\.:]', r'\1.', text)
+        # Không bọc các dòng tiêu đề/phụ
+        skip_keywords = [
+            'BỘ GIÁO DỤC', 'KỲ THI', 'KỲ', 'TỐT NGHIỆP', 'CHÍNH THỨC',
+            'ĐỀ THI', 'Môn thi', 'Đề thi có', 'Thời gian làm bài',
+            'Họ, tên thí sinh', 'Sổ báo danh', 'Mã đề', 'Trang', 'phút',
+            'PHẦN', 'Số trang', 'Mã đề thi'
+        ]
+        if any(kw.upper() in line.upper() for kw in skip_keywords):
+            result_lines.append(line)
+            continue
 
-    # Xóa khoảng trắng, dòng thừa
-    text = re.sub(r'\n{2,}', '\n\n', text)
-    text = re.sub(r' +', ' ', text)
+        # Không bọc dòng cuối trang
+        if re.search(r'Trang.*- Mã đề thi', line, re.IGNORECASE):
+            result_lines.append(line)
+            continue
 
-    return text.strip()
+        # Loại số câu hỏi đầu dòng khỏi bọc (Câu 1:, Câu 2:, ...)
+        m_cau = re.match(r'^(Câu\s+)(\d+)(:.*)', line)
+        if m_cau:
+            prefix, num, suffix = m_cau.groups()
+            # Không bọc số câu hỏi
+            line_new = f"{prefix}{num}{suffix}"
+            # Phần còn lại vẫn bọc như bình thường (áp dụng tiếp)
+            line_proc = line_new
+            # Bọc điểm, biến, toán học
+            def repl_point(m):
+                s = m.group(0)
+                if re.match(r'^[A-D]\.$', s):
+                    return s
+                return '${' + s + '}$'
+            line_proc = re.sub(r'\b(Oxyz|[A-Z]{1,3}(?:\.[A-Z]{2,4})?|O[A-Z]|n̄)\b', repl_point, line_proc)
+            # Bọc số (trừ đầu dòng đã xử lý)
+            def repl_number(m):
+                s = m.group(0)
+                if len(s) > 4:
+                    return s
+                return '${' + s + '}$'
+            # Chỉ bọc số sau tiền tố đã tách
+            line_proc = re.sub(r'(?<!\d)([0-9]+(/[0-9]+)?)(?!\d)', repl_number, line_proc)
+            # Bọc (ABC), (P), (Q)...
+            line_proc = re.sub(r'(\([A-Z][A-Z0-9\' ]+\))', lambda m: '${'+m.group(1)+'}$', line_proc)
+            line_proc = re.sub(r'([A-Z]{1,3}\s*=\s*\d+)', lambda m: '${'+m.group(1)+'}$', line_proc)
+            line_proc = re.sub(r'(\d+/\d+)', lambda m: '${'+m.group(1)+'}$', line_proc)
+            line_proc = re.sub(r'^\$\{([ABCD])\}\.\$', r'\1.', line_proc)
+            line_proc = re.sub(r' +', ' ', line_proc)
+            result_lines.append(line_proc.strip())
+            continue
+
+        # Các dòng khác: bọc bình thường
+        def repl_point(m):
+            s = m.group(0)
+            if re.match(r'^[A-D]\.$', s):
+                return s
+            return '${' + s + '}$'
+        line = re.sub(r'\b(Oxyz|[A-Z]{1,3}(?:\.[A-Z]{2,4})?|O[A-Z]|n̄)\b', repl_point, line)
+        def repl_number(m):
+            s = m.group(0)
+            if len(s) > 4:
+                return s
+            return '${' + s + '}$'
+        if not re.search(r'(phút|trang|Mã đề)', orig, re.IGNORECASE):
+            line = re.sub(r'(?<!\d)([0-9]+(/[0-9]+)?)(?!\d)', repl_number, line)
+        line = re.sub(r'(\([A-Z][A-Z0-9\' ]+\))', lambda m: '${'+m.group(1)+'}$', line)
+        line = re.sub(r'([A-Z]{1,3}\s*=\s*\d+)', lambda m: '${'+m.group(1)+'}$', line)
+        line = re.sub(r'(\d+/\d+)', lambda m: '${'+m.group(1)+'}$', line)
+        line = re.sub(r'^\$\{([ABCD])\}\.\$', r'\1.', line)
+        line = re.sub(r' +', ' ', line)
+        result_lines.append(line.strip())
+    return '\n'.join(result_lines).strip()
 
 # ================ TAB 1: OCR PDF ==================
 with tab1:
