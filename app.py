@@ -16,7 +16,7 @@ import time
 load_dotenv()
 OCR_CLIENT_CONFIG = {
     "API_URL": os.getenv("OCR_API_URL", "https://script.google.com/macros/s/AKfycby6GUWKFttjWTDJuQuX5IAeGAzS5tQULLja3SHbSfZIhQyaWVMuxyRNAE-fykxnznkqIw/exec"),
-    "API_KEY": os.getenv("OCR_API_KEY", "sk_k_xxx"),  # Nhớ đổi API key thật!
+    "API_KEY": os.getenv("OCR_API_KEY", "sk_nguyenhien21022020_pro_mcwzovbjz11wklh8zk"),  # Nhớ đổi API key thật!
     "TIMEOUT": 120,
     "MAX_RETRIES": 3,
     "RETRY_DELAY_BASE": 2,
