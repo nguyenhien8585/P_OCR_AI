@@ -8,6 +8,8 @@ import base64
 import re
 from PyPDF2 import PdfReader
 import tempfile
+from PIL import Image
+import io
 
 st.set_page_config(page_title="OCR PDF & Image", layout="centered")
 
@@ -117,9 +119,20 @@ with tab2:
     img_file_name = None
 
     if uploaded_img:
-        img_bytes = uploaded_img.read()
-        img_file_name = uploaded_img.name
-        img_mime_type = uploaded_img.type
+        img_bytes_orig = uploaded_img.read()
+        try:
+            img = Image.open(io.BytesIO(img_bytes_orig))
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG")
+            img_bytes = buf.getvalue()
+            img_file_name = uploaded_img.name if uploaded_img.name.endswith(".jpg") or uploaded_img.name.endswith(".jpeg") else uploaded_img.name.split(".")[0]+".jpg"
+        except Exception as e:
+            st.error(f"Ảnh upload không hợp lệ hoặc không đọc được: {e}")
+            st.stop()
+
+        img_mime_type = "image/jpeg"
         size_mb = len(img_bytes) / (1024 * 1024)
         with st.expander("ℹ️ Thông tin file", expanded=True):
             st.write(f"**Tên file:** {img_file_name}")
@@ -127,7 +140,6 @@ with tab2:
             st.write(f"**Kích thước:** {size_mb:.1f} MB")
         st.image(img_bytes, caption=img_file_name, use_container_width=True)
 
-    if uploaded_img:
         if st.button("🚀 Xử lý OCR Ảnh", key="ocr_img_btn", use_container_width=True):
             st.info("⏳ Đang xử lý OCR Ảnh...")
             with st.spinner("Đang nhận diện văn bản từ ảnh..."):
@@ -162,9 +174,8 @@ with tab2:
             if word_btn:
                 with st.spinner("Đang tạo file Word..."):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                        # Ảnh upload là ảnh gốc, không tách block ảnh nhỏ như PDF, chỉ chèn cuối cùng
+                        # Chèn ảnh gốc vào cuối Word (nếu muốn)
                         images = []
-                        # Nếu muốn chèn ảnh gốc vào Word, thêm block:
                         images.append({"name": img_file_name, "base64": base64.b64encode(img_bytes).decode()})
                         insert_images_to_word_from_markdown(text_content, images, tmp_word.name)
                     with open(tmp_word.name, "rb") as f:
