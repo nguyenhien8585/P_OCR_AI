@@ -1,17 +1,29 @@
+import re
 import base64
 
-def save_images_to_files(images_blocks, prefix="image_"):
-    for idx, img in enumerate(images_blocks):
-        with open(f"{prefix}{idx}.png", "wb") as f:
-            f.write(base64.b64decode(img["image_b64"]))
+def save_images_to_files(image_list, prefix=""):
+    for img in image_list:
+        img_path = f"{prefix}{img['name']}"
+        with open(img_path, "wb") as f:
+            f.write(base64.b64decode(img["base64"]))
 
-def save_to_latex(text_blocks, images_blocks, file_path, image_prefix="image_"):
-    latex_content = "\\documentclass{article}\n\\usepackage{graphicx}\n\\usepackage[utf8]{inputenc}\n\\begin{document}\n"
-    for idx, block in enumerate(text_blocks):
-        latex_content += block["text"].replace('\n', '\\\\') + "\n\n"
-        if block.get("has_image"):
-            img_file = f"{image_prefix}{block['img_idx']}.png"
-            latex_content += f"\\begin{{center}}\n\\includegraphics[width=0.7\\linewidth]{{{img_file}}}\n\\end{{center}}\n"
-    latex_content += "\\end{document}"
-    with open(file_path, "w", encoding="utf-8") as f:
-        f.write(latex_content)
+def insert_images_to_latex_from_markdown(text, image_list, tex_path, image_prefix=""):
+    latex = "\\documentclass{article}\n\\usepackage{graphicx}\n\\usepackage[utf8]{inputenc}\n\\begin{document}\n"
+    pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
+    pos = 0
+    for match in re.finditer(pattern, text):
+        start, end = match.span()
+        caption, img_name = match.groups()
+        latex += text[pos:start].replace('\n', '\\\\') + "\n"
+        found = False
+        for img in image_list:
+            if img["name"] == img_name:
+                latex += f"\\begin{{center}}\\includegraphics[width=0.6\\linewidth]{{{image_prefix}{img_name}}}\\end{{center}}\n"
+                found = True
+                break
+        if not found:
+            latex += f"[Không tìm thấy ảnh: {img_name}]\n"
+        pos = end
+    latex += text[pos:].replace('\n', '\\\\') + "\n\\end{document}"
+    with open(tex_path, "w", encoding="utf-8") as f:
+        f.write(latex)
