@@ -92,14 +92,16 @@ if st.session_state.get("ocr_done"):
                 with st.spinner("Đang tạo file Word..."):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
                         insert_images_to_word_from_markdown(text_content, images, tmp_word.name)
-                        tmp_word.seek(0)
-                        st.success("✅ Đã tạo file Word thành công!")
-                        st.download_button(
-                            "⬇️ Tải về file Word",
-                            tmp_word,
-                            file_name="ket_qua_ocr.docx",
-                            use_container_width=True
-                        )
+                    with open(tmp_word.name, "rb") as f:
+                        word_data = f.read()
+                    st.success("✅ Đã tạo file Word thành công!")
+                    st.download_button(
+                        "⬇️ Tải về file Word",
+                        word_data,
+                        file_name="ket_qua_ocr.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True
+                    )
                     os.remove(tmp_word.name)
 
     with tab2:
