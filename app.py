@@ -11,38 +11,32 @@ from docx.shared import Inches
 import os
 from dotenv import load_dotenv
 import time
-import re
 
-# ============== CONFIGURATION ==============
+# ======= CONFIG =======
 load_dotenv()
 OCR_CLIENT_CONFIG = {
     "API_URL": os.getenv("OCR_API_URL", "https://script.google.com/macros/s/AKfycby6GUWKFttjWTDJuQuX5IAeGAzS5tQULLja3SHbSfZIhQyaWVMuxyRNAE-fykxnznkqIw/exec"),
-    "API_KEY": os.getenv("OCR_API_KEY", "sk_k_xxx"),  # Update .env for security!
-    "TIMEOUT": 120,  # seconds
+    "API_KEY": os.getenv("OCR_API_KEY", "sk_k_xxx"),  # Nhớ đổi API key thật!
+    "TIMEOUT": 120,
     "MAX_RETRIES": 3,
-    "RETRY_DELAY_BASE": 1,  # seconds
-    "BATCH_SIZE": 5,
-    "BATCH_DELAY": 2,  # seconds
-    "WEBHOOK_URL": os.getenv("OCR_WEBHOOK_URL", ""),
-    "ENABLE_CACHING": True,
-    "CACHE_DURATION": 24*60*60  # seconds
+    "RETRY_DELAY_BASE": 2,
+    "BATCH_DELAY": 2,
+    "WEBHOOK_URL": os.getenv("OCR_WEBHOOK_URL", "")
 }
 
-# ============ SMART OCR CLIENT SDK =============
 class SmartOCRClient:
     def __init__(self, config=None):
         self.config = config or OCR_CLIENT_CONFIG
         self.api_url = self.config["API_URL"]
         self.api_key = self.config["API_KEY"]
         self.webhook_url = self.config.get("WEBHOOK_URL")
-        self.usage = {"total": 0, "success": 0, "fail": 0, "last": 0}
+        self.usage = {"total": 0, "success": 0, "fail": 0}
 
-    def _make_request(self, data, files=None, max_retries=None):
+    def _make_request(self, data, max_retries=None):
         max_retries = max_retries if max_retries is not None else self.config["MAX_RETRIES"]
         for attempt in range(max_retries):
             try:
-                headers = {'Content-Type': 'application/json'}
-                resp = requests.post(self.api_url, headers=headers, json=data, timeout=self.config["TIMEOUT"])
+                resp = requests.post(self.api_url, headers={'Content-Type': 'application/json'}, json=data, timeout=self.config["TIMEOUT"])
                 if resp.status_code != 200:
                     time.sleep(self.config["RETRY_DELAY_BASE"] * (attempt + 1))
                     continue
@@ -52,11 +46,10 @@ class SmartOCRClient:
         return {"success": False, "error": f"Failed after {max_retries} retries"}
 
     def convert(self, file_bytes, filename, mime_type, options=None):
-        # Encode file to base64 for API
+        # Gửi đúng như JS: api_key + file + options
         base64_str = base64.b64encode(file_bytes).decode()
         data = {
             "api_key": self.api_key,
-            "action": "convert",
             "file": {
                 "name": filename,
                 "mimeType": mime_type,
@@ -85,11 +78,14 @@ class SmartOCRClient:
             time.sleep(self.config["BATCH_DELAY"])
         return results
 
-# ========== UTILITIES ===========
+def image_from_base64(base64_str):
+    try:
+        return Image.open(BytesIO(base64.b64decode(base64_str)))
+    except Exception as e:
+        st.warning(f"Không giải mã được ảnh minh họa: {e}")
+        return None
+
 def parse_ocr_json(elements):
-    """
-    Chuẩn hóa danh sách element: text, image (base64).
-    """
     out = []
     for el in elements:
         if el.get("type") == "text" and el.get("content"):
@@ -97,13 +93,6 @@ def parse_ocr_json(elements):
         elif el.get("type") == "image" and el.get("base64"):
             out.append({"type": "image", "base64": el["base64"], "caption": el.get("caption", "")})
     return out
-
-def image_from_base64(base64_str):
-    try:
-        return Image.open(BytesIO(base64.b64decode(base64_str)))
-    except Exception as e:
-        st.warning(f"Không giải mã được ảnh minh họa: {e}")
-        return None
 
 def export_to_word(elements, doc=None):
     if doc is None:
@@ -148,7 +137,6 @@ def image_to_stream(image):
     buf.seek(0)
     return buf
 
-# ========== STREAMLIT UI ==============
 st.set_page_config(layout="wide", page_title="Smart OCR Client (API)")
 st.title("📄➡️📘 Smart OCR Client (API) — PDF/Image to Word/LaTeX + Minh họa")
 
@@ -166,12 +154,11 @@ if uploaded_file:
     st.success(f"✅ Extracted {len(images)} page(s).")
     all_elements = []
 
-    # Batch process (can set batch size)
+    # Batch process
     for page_num, img in enumerate(images, 1):
         col1, col2 = st.columns(2)
         col1.image(img, caption=f"📄 Page {page_num}")
 
-        # Encode image for SmartOCR API (simulate PDF page as image file)
         img_buf = BytesIO()
         img.save(img_buf, format="PNG")
         img_bytes = img_buf.getvalue()
@@ -190,7 +177,6 @@ if uploaded_file:
             try:
                 parsed = result["data"]
                 if isinstance(parsed, str):
-                    # Nếu trả về JSON string, parse lại
                     parsed = json.loads(parsed)
                 elements = parse_ocr_json(parsed.get("elements", []))
             except Exception as e:
@@ -199,7 +185,7 @@ if uploaded_file:
             st.error(f"Lỗi SmartOCR: {result.get('error')}")
         all_elements.append(elements)
 
-        # Hiển thị kết quả OCR cho từng trang
+        # Hiển thị kết quả OCR
         with col2:
             for el in elements:
                 if el["type"] == "text":
@@ -211,7 +197,7 @@ if uploaded_file:
                         with st.expander("Base64"):
                             st.code(el["base64"][:200] + "...", language="text")
 
-    # EXPORT FULL DOC (tất cả các trang)
+    # EXPORT FULL DOC
     if output_format.startswith("Word"):
         doc = Document()
         for elements in all_elements:
@@ -232,6 +218,5 @@ if uploaded_file:
         with open(path, "rb") as f:
             st.download_button("📥 Download Full LaTeX File", f, file_name="converted.tex")
 
-# ========== BATCH, USAGE, ANALYTICS UI (Optional) ==========
 with st.expander("📊 Usage / Batch Log"):
     st.write(f"Total: {client.usage['total']} | Success: {client.usage['success']} | Fail: {client.usage['fail']}")
