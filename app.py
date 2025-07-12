@@ -1,7 +1,6 @@
 import streamlit as st
 from app_config import API_URL, API_KEY
 from ocr_client_api import EnhancedSmartOCRClient
-from extract_images import extract_images_from_pdf
 from extract_figures_from_image_pillow import extract_figures_from_image
 from word_export import insert_images_to_word_from_markdown
 import os
@@ -48,12 +47,25 @@ with tab1:
     if uploaded_pdf:
         if st.button("🚀 Xử lý OCR PDF", key="ocr_pdf_btn", use_container_width=True):
             st.info("⏳ Đang xử lý OCR PDF... (quá trình này có thể mất vài phút)")
-            with st.spinner("Đang nhận diện văn bản và trích xuất hình ảnh..."):
+            with st.spinner("Đang nhận diện văn bản và tách ảnh minh hoạ..."):
                 client = EnhancedSmartOCRClient(API_URL, API_KEY)
                 uploaded_pdf.seek(0)
                 pdf_bytes = uploaded_pdf.read()
                 result = client.convert(pdf_bytes, file_name, mime_type)
-                images = extract_images_from_pdf(pdf_bytes)
+                
+                # --- Tách từng trang PDF thành ảnh và tách minh hoạ từng trang ---
+                from pdf2image import convert_from_bytes
+                pdf_images = convert_from_bytes(pdf_bytes)
+                images = []
+                for i, im in enumerate(pdf_images):
+                    buf = io.BytesIO()
+                    im.save(buf, format="JPEG")
+                    page_bytes = buf.getvalue()
+                    page_figs = extract_figures_from_image(page_bytes, min_area=1500)
+                    # Đánh số ảnh theo page để tránh trùng
+                    for fig in page_figs:
+                        fig['name'] = f"page-{i+1}-{fig['name']}"
+                    images.extend(page_figs)
             if not result.get("success"):
                 st.error("❌ Xử lý OCR PDF thất bại: " + str(result.get("error")))
                 st.stop()
@@ -103,7 +115,7 @@ with tab1:
                         os.remove(tmp_word.name)
         with tab_pdf_img:
             if images:
-                st.success(f"🖼️ Đã tìm thấy {len(images)} hình ảnh:")
+                st.success(f"🖼️ Đã tách được {len(images)} hình minh hoạ từ PDF!")
                 for img in images:
                     try:
                         img_bytes = base64.b64decode(img["base64"])
@@ -111,7 +123,7 @@ with tab1:
                     except Exception as e:
                         st.error(f"Không đọc được ảnh {img['name']}: {e}")
             else:
-                st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
+                st.warning("Không phát hiện được ảnh minh hoạ thực sự trong PDF!")
 
 # ================= TAB 2: OCR Image ================
 with tab2:
@@ -141,9 +153,9 @@ with tab2:
             st.write(f"**Kích thước:** {size_mb:.1f} MB")
         st.image(img_bytes, caption="Ảnh đã upload", use_container_width=True)
 
-        # --- Tự động tách hình minh hoạ ---
+        # --- Tách hình minh hoạ tự động ---
         with st.spinner("Đang tách các hình minh hoạ..."):
-            figures = extract_figures_from_image(img_bytes, min_area=2000)
+            figures = extract_figures_from_image(img_bytes, min_area=1500)
         st.session_state["ocr_img_figures"] = figures
 
         # --- Xử lý OCR ---
@@ -199,7 +211,7 @@ with tab2:
                         os.remove(tmp_word.name)
         with tab_img_fig:
             if figures:
-                st.success(f"🖼️ Đã tách được {len(figures)} hình minh hoạ!")
+                st.success(f"🖼️ Đã tách được {len(figures)} hình minh hoạ từ ảnh!")
                 for fig in figures:
                     fig_bytes = base64.b64decode(fig["base64"])
                     st.image(fig_bytes, caption=fig["name"], use_container_width=True)
