@@ -2,6 +2,7 @@ import streamlit as st
 from config import API_URL, API_KEY
 from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
+from extract_figures_from_image import extract_figures_from_image
 from word_export import insert_images_to_word_from_markdown
 import os
 import base64
@@ -138,8 +139,22 @@ with tab2:
             st.write(f"**Tên file:** {img_file_name}")
             st.write(f"**Loại file:** {img_mime_type}")
             st.write(f"**Kích thước:** {size_mb:.1f} MB")
-        st.image(img_bytes, caption=img_file_name, use_container_width=True)
+        # KHÔNG để caption là base64 hoặc tên file base64
+        st.image(img_bytes, caption="Ảnh đã upload", use_container_width=True)
 
+        # --- Nút tách hình minh hoạ ---
+        if st.button("🔎 Tách ảnh minh hoạ trong ảnh", key="split_img_btn", use_container_width=True):
+            with st.spinner("Đang tách các hình minh hoạ..."):
+                figures = extract_figures_from_image(img_bytes)
+            if figures:
+                st.success(f"Đã tách được {len(figures)} hình minh hoạ!")
+                for fig in figures:
+                    fig_bytes = base64.b64decode(fig["base64"])
+                    st.image(fig_bytes, caption=fig["name"], use_container_width=True)
+            else:
+                st.warning("Không phát hiện được hình minh hoạ nổi bật trong ảnh này!")
+
+        # --- Nút OCR Ảnh ---
         if st.button("🚀 Xử lý OCR Ảnh", key="ocr_img_btn", use_container_width=True):
             st.info("⏳ Đang xử lý OCR Ảnh...")
             with st.spinner("Đang nhận diện văn bản từ ảnh..."):
@@ -174,7 +189,6 @@ with tab2:
             if word_btn:
                 with st.spinner("Đang tạo file Word..."):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                        # Chèn ảnh gốc vào cuối Word (nếu muốn)
                         images = []
                         images.append({"name": img_file_name, "base64": base64.b64encode(img_bytes).decode()})
                         insert_images_to_word_from_markdown(text_content, images, tmp_word.name)
