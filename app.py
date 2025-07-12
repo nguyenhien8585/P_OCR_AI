@@ -16,7 +16,7 @@ import time
 load_dotenv()
 OCR_CLIENT_CONFIG = {
     "API_URL": os.getenv("OCR_API_URL", "https://script.google.com/macros/s/AKfycby6GUWKFttjWTDJuQuX5IAeGAzS5tQULLja3SHbSfZIhQyaWVMuxyRNAE-fykxnznkqIw/exec"),
-    "API_KEY": os.getenv("OCR_API_KEY", "sk_nguyenhien21022020_pro_mcwzovbjz11wklh8zk"),  # Nhớ đổi API key thật!
+    "API_KEY": os.getenv("OCR_API_KEY", "sk_nguyenhien21022020_pro_mcwzovbjz11wklh8zk"),  # <-- ĐỔI thành API key thật!
     "TIMEOUT": 120,
     "MAX_RETRIES": 3,
     "RETRY_DELAY_BASE": 2,
@@ -46,9 +46,10 @@ class SmartOCRClient:
         return {"success": False, "error": f"Failed after {max_retries} retries"}
 
     def convert(self, file_bytes, filename, mime_type, options=None):
-        # Gửi đúng như JS: api_key + file + options
+        # Thêm "endpoint": "convert" đúng yêu cầu GAS server!
         base64_str = base64.b64encode(file_bytes).decode()
         data = {
+            "endpoint": "convert",    # Fix: THÊM trường này
             "api_key": self.api_key,
             "file": {
                 "name": filename,
