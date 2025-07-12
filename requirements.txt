@@ -1,6 +1,5 @@
 streamlit
+pytesseract
 pdf2image
-Pillow
-requests
 python-docx
-python-dotenv
+Pillow
