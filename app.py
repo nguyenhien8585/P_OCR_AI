@@ -7,10 +7,10 @@ import os
 import base64
 import re
 from PyPDF2 import PdfReader
+import tempfile
 
-# =================== UI CHUẨN ==========================
+# ============ HEADER & GIAO DIỆN ============
 st.set_page_config(page_title="OCR cho file PDF", layout="centered")
-
 st.markdown(
     """
     <h2>📝 OCR cho file PDF</h2>
@@ -32,10 +32,11 @@ if uploaded_file:
     mime_type = "application/pdf"
     size_mb = len(pdf_bytes) / (1024 * 1024)
 
-    # Đếm số trang PDF
     try:
+        uploaded_file.seek(0)
         reader = PdfReader(uploaded_file)
         num_pages = len(reader.pages)
+        uploaded_file.seek(0)
     except:
         num_pages = "?"
 
@@ -45,18 +46,17 @@ if uploaded_file:
         st.write(f"**Kích thước:** {size_mb:.1f} MB")
         st.write(f"**Số trang:** {num_pages}")
 
-# --------- CHO BẤM NÚT MỚI XỬ LÝ -------------
+# ----- CHO BẤM NÚT MỚI XỬ LÝ -----
 if uploaded_file:
     run_ocr = st.button("🚀 Xử lý OCR PDF", type="primary", use_container_width=True)
 else:
     run_ocr = False
 
-# ========== XỬ LÝ KHI BẤM NÚT =============
+# ========== XỬ LÝ KHI BẤM NÚT ==========
 if uploaded_file and run_ocr:
     st.info("⏳ Đang xử lý OCR PDF... (quá trình này có thể mất vài phút)")
     with st.spinner("Đang nhận diện văn bản và trích xuất hình ảnh..."):
         client = EnhancedSmartOCRClient(API_URL, API_KEY)
-        # Cần đọc lại bytes từ uploaded_file (vì đã read ở trên)
         uploaded_file.seek(0)
         pdf_bytes = uploaded_file.read()
         result = client.convert(pdf_bytes, file_name, mime_type)
@@ -90,12 +90,21 @@ if uploaded_file and run_ocr:
                 use_container_width=True,
             )
         with col2:
-            if st.button("📝 Tạo file Word", use_container_width=True):
-                word_file = "ket_qua_ocr.docx"
-                insert_images_to_word_from_markdown(text_content, images, word_file)
-                with open(word_file, "rb") as f:
-                    st.download_button("⬇️ Tải về file Word", f, file_name=word_file, use_container_width=True)
-                os.remove(word_file)
+            # Chỉ tạo/tải file Word sau khi bấm nút
+            word_btn = st.button("📝 Tạo và tải file Word", use_container_width=True)
+            if word_btn:
+                with st.spinner("Đang tạo file Word..."):
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
+                        insert_images_to_word_from_markdown(text_content, images, tmp_word.name)
+                        tmp_word.seek(0)
+                        st.success("✅ Đã tạo file Word thành công!")
+                        st.download_button(
+                            "⬇️ Tải về file Word",
+                            tmp_word,
+                            file_name="ket_qua_ocr.docx",
+                            use_container_width=True
+                        )
+                    os.remove(tmp_word.name)
 
     with tab2:
         if images:
@@ -109,6 +118,5 @@ if uploaded_file and run_ocr:
         else:
             st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
 
-# ===== Footer =====
 st.markdown("---")
-st.caption("🔖 <b>OCR PDF có hỗ trợ công thức MathType, ảnh minh hoạ và xuất Word/TXT.</b>", unsafe_allow_html=True)
+st.caption("🔖 <b>OCR PDF: hỗ trợ MathType, ảnh minh hoạ, xuất Word/TXT. Giao diện thân thiện.</b>", unsafe_allow_html=True)
