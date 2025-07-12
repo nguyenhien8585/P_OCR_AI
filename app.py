@@ -18,8 +18,12 @@ tab1, tab2 = st.tabs([
     "🖼️ OCR Image"
 ])
 
-def dollar_to_mathptn(s):
-    return re.sub(r'\$(.+?)\$', r'${\1}$', s, flags=re.DOTALL)
+# Hàm chuyển công thức toán sang dạng ${...}$
+def preprocess_text(s):
+    # Chuyển $...$ => ${...}$ và *...* => ${...}$
+    s = re.sub(r'\$(.+?)\$', r'${\1}$', s, flags=re.DOTALL)
+    s = re.sub(r'\*([^\*]+)\*', r'${\1}$', s)
+    return s
 
 # ================ TAB 1: OCR PDF ==================
 with tab1:
@@ -77,7 +81,7 @@ with tab1:
 
     if st.session_state.get("ocr_pdf_done"):
         raw_text = st.session_state.get("ocr_pdf_text_raw", "")
-        text_content = dollar_to_mathptn(raw_text)
+        text_content = preprocess_text(raw_text)  # DÙNG hàm chuyển công thức!
         images = st.session_state.get("ocr_pdf_images", [])
 
         tab_pdf_text, tab_pdf_img = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
@@ -169,7 +173,7 @@ with tab2:
 
     if st.session_state.get("ocr_img_done"):
         raw_text = st.session_state.get("ocr_img_text_raw", "")
-        text_content = dollar_to_mathptn(raw_text)
+        text_content = preprocess_text(raw_text)  # DÙNG hàm chuyển công thức!
         figures = st.session_state.get("ocr_img_figures", [])
 
         tab_img_text, tab_img_fig = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
@@ -184,7 +188,6 @@ with tab2:
                 use_container_width=True,
             )
 
-            # Chọn ảnh và xuất Word
             selected_fig_names = []
             with st.expander("🖼️ Chọn hình minh hoạ cho file Word"):
                 if figures:
