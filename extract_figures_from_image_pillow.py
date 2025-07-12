@@ -6,18 +6,17 @@ from scipy.ndimage import label, find_objects
 
 def extract_figures_from_image(
     img_bytes,
-    min_area=800,          # nhỏ hơn nữa nếu hình vẽ nhỏ
+    min_area=3000,          # vùng nhỏ hơn sẽ bỏ qua (tăng lên nếu còn nhiều rác)
     blur_radius=1,
-    max_figures=15,
-    min_aspect=0.10,
-    max_aspect=8.0,
-    min_area_ratio=0.002,
-    max_area_ratio=0.8,
-    min_mean_pixel=120,    # nới lỏng cho nền tối hơn
-    min_std_pixel=5        # càng nhỏ càng dễ lọc ra mọi block
+    max_figures=2,          # chỉ lấy đúng 2 hình lớn nhất
+    min_aspect=0.8,         # hình vẽ thường gần vuông/hình chữ nhật
+    max_aspect=1.5,
+    min_area_ratio=0.01,    # nhỏ nhất chiếm 1% diện tích ảnh
+    max_area_ratio=0.4,     # lớn nhất chiếm 40% diện tích ảnh
+    margin=0.04             # bỏ vùng sát mép (4% mỗi cạnh)
 ):
     """
-    Tách tất cả các vùng nghi là hình minh hoạ – nới lỏng để không bỏ sót vùng nào.
+    Tách đúng 2 hình lớn nhất, chỉ giữ minh hoạ thực sự.
     """
     img = Image.open(io.BytesIO(img_bytes)).convert("L")
     arr = np.array(img)
@@ -25,11 +24,10 @@ def extract_figures_from_image(
     img_blur = img.filter(ImageFilter.GaussianBlur(blur_radius))
     arr_blur = np.array(img_blur)
     edge = np.abs(arr.astype(np.int16) - arr_blur.astype(np.int16))
-    edge = (edge > 7).astype(np.uint8)
+    edge = (edge > 8).astype(np.uint8)
     labeled, num = label(edge)
     objects = find_objects(labeled)
     color_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    results = []
     candidates = []
     for obj in objects:
         if obj is None: continue
@@ -38,19 +36,17 @@ def extract_figures_from_image(
         area = (x1-x0)*(y1-y0)
         aspect = (x1-x0)/(y1-y0+1e-5)
         area_ratio = area/(h*w)
-        crop_arr = arr[y0:y1, x0:x1]
-        mean_pixel = crop_arr.mean()
-        std_pixel = crop_arr.std()
-        if (
-            area > min_area and
+        # bỏ block sát mép
+        if (x0 < margin*w or x1 > (1-margin)*w or y0 < margin*h or y1 > (1-margin)*h):
+            continue
+        # chỉ lấy block lớn, gần vuông, tỷ lệ hợp lý
+        if (area > min_area and
             min_aspect < aspect < max_aspect and
-            min_area_ratio < area_ratio < max_area_ratio and
-            x0 > 0.002*w and x1 < 0.998*w and y0 > 0.002*h and y1 < 0.998*h and
-            mean_pixel > min_mean_pixel and
-            std_pixel > min_std_pixel
-        ):
+            min_area_ratio < area_ratio < max_area_ratio):
             candidates.append((area, x0, y0, x1, y1))
+    # chỉ lấy 2 block lớn nhất
     candidates = sorted(candidates, key=lambda x: -x[0])[:max_figures]
+    results = []
     for idx, (area, x0, y0, x1, y1) in enumerate(candidates):
         crop = color_img.crop((x0, y0, x1, y1))
         buf = io.BytesIO()
