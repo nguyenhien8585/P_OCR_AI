@@ -175,7 +175,17 @@ with tab2:
         tab_img_text, tab_img_fig = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
         with tab_img_text:
             st.markdown("#### 📋 Kết quả OCR Ảnh:")
-            st.text_area("Kết quả OCR Ảnh:", text_content, height=350, label_visibility="collapsed")
+            # Nếu có hình, hướng dẫn marker chèn đúng vị trí
+            if figures:
+                st.info(
+                    "👉 **Muốn chèn ảnh vào đúng câu trong Word, hãy copy & dán đoạn sau vào vị trí mong muốn:**\n\n" +
+                    "\n".join([f"`![{fig['name']}]({fig['name']})`" for fig in figures]) +
+                    "\n\nVí dụ: Sau dòng cần chèn hình, dán `![img-1.jpeg](img-1.jpeg)`."
+                )
+            text_content = st.text_area(
+                "Kết quả OCR Ảnh (bạn có thể thêm marker ảnh vào đúng vị trí):",
+                text_content, height=400, label_visibility="collapsed"
+            )
             st.download_button(
                 "📄 Tải văn bản (TXT)",
                 text_content,
