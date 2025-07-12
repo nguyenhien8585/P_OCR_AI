@@ -11,62 +11,42 @@ import tempfile
 from PIL import Image
 import io
 
+# ===== Hàm format tự động công thức toán học Toán THPT QG style =====
+def math_format_qa_text(text):
+    lines = text.split('\n')
+    res = []
+    for line in lines:
+        # Bỏ Câu n: ở đầu dòng
+        line = re.sub(r'^Câu\s*\d+\s*:?', '', line, flags=re.IGNORECASE).strip()
+        # Bỏ các đáp án trắc nghiệm đầu dòng (A. ..., B. ..., C. ..., D. ...)
+        line = re.sub(r'^[A-D]\.\s*', '', line)
+        if not line: continue
+
+        # Bao các đoạn có toán học đặc trưng vào ${...}$
+        # 1. Điểm & nhóm ký hiệu: OA, OB, OC, O.ABC, OA', A', B', ABC, Oxyz, ...
+        line = re.sub(r'(?<!\$)(\b(?:O|A|B|C|D|E|F|G|H|K|L|M|N|P|Q|R|S|T|X|Y|Z)(?:[.]?[A-Z]{1,5})?(?:\'?)\b)(?![\w\'])', r'${\1}$', line)
+        # 2. Các nhóm trong ngoặc (ABC), (P), (d), (O), (A'B'C'),...
+        line = re.sub(r'(?<!\$)(\([A-Za-z0-9\'\.\s]{1,8}\))', r'${\1}$', line)
+        # 3. Toán tử và số: x = 2, OA = 3, x + 3 = 4, a^2 + b^2 = c^2,...
+        line = re.sub(r'([a-zA-Z]+\s*[=<>]\s*[\d\w\/\+\-\*\^]+)', r'${\1}$', line)
+        # 4. Chỉ số: n̄, v̄, x̄
+        line = re.sub(r'([a-zA-Z])̄', r'${\1̄}$', line)
+        # 5. Oxyz, Oxy, Oxz, Oyz
+        line = re.sub(r'\b(Oxyz|Oxy|Oxz|Oyz)\b', r'${\1}$', line)
+        # 6. Số độc lập đứng sau đáp án: "A. 36." thành "36."
+        line = re.sub(r'^([A-D])\.\s*([-\d\.\/]+)', r'\2', line)
+        # 7. Số trong bảng: chỉ số toán độc lập
+        line = re.sub(r'(?<!\$)\b(\d{1,3})\b(?!\.\d)', r'${\1}$', line)
+        # Giữ nguyên marker ảnh
+        res.append(line)
+    return '\n'.join(res)
+
 st.set_page_config(page_title="OCR PDF & Image", layout="centered")
 
 tab1, tab2 = st.tabs([
     "📄 OCR PDF",
     "🖼️ OCR Image"
 ])
-
-# ==== Hàm tự động bọc ${...}$ cho công thức, điểm, số, biến ====
-def wrap_math(text):
-    lines = text.split("\n")
-    new_lines = []
-    for line in lines:
-        # Không wrap các dòng đáp án đầu dòng (A., B., C., D.)
-        if re.match(r"^\s*[A-D]\.", line.strip()):
-            new_lines.append(line)
-            continue
-        # Không wrap số câu hỏi
-        if re.match(r"^\s*Câu\s*\d+\s*:", line):
-            new_lines.append(line)
-            continue
-        # Bọc O.ABC (chữ cái hoa, có thể thêm dấu chấm)
-        line = re.sub(r"\b([A-Z]\.[A-Z]{2,})\b", r"${\1}$", line)
-        # Bọc các cụm như ABC, OAB, OA, OB, ... (2-3 ký tự viết hoa)
-        line = re.sub(r"\b([A-Z]{2,3})\b", r"${\1}$", line)
-        # (ABC), (MNP), (Oxyz)
-        line = re.sub(r"\(([A-Z]{2,}|Oxyz)\)", lambda m: "${(" + m.group(1) + ")}$", line)
-        # OA = 2, AB = 3, AC = 6, x = 1, y = 5,...
-        line = re.sub(r"([A-Za-z]{1,3}\s*=\s*-?\d+)", r"${\1}$", line)
-        # Số đơn đứng một mình sau dấu chấm hoặc trong câu toán học (tránh bọc số câu hỏi)
-        line = re.sub(r"(?<!Câu )(?<!\d)(?<!\w)(\d+)(?![.:])", lambda m: f"${{{m.group(1)}}}$", line)
-        # Oxyz riêng lẻ
-        line = re.sub(r"\bOxyz\b", "${Oxyz}$", line)
-        # Các biến toán học độc lập (x, y, z, n, m, k, ...)
-        line = re.sub(r"\b([xyzabcnmkij])\b", r"${\1}$", line)
-        new_lines.append(line)
-    return "\n".join(new_lines)
-
-# ===== Hàm xử lý làm sạch văn bản trước khi hiển thị =====
-def clean_ocr_text(text):
-    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
-    text = re.sub(r'\*(.*?)\*', r'\1', text)
-    # Chỉ chuyển $...$ ngắn thành ${...}$
-    def _math_replacer(match):
-        content = match.group(1)
-        if "\n" in content or len(content) > 80:
-            return f"${content}$"
-        return f"${{{content}}}$"
-    text = re.sub(r'\$(.+?)\$', _math_replacer, text)
-    # Loại bỏ các trường hợp wrap lỗi: }$*, $*, *}$
-    text = re.sub(r'\}\$\*', '\n', text)
-    text = re.sub(r'\$\*', '', text)
-    text = re.sub(r'\*\$\}', '', text)
-    # Loại bỏ các ký tự {, } còn dư do OCR lỗi
-    text = text.replace("{", "").replace("}", "")
-    text = text.replace("**", "").replace("*", "")
-    return text.strip()
 
 # ================ TAB 1: OCR PDF ==================
 with tab1:
@@ -124,7 +104,7 @@ with tab1:
 
     if st.session_state.get("ocr_pdf_done"):
         raw_text = st.session_state.get("ocr_pdf_text_raw", "")
-        text_content = clean_ocr_text(raw_text)
+        text_content = math_format_qa_text(raw_text)
         images = st.session_state.get("ocr_pdf_images", [])
 
         tab_pdf_text, tab_pdf_img = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
@@ -155,10 +135,8 @@ with tab1:
             export_figures = [fig for fig in images if fig["name"] in selected_fig_names]
             if st.button("📝 Tạo và tải file Word", key="word_pdf_create", use_container_width=True):
                 with st.spinner("Đang tạo file Word..."):
-                    # Áp dụng wrap_math cho text xuất file Word
-                    text_for_word = wrap_math(text_content)
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                        insert_images_to_word_from_markdown(text_for_word, export_figures, tmp_word.name)
+                        insert_images_to_word_from_markdown(text_content, export_figures, tmp_word.name)
                     with open(tmp_word.name, "rb") as f:
                         word_data = f.read()
                     st.success("✅ Đã tạo file Word thành công!")
@@ -217,7 +195,7 @@ with tab2:
 
     if st.session_state.get("ocr_img_done"):
         raw_text = st.session_state.get("ocr_img_text_raw", "")
-        text_content = clean_ocr_text(raw_text)
+        text_content = math_format_qa_text(raw_text)
         figures = st.session_state.get("ocr_img_figures", [])
 
         tab_img_text, tab_img_fig = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
@@ -248,9 +226,8 @@ with tab2:
             export_figures = [fig for fig in figures if fig["name"] in selected_fig_names]
             if st.button("📝 Tạo và tải file Word", key="word_img_create", use_container_width=True):
                 with st.spinner("Đang tạo file Word..."):
-                    text_for_word = wrap_math(text_content)
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                        insert_images_to_word_from_markdown(text_for_word, export_figures, tmp_word.name)
+                        insert_images_to_word_from_markdown(text_content, export_figures, tmp_word.name)
                     with open(tmp_word.name, "rb") as f:
                         word_data = f.read()
                     st.success("✅ Đã tạo file Word thành công!")
