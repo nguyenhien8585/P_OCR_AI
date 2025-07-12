@@ -96,7 +96,7 @@ with tab1:
                     use_container_width=True,
                 )
             with col2:
-                # Tích hợp xuất Word chỉ với các hình đã tick!
+                # Xuất Word chỉ với các hình đã tick!
                 word_btn = st.button("📝 Tạo và tải file Word", use_container_width=True, key="word_pdf")
 
         with tab_pdf_img:
@@ -131,6 +131,7 @@ with tab1:
                     os.remove(tmp_word.name)
 
 # ================= TAB 2: OCR Image ================
+
 with tab2:
     st.markdown("### 🖼️ OCR cho hình ảnh")
     uploaded_img = st.file_uploader("Chọn hình ảnh để xử lý OCR", type=["png", "jpg", "jpeg", "webp"])
@@ -231,4 +232,7 @@ with tab2:
                     os.remove(tmp_word.name)
 
 st.markdown("---")
-st.caption("🔖 <b>OCR PDF & Ảnh: hỗ trợ MathType, ảnh minh hoạ, xuất Word/TXT. Giao diện hiện đại.</b>", unsafe_allow_html=True)
+st.caption(
+    "<b>OCR PDF & Ảnh: hỗ trợ MathType, ảnh minh hoạ, xuất Word/TXT. Giao diện hiện đại.</b>", 
+    unsafe_allow_html=True
+)
