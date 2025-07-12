@@ -6,18 +6,18 @@ from scipy.ndimage import label, find_objects
 
 def extract_figures_from_image(
     img_bytes,
-    min_area=1800,
+    min_area=800,          # nhỏ hơn nữa nếu hình vẽ nhỏ
     blur_radius=1,
-    max_figures=10,
-    min_aspect=0.20,
-    max_aspect=5.0,
-    min_area_ratio=0.004,
-    max_area_ratio=0.7,
-    min_mean_pixel=160,
-    min_std_pixel=12
+    max_figures=15,
+    min_aspect=0.10,
+    max_aspect=8.0,
+    min_area_ratio=0.002,
+    max_area_ratio=0.8,
+    min_mean_pixel=120,    # nới lỏng cho nền tối hơn
+    min_std_pixel=5        # càng nhỏ càng dễ lọc ra mọi block
 ):
     """
-    Tách tất cả các vùng nghi là hình minh hoạ – để user tick chọn lại cho chính xác.
+    Tách tất cả các vùng nghi là hình minh hoạ – nới lỏng để không bỏ sót vùng nào.
     """
     img = Image.open(io.BytesIO(img_bytes)).convert("L")
     arr = np.array(img)
@@ -25,7 +25,7 @@ def extract_figures_from_image(
     img_blur = img.filter(ImageFilter.GaussianBlur(blur_radius))
     arr_blur = np.array(img_blur)
     edge = np.abs(arr.astype(np.int16) - arr_blur.astype(np.int16))
-    edge = (edge > 10).astype(np.uint8)
+    edge = (edge > 7).astype(np.uint8)
     labeled, num = label(edge)
     objects = find_objects(labeled)
     color_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -45,7 +45,7 @@ def extract_figures_from_image(
             area > min_area and
             min_aspect < aspect < max_aspect and
             min_area_ratio < area_ratio < max_area_ratio and
-            x0 > 0.005*w and x1 < 0.995*w and y0 > 0.005*h and y1 < 0.995*h and
+            x0 > 0.002*w and x1 < 0.998*w and y0 > 0.002*h and y1 < 0.998*h and
             mean_pixel > min_mean_pixel and
             std_pixel > min_std_pixel
         ):
