@@ -6,45 +6,100 @@ from word_export import insert_images_to_word_from_markdown
 import os
 import base64
 import re
+from PyPDF2 import PdfReader
 
-st.set_page_config(page_title="Smart OCR - API + Python Image Extract", layout="centered")
-st.title("📄 Smart OCR (API + Python image extract) – Xuất Word, ảnh minh hoạ đúng vị trí")
-st.write(
-    "- Nhận diện text bằng API (dùng key)\n"
-    "- Trích xuất ảnh minh hoạ thực sự từ PDF bằng Python\n"
-    "- Khi xuất Word: ảnh sẽ được chèn đúng vị trí tên ảnh trong text\n"
-    "- Tự động chuyển tất cả công thức toán từ `$...$` thành `${...}$` để MathType nhận diện"
+# =================== UI CHUẨN ==========================
+st.set_page_config(page_title="OCR cho file PDF", layout="centered")
+
+st.markdown(
+    """
+    <h2>📝 OCR cho file PDF</h2>
+    <small>📁 <b>Chọn file PDF để xử lý OCR</b></small>
+    """,
+    unsafe_allow_html=True,
 )
 
-uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"])
+uploaded_file = st.file_uploader(
+    "Chọn file PDF để xử lý OCR", type=["pdf"], label_visibility="collapsed"
+)
+
+file_info = None
+num_pages = None
+
 if uploaded_file:
     pdf_bytes = uploaded_file.read()
     file_name = uploaded_file.name
     mime_type = "application/pdf"
+    size_mb = len(pdf_bytes) / (1024 * 1024)
 
-    with st.spinner("Đang nhận diện văn bản (OCR API)..."):
+    # Đếm số trang PDF
+    try:
+        reader = PdfReader(uploaded_file)
+        num_pages = len(reader.pages)
+    except:
+        num_pages = "?"
+
+    with st.expander("ℹ️ Thông tin file", expanded=True):
+        st.write(f"**Tên file:** {file_name}")
+        st.write(f"**Loại file:** {mime_type}")
+        st.write(f"**Kích thước:** {size_mb:.1f} MB")
+        st.write(f"**Số trang:** {num_pages}")
+
+# --------- CHO BẤM NÚT MỚI XỬ LÝ -------------
+if uploaded_file:
+    run_ocr = st.button("🚀 Xử lý OCR PDF", type="primary", use_container_width=True)
+else:
+    run_ocr = False
+
+# ========== XỬ LÝ KHI BẤM NÚT =============
+if uploaded_file and run_ocr:
+    st.info("⏳ Đang xử lý OCR PDF... (quá trình này có thể mất vài phút)")
+    with st.spinner("Đang nhận diện văn bản và trích xuất hình ảnh..."):
         client = EnhancedSmartOCRClient(API_URL, API_KEY)
+        # Cần đọc lại bytes từ uploaded_file (vì đã read ở trên)
+        uploaded_file.seek(0)
+        pdf_bytes = uploaded_file.read()
         result = client.convert(pdf_bytes, file_name, mime_type)
+        images = extract_images_from_pdf(pdf_bytes)
 
     if not result.get("success"):
-        st.error("OCR thất bại: " + str(result.get("error")))
-    else:
-        # --- Chuyển đổi toàn bộ $...$ thành ${...}$ ---
-        def dollar_to_mathptn(s):
-            # Regex tìm các cụm $...$
-            # Không match với $$...$$ hoặc $ $ rỗng
-            return re.sub(r'\$(.+?)\$', r'${\1}$', s)
-        raw_text = result["data"].get("text_content", "")
-        text_content = dollar_to_mathptn(raw_text)
-        st.subheader("Văn bản nhận diện (có tên ảnh):")
-        st.text_area("Text OCR", text_content, height=350)
+        st.error("❌ Xử lý OCR PDF thất bại: " + str(result.get("error")))
+        st.stop()
 
-        # Tách mọi ảnh thực sự từ PDF
-        with st.spinner("Đang trích xuất ảnh minh hoạ từ PDF..."):
-            images = extract_images_from_pdf(pdf_bytes)
+    # Chuyển đổi $...$ thành ${...}$ tự động cho MathType
+    def dollar_to_mathptn(s):
+        return re.sub(r'\$(.+?)\$', r'${\1}$', s)
+    raw_text = result["data"].get("text_content", "")
+    text_content = dollar_to_mathptn(raw_text)
 
+    st.success("✅ Xử lý OCR PDF hoàn tất thành công!")
+
+    # ==== GIAO DIỆN TABS ====
+    tab1, tab2 = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
+    with tab1:
+        st.markdown("#### 📋 Kết quả OCR PDF:")
+        st.text_area("Kết quả OCR PDF:", text_content, height=350, label_visibility="collapsed")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                "📄 Tải văn bản (TXT)",
+                text_content,
+                file_name="ket_qua_ocr.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
+        with col2:
+            if st.button("📝 Tạo file Word", use_container_width=True):
+                word_file = "ket_qua_ocr.docx"
+                insert_images_to_word_from_markdown(text_content, images, word_file)
+                with open(word_file, "rb") as f:
+                    st.download_button("⬇️ Tải về file Word", f, file_name=word_file, use_container_width=True)
+                os.remove(word_file)
+
+    with tab2:
         if images:
-            st.success(f"Trích xuất được {len(images)} ảnh minh hoạ!")
+            st.success(f"🖼️ Đã tìm thấy {len(images)} hình ảnh:")
             for img in images:
                 try:
                     img_bytes = base64.b64decode(img["base64"])
@@ -54,13 +109,6 @@ if uploaded_file:
         else:
             st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
 
-        # Chỉ còn nút xuất Word
-        if st.button("📥 Xuất file Word (.docx)"):
-            word_file = "ket_qua_ocr.docx"
-            insert_images_to_word_from_markdown(text_content, images, word_file)
-            with open(word_file, "rb") as f:
-                st.download_button("Tải về file Word", f, file_name=word_file)
-            os.remove(word_file)
-
+# ===== Footer =====
 st.markdown("---")
-st.caption("Code Python hoàn chỉnh: chỉ xuất Word, tự động chuyển $...$ sang ${...}$, chèn ảnh vào đúng vị trí.")
+st.caption("🔖 <b>OCR PDF có hỗ trợ công thức MathType, ảnh minh hoạ và xuất Word/TXT.</b>", unsafe_allow_html=True)
