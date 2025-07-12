@@ -3,10 +3,6 @@ import base64
 import io
 
 def extract_figures_from_image(img_bytes, num_parts=2):
-    """
-    Tách ảnh thành các vùng đều nhau theo chiều dọc (mặc định 2 phần).
-    Nếu muốn chia nhỏ hơn, tăng num_parts lên (3, 4,...).
-    """
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     width, height = img.size
     h_part = height // num_parts
