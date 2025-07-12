@@ -1,11 +1,11 @@
 def extract_figures_from_image(
     img_bytes,
-    max_figures=3,
-    min_area=900,
-    min_aspect=0.18,
-    max_aspect=6.0,
-    min_area_ratio=0.004,
-    max_area_ratio=0.50,
+    max_figures=6,  # Show nhiều block để user tick đúng
+    min_area=800,
+    min_aspect=0.15,
+    max_aspect=8.0,
+    min_area_ratio=0.003,
+    max_area_ratio=0.6,
     margin=0.01
 ):
     from PIL import Image, ImageEnhance, ImageFilter
@@ -43,21 +43,19 @@ def extract_figures_from_image(
         mean_pixel = crop_arr.mean()
         std_pixel = crop_arr.std()
         percent_white = np.mean(crop_arr > 200)
-        # Loại tiêu đề, mã đề (nằm sát trên cùng)
-        # Chỉ lấy block có y0 cách trên >12% chiều cao và không sát dưới
+        # Lấy tất cả block lớn, cho user tick lại, không cố loại tiêu đề/mã đề nữa
         if (
             area > min_area and
             min_aspect < aspect < max_aspect and
             min_area_ratio < area_ratio < max_area_ratio and
             x0 > margin*w and x1 < (1-margin)*w and
-            y0 > int(0.12*h) and y1 < int(0.93*h) and
-            mean_pixel > 90 and std_pixel > 15 and percent_white > 0.18
+            mean_pixel > 85 and std_pixel > 10 and percent_white > 0.13
         ):
-            candidates.append((area, x0, y0, x1, y1, aspect, std_pixel, percent_white))
+            candidates.append((area, x0, y0, x1, y1))
     # Sắp xếp theo diện tích lớn nhất
-    candidates = sorted(candidates, key=lambda x: -x[0])
+    candidates = sorted(candidates, key=lambda x: -x[0])[:max_figures]
     results = []
-    for idx, (area, x0, y0, x1, y1, *_ ) in enumerate(candidates[:max_figures]):
+    for idx, (area, x0, y0, x1, y1) in enumerate(candidates):
         crop = color_img.crop((x0, y0, x1, y1))
         buf = io.BytesIO()
         crop.save(buf, format="JPEG")
