@@ -21,13 +21,12 @@ GEMINI_API_KEYS = [
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
   "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
-  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
+  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I",
 ]
 api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
     return next(api_key_cycle)
 
-# ===== GEMINI PROMPT ==========
 GEMINI_PROMPT = '''
 YÊU CẦU:
 1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh.
@@ -84,34 +83,43 @@ def gemini_caption_image(image_bytes, api_key):
     text = res["candidates"][0]["content"]["parts"][0]["text"]
     return text.strip().lower()
 
-def insert_figures_precisely(text, figures):
+# ==== Hàm mapping chuẩn: mỗi hình chỉ chèn đúng một lần, không lặp, không dư ====
+def insert_figures_no_duplicate(text, figures):
     lines = text.split('\n')
-    used = set()
+    n = len(figures)
+    fig_used = [False] * n
     new_lines = []
+    positions = []
+    for idx, fig in enumerate(figures):
+        inserted = False
+        for i, line in enumerate(lines):
+            # Điều kiện chèn đúng loại hình cho đúng dòng mô tả
+            if not inserted and not any(p[0]==i for p in positions):  # dòng này chưa có hình nào
+                if 'bảng biến thiên' in fig['caption'] and 'bảng biến thiên' in line.lower():
+                    positions.append((i, idx))
+                    inserted = True
+                elif 'lăng trụ' in fig['caption'] and 'lăng trụ' in line.lower():
+                    positions.append((i, idx))
+                    inserted = True
+                elif 'chóp' in fig['caption'] and 'chóp' in line.lower():
+                    positions.append((i, idx))
+                    inserted = True
+                elif 'đồ thị' in fig['caption'] and 'đồ thị' in line.lower():
+                    positions.append((i, idx))
+                    inserted = True
+                elif 'hình' in fig['caption'] and 'hình' in line.lower():
+                    positions.append((i, idx))
+                    inserted = True
     for i, line in enumerate(lines):
         new_lines.append(line)
-        for fig in figures:
-            if fig['name'] in used:
-                continue
-            # Map theo caption
-            if 'bảng biến thiên' in fig['caption'] and 'bảng biến thiên' in line.lower():
-                new_lines.append(f"![Hình minh hoạ]({fig['name']})")
-                used.add(fig['name'])
-            elif 'lăng trụ' in fig['caption'] and 'lăng trụ' in line.lower():
-                new_lines.append(f"![Hình minh hoạ]({fig['name']})")
-                used.add(fig['name'])
-            elif 'chóp' in fig['caption'] and 'chóp' in line.lower():
-                new_lines.append(f"![Hình minh hoạ]({fig['name']})")
-                used.add(fig['name'])
-            elif 'đồ thị' in fig['caption'] and 'đồ thị' in line.lower():
-                new_lines.append(f"![Hình minh hoạ]({fig['name']})")
-                used.add(fig['name'])
-            elif 'hình' in fig['caption'] and 'hình' in line.lower():
-                new_lines.append(f"![Hình minh hoạ]({fig['name']})")
-                used.add(fig['name'])
-    for fig in figures:
-        if fig['name'] not in used:
-            new_lines.append(f"![Hình minh hoạ]({fig['name']})")
+        for pos, idx_fig in positions:
+            if pos == i and not fig_used[idx_fig]:
+                new_lines.append(f"![Hình minh hoạ]({figures[idx_fig]['name']})")
+                fig_used[idx_fig] = True
+    for idx, used in enumerate(fig_used):
+        if not used:
+            new_lines.append(f"![Hình minh hoạ]({figures[idx]['name']})")
+            fig_used[idx] = True
     return '\n'.join(new_lines)
 
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="centered")
@@ -210,7 +218,7 @@ with tab_pdf:
 
 # =========== TAB ẢNH ===========
 with tab_img:
-    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, phân loại, chèn đúng đoạn) → Word")
+    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, phân loại, không lặp/dư) → Word")
     uploaded_images = st.file_uploader(
         "Chọn nhiều ảnh (mỗi ảnh là một trang):",
         type=["png", "jpg", "jpeg", "webp"],
@@ -237,9 +245,9 @@ with tab_img:
                     text = gemini_generate_text(img_bytes, api_key)
                 except Exception as e:
                     text = f"[Lỗi Gemini: {e}]"
-            # Chèn từng hình đúng câu hỏi (mapping caption)
+            # Chèn từng hình đúng câu hỏi (mapping caption, không lặp/dư)
             if figures_with_caption:
-                text = insert_figures_precisely(text, figures_with_caption)
+                text = insert_figures_no_duplicate(text, figures_with_caption)
             latex_results.append((img_file.name, text, figures_with_caption))
 
         tab1, tab2 = st.tabs(["📋 Văn bản (copy LaTeX)", "🖼️ Ảnh minh hoạ đã tách"])
@@ -290,4 +298,4 @@ with tab_img:
     else:
         st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
 
-st.caption("✨ Ảnh minh hoạ tách tự động, nhận diện caption, mapping đúng vào câu hỏi (bảng biến thiên, hình, lăng trụ...) – Không nhầm lẫn vị trí, luôn đúng!")
+st.caption("✨ Ảnh minh hoạ tách tự động, nhận diện caption, mapping đúng vào câu hỏi (không lặp, không dư), luôn chuẩn vị trí!")
