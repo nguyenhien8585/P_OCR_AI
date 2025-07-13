@@ -12,16 +12,65 @@ from pdf2image import convert_from_bytes
 from extract_figures_from_image_pillow import extract_figures_from_image
 import regex as re
 
-st.set_page_config(page_title="Smart OCR PDF & Image", layout="centered")
+st.set_page_config(page_title="Smart OCR PDF & Image + GPT-4o LaTeX", layout="centered")
 
-# Từ điển từ tiếng Việt loại trừ
-VIET_WORDS = set([
-    "trong", "cạnh", "của", "hình", "vuông", "nhật", "các", "tính", "đúng", "sai", "đều", "bằng", "cho",
-    "thoi", "tâm", "đáy", "trung", "điểm", "khẳng", "định", "xét", "mặt", "là", "và", "có", "giá", "trị",
-    "chóp", "tổng", "hiệu", "trừ", "chia", "nhân", "phần", "diện", "tích", "chu", "vi", "số", "góc", "song",
-    "song", "vuông", "với", "bán", "kính", "lượt", "phải", "trái", "thẳng", "đúng", "sai", "theo", "phép",
-    "toạ", "độ", "thẳng", "giả", "thiết", "ngược", "hướng", "cạnh", "bởi", "lấy", "lúc", "dài", "ngắn"
-])
+# ==================== GPT-4o LaTeX ====================
+
+def call_gpt4o_latex(text, api_key, api_url):
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    prompt = (
+        "Bạn là AI chuyên chuyển đề Toán tiếng Việt sang LaTeX. "
+        "Hãy chuyển toàn bộ nội dung dưới đây thành mã LaTeX thuần túy, chuẩn chỉnh để chép vào Word hoặc Overleaf. "
+        "Không thêm lời giải thích, chỉ trả về mã LaTeX. "
+        "Các biểu thức toán, ký hiệu, cụm như AB, AC, BC, S, x^2, a=10,... đều phải được bọc đúng LaTeX ($...$), các ký hiệu hình học như \\perp, \\parallel, \\angle, ... giữ nguyên LaTeX. "
+        "Với bảng/phương án trắc nghiệm, trình bày đúng cấu trúc. "
+        "Nếu có xuống dòng giữa các ý, giữ nguyên. Không dịch nghĩa."
+    )
+    payload = {
+        "model": "gpt-4o",
+        "messages": [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": text}
+        ],
+        "temperature": 0.2
+    }
+    resp = requests.post(api_url, headers=headers, json=payload, timeout=60)
+    resp.raise_for_status()
+    data = resp.json()
+    # Tùy format API, thử 2 kiểu phổ biến
+    if "choices" in data and data["choices"]:
+        return data["choices"][0]["message"]["content"]
+    if "result" in data:
+        return data["result"]
+    return ""
+
+# ==================== Tách ảnh minh họa ====================
+
+def extract_figures_from_pdf(pdf_bytes):
+    images = []
+    pdf_pages = convert_from_bytes(pdf_bytes)
+    for i, im in enumerate(pdf_pages):
+        buf = BytesIO()
+        im.save(buf, format="JPEG")
+        page_bytes = buf.getvalue()
+        figs = extract_figures_from_image(page_bytes, min_area=1200, max_figures=8)
+        for fig in figs:
+            fig['name'] = f"page-{i+1}-{fig['name']}"
+        images.extend(figs)
+    return images
+
+def extract_figures_from_uploaded_image(img_file):
+    img = Image.open(img_file)
+    buf = BytesIO()
+    img.save(buf, format=img.format if img.format else "PNG")
+    img_bytes = buf.getvalue()
+    figs = extract_figures_from_image(img_bytes, min_area=1200, max_figures=8)
+    for fig in figs:
+        fig['name'] = f"img-{fig['name']}"
+    return figs
 
 def convert_file_to_base64(file, mime_type):
     if mime_type.startswith("image/"):
@@ -53,29 +102,6 @@ def ocr_api(file_name, mime_type, base64_str):
     except Exception as e:
         return {"success": False, "error": str(e), "data": {}}
 
-def extract_figures_from_pdf(pdf_bytes):
-    images = []
-    pdf_pages = convert_from_bytes(pdf_bytes)
-    for i, im in enumerate(pdf_pages):
-        buf = BytesIO()
-        im.save(buf, format="JPEG")
-        page_bytes = buf.getvalue()
-        figs = extract_figures_from_image(page_bytes, min_area=1200, max_figures=8)
-        for fig in figs:
-            fig['name'] = f"page-{i+1}-{fig['name']}"
-        images.extend(figs)
-    return images
-
-def extract_figures_from_uploaded_image(img_file):
-    img = Image.open(img_file)
-    buf = BytesIO()
-    img.save(buf, format=img.format if img.format else "PNG")
-    img_bytes = buf.getvalue()
-    figs = extract_figures_from_image(img_bytes, min_area=1200, max_figures=8)
-    for fig in figs:
-        fig['name'] = f"img-{fig['name']}"
-    return figs
-
 def save_to_word(text, figures, file_name):
     doc = Document()
     doc.add_paragraph(text)
@@ -106,41 +132,6 @@ def save_to_latex(text, figures, file_name):
     latex_code = "\n\n".join(content)
     return latex_code
 
-def clean_latex(text):
-    text = re.sub(r'//', r'\\parallel ', text)
-    text = re.sub(r"\^'|'\^", r'^{\\prime}', text)
-    text = re.sub(r"\^\\prime|\^{\\prime}", r'^{\\prime}', text)
-    text = re.sub(r'90\^(\{?circ\}?)', r'90^{\\circ}', text)
-    text = re.sub(r"\$(\s*)\$", '', text)
-    text = re.sub(r'\{(\${.*?}\$)\}', r'\1', text)
-    return text
-
-def format_math_expr(text):
-    lines = text.split('\n')
-    out_lines = []
-    for line in lines:
-        # Nếu là dòng ý trắc nghiệm: "A. ..." hoặc "B) ..." hoặc "C. ..."
-        m = re.match(r'^([ABCD])[\.\)]\s*(.*)', line.strip())
-        if m:
-            prefix, content = m.groups()
-            content = wrap_math_in_line(content)
-            out_lines.append(f"{prefix}. {content}")
-        else:
-            out_lines.append(wrap_math_in_line(line))
-    return "\n".join(out_lines)
-
-def wrap_math_in_line(line):
-    # Chỉ bọc biến/công thức, không bọc từ tiếng Việt
-    def wrap(match):
-        expr = match.group(0)
-        # Không bọc từ tiếng Việt nhiều hơn 1 ký tự, hoặc chữ thường >=2
-        if expr.lower() in VIET_WORDS or re.match(r"^[a-zA-ZÀ-ỹà-ỹ]{2,}$", expr):
-            return expr
-        return f"${expr}$"
-    # Nhận diện biến toán, số, công thức (không bọc từ/cụm tiếng Việt)
-    pattern = r'\b(?:[A-Z]{1,3}|[A-Z][A-Z0-9]{1,3}|a|b|c|d|x|y|z|n|m|i|j|k|l|A|B|C|D|O|M|N|S|a|b|c|d)(?:_{[0-9]+}|\^{\\prime})?([ ]*[=+\-*/^][ ]*[0-9A-Za-z]+)?\b'
-    return re.sub(pattern, wrap, line)
-
 tab1, tab2 = st.tabs(["📄 OCR PDF", "🖼️ OCR Image"])
 
 with tab1:
@@ -166,9 +157,17 @@ with tab1:
                 st.success("✅ Xử lý thành công!")
                 text_content = result["data"].get("text_content", "")
                 st.subheader("📝 Văn bản OCR:")
-                clean_text = clean_latex(text_content)
-                math_text = format_math_expr(clean_text)
-                st.text_area("Kết quả OCR:", math_text, height=300)
+                st.text_area("Kết quả OCR:", text_content, height=300)
+
+                # Nút chuyển LaTeX bằng GPT-4o
+                if st.button("✨ Chuyển sang LaTeX bằng GPT-4o", use_container_width=True):
+                    with st.spinner("Đang chuyển sang LaTeX bằng GPT-4o..."):
+                        try:
+                            latex = call_gpt4o_latex(text_content, API_KEY, API_URL)
+                            st.text_area("Kết quả LaTeX (GPT-4o):", latex, height=300)
+                            st.download_button("Tải file LaTeX", latex, file_name="ket_qua_ocr_gpt4o.tex", mime="text/plain", use_container_width=True)
+                        except Exception as e:
+                            st.error(f"Lỗi khi gọi GPT-4o: {str(e)}")
 
                 st.subheader("🖼️ Hình minh họa từ PDF (tách tự động):")
                 figures = extract_figures_from_pdf(file_bytes)
@@ -187,10 +186,10 @@ with tab1:
                     export_figures = []
 
                 if st.button("⬇️ Xuất file Word", use_container_width=True):
-                    word_bytes = save_to_word(math_text, export_figures, "ket_qua_ocr.docx")
+                    word_bytes = save_to_word(text_content, export_figures, "ket_qua_ocr.docx")
                     st.download_button("Tải file Word", word_bytes, file_name="ket_qua_ocr.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
                 if st.button("⬇️ Xuất file LaTeX", use_container_width=True):
-                    latex_code = save_to_latex(math_text, export_figures, "ket_qua_ocr.tex")
+                    latex_code = save_to_latex(text_content, export_figures, "ket_qua_ocr.tex")
                     st.download_button("Tải file LaTeX", latex_code, file_name="ket_qua_ocr.tex", mime="text/plain", use_container_width=True)
             else:
                 st.error("❌ Lỗi: " + result.get("error", "Không rõ nguyên nhân"))
@@ -208,9 +207,16 @@ with tab2:
                 st.success("✅ Xử lý thành công!")
                 text_content = result["data"].get("text_content", "")
                 st.subheader("📝 Văn bản OCR:")
-                clean_text = clean_latex(text_content)
-                math_text = format_math_expr(clean_text)
-                st.text_area("Kết quả OCR:", math_text, height=300)
+                st.text_area("Kết quả OCR:", text_content, height=300)
+
+                if st.button("✨ Chuyển sang LaTeX bằng GPT-4o", key="gpt4o_img", use_container_width=True):
+                    with st.spinner("Đang chuyển sang LaTeX bằng GPT-4o..."):
+                        try:
+                            latex = call_gpt4o_latex(text_content, API_KEY, API_URL)
+                            st.text_area("Kết quả LaTeX (GPT-4o):", latex, height=300)
+                            st.download_button("Tải file LaTeX", latex, file_name="ket_qua_ocr_gpt4o.tex", mime="text/plain", use_container_width=True)
+                        except Exception as e:
+                            st.error(f"Lỗi khi gọi GPT-4o: {str(e)}")
 
                 st.subheader("🖼️ Các vùng ảnh tách được (tách tự động):")
                 figures = extract_figures_from_uploaded_image(uploaded_img)
@@ -229,12 +235,12 @@ with tab2:
                     export_figures = []
 
                 if st.button("⬇️ Xuất file Word", key="word_img", use_container_width=True):
-                    word_bytes = save_to_word(math_text, export_figures, "ket_qua_ocr.docx")
+                    word_bytes = save_to_word(text_content, export_figures, "ket_qua_ocr.docx")
                     st.download_button("Tải file Word", word_bytes, file_name="ket_qua_ocr.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
                 if st.button("⬇️ Xuất file LaTeX", key="latex_img", use_container_width=True):
-                    latex_code = save_to_latex(math_text, export_figures, "ket_qua_ocr.tex")
+                    latex_code = save_to_latex(text_content, export_figures, "ket_qua_ocr.tex")
                     st.download_button("Tải file LaTeX", latex_code, file_name="ket_qua_ocr.tex", mime="text/plain", use_container_width=True)
             else:
                 st.error("❌ Lỗi: " + result.get("error", "Không rõ nguyên nhân"))
 
-st.caption("© 2025 - Smart OCR Math, xuất chuẩn Word/LaTeX, tách ảnh minh họa tự động cho PDF và ảnh")
+st.caption("© 2025 - Smart OCR Math + GPT-4o LaTeX, tách ảnh minh họa tự động cho PDF và ảnh")
