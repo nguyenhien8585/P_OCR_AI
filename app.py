@@ -13,9 +13,10 @@ from extract_figures_from_image_pillow import extract_figures_from_image
 
 st.set_page_config(page_title="OCR PDF/Ảnh ➔ LaTeX + Word minh hoạ", layout="centered")
 
-# ==== Hàm gọi OCR ====
+# ==== Hàm gọi OCR SmartOCR chuẩn ====
 def ocr_api(file_name, mime_type, base64_str):
     payload = {
+        "endpoint": "convert",    # BẮT BUỘC phải có cho SmartOCR
         "apiKey": OCR_API_KEY,
         "file_name": file_name,
         "mime_type": mime_type,
