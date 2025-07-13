@@ -77,7 +77,11 @@ def gemini_caption_image(image_bytes, api_key):
     }
     headers = {"Content-Type": "application/json"}
     r = requests.post(f"{api_url}?key={api_key}", json=payload, headers=headers, timeout=40)
-    r.raise_for_status()
+    try:
+        r.raise_for_status()
+    except requests.HTTPError as e:
+        st.error(f"Lỗi Gemini caption: {e}\nResponse: {r.text}")
+        raise e
     res = r.json()
     text = res["candidates"][0]["content"]["parts"][0]["text"]
     return text.strip().lower()
@@ -176,6 +180,7 @@ with tab_pdf:
         with tab1:
             st.markdown("#### 📋 Kết quả OCR PDF:")
             st.text_area("Kết quả OCR PDF:", text_content, height=350, label_visibility="collapsed")
+            st.code(text_content, language="markdown")
             col1, col2 = st.columns(2)
             with col1:
                 st.download_button(
@@ -209,6 +214,13 @@ with tab_pdf:
                     try:
                         img_bytes = base64.b64decode(img["base64"])
                         st.image(img_bytes, caption=img["name"], use_container_width=True)
+                        st.download_button(
+                            f"Tải {img['name']}",
+                            img_bytes,
+                            file_name=img["name"],
+                            mime="image/jpeg",
+                            use_container_width=True
+                        )
                     except Exception as e:
                         st.error(f"Không đọc được ảnh {img['name']}: {e}")
             else:
@@ -218,7 +230,7 @@ with tab_pdf:
 
 # =========== TAB ẢNH ===========
 with tab_img:
-    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, phân loại, mapping chuẩn markdown) → Markdown/Text/Word")
+    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, mapping chuẩn, cho phép tải/copy) → Markdown/Text/Word")
     uploaded_images = st.file_uploader(
         "Chọn nhiều ảnh (mỗi ảnh là một trang):",
         type=["png", "jpg", "jpeg", "webp"],
@@ -267,14 +279,37 @@ with tab_img:
                 mime="text/markdown",
                 use_container_width=True,
             )
+            if st.button("📝 Tạo và tải file Word giữ minh hoạ đúng vị trí", use_container_width=True):
+                with st.spinner("Đang tạo file Word..."):
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
+                        insert_images_to_word_from_markdown(full_markdown, all_figures, tmp_word.name)
+                    with open(tmp_word.name, "rb") as f:
+                        word_data = f.read()
+                    st.success("✅ Đã tạo file Word thành công!")
+                    st.download_button(
+                        "⬇️ Tải về file Word",
+                        word_data,
+                        file_name="ket_qua_anh_toan.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True
+                    )
+                    os.remove(tmp_word.name)
         with tab2:
-            st.markdown("### 🖼️ Tất cả minh hoạ đã tách (kèm caption):")
+            st.markdown("### 🖼️ Tất cả minh hoạ đã tách (kèm caption, cho tải ảnh):")
             for fig in all_figures:
-                st.image(base64.b64decode(fig["base64"]), caption=f"{fig['name']} - {fig['caption']}", width=250)
+                img_bytes = base64.b64decode(fig["base64"])
+                st.image(img_bytes, caption=f"{fig['name']} - {fig['caption']}", width=250)
+                st.download_button(
+                    f"Tải {fig['name']}",
+                    img_bytes,
+                    file_name=fig["name"],
+                    mime="image/jpeg",
+                    use_container_width=True
+                )
     else:
         with tab1:
             st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
         with tab2:
             st.info("Chưa có ảnh nào để xem.")
 
-st.caption("✨ Văn bản chuẩn Markdown, mapping ảnh không dư/lặp, có thể copy/tải về. Tách minh hoạ và caption từng ảnh hoàn toàn tự động.")
+st.caption("✨ Văn bản chuẩn Markdown, mapping ảnh không dư/lặp, cho phép copy/tải về. Tách minh hoạ và caption từng ảnh hoàn toàn tự động. Xuất Word minh hoạ đúng vị trí!")
