@@ -83,7 +83,6 @@ def gemini_caption_image(image_bytes, api_key):
     text = res["candidates"][0]["content"]["parts"][0]["text"]
     return text.strip().lower()
 
-# ==== Hàm mapping chuẩn: mỗi hình chỉ chèn đúng một lần, không lặp, không dư ====
 def insert_figures_no_duplicate(text, figures):
     lines = text.split('\n')
     n = len(figures)
@@ -93,7 +92,6 @@ def insert_figures_no_duplicate(text, figures):
     for idx, fig in enumerate(figures):
         inserted = False
         for i, line in enumerate(lines):
-            # Điều kiện chèn đúng loại hình cho đúng dòng mô tả
             if not inserted and not any(p[0]==i for p in positions):  # dòng này chưa có hình nào
                 if 'bảng biến thiên' in fig['caption'] and 'bảng biến thiên' in line.lower():
                     positions.append((i, idx))
@@ -121,6 +119,10 @@ def insert_figures_no_duplicate(text, figures):
             new_lines.append(f"![Hình minh hoạ]({figures[idx]['name']})")
             fig_used[idx] = True
     return '\n'.join(new_lines)
+
+def remove_all_figure_markdown(text):
+    # Xóa mọi dòng markdown ảnh ![Hình minh hoạ]...
+    return re.sub(r'!\[Hình minh hoạ\]\([^)]+\)\s*', '', text)
 
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="centered")
 st.title("✨ Chuyển PDF & Ảnh Toán sang Word, giữ công thức & minh hoạ ✨")
@@ -230,7 +232,7 @@ with tab_img:
         all_figures = []
         for i, img_file in enumerate(uploaded_images):
             img_bytes = img_file.read()
-            figures = extract_figures_from_image(img_bytes)  # [{name, base64}]
+            figures = extract_figures_from_image(img_bytes)
             figures_with_caption = []
             for fig in figures:
                 api_key = get_next_api_key()
@@ -245,7 +247,9 @@ with tab_img:
                     text = gemini_generate_text(img_bytes, api_key)
                 except Exception as e:
                     text = f"[Lỗi Gemini: {e}]"
-            # Chèn từng hình đúng câu hỏi (mapping caption, không lặp/dư)
+            # Xóa mọi markdown hình Gemini đã sinh ra (nếu có)
+            text = remove_all_figure_markdown(text)
+            # Chèn từng hình đúng vị trí (không lặp/dư)
             if figures_with_caption:
                 text = insert_figures_no_duplicate(text, figures_with_caption)
             latex_results.append((img_file.name, text, figures_with_caption))
