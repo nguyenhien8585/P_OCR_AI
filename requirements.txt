@@ -5,3 +5,4 @@ PyPDF2
 numpy
 scipy
 pdf2image
+pix2tex
