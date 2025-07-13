@@ -6,11 +6,12 @@ import tempfile
 from PIL import Image
 from io import BytesIO
 from docx import Document
-
-# Lấy cấu hình API từ file app_config.py
 from app_config import API_URL, API_KEY
 
-st.set_page_config(page_title="Smart OCR PDF/Image", layout="centered")
+from pdf2image import convert_from_bytes
+from extract_figures_from_image_pillow import extract_figures_from_image
+
+st.set_page_config(page_title="Smart OCR PDF & Image", layout="centered")
 
 def convert_file_to_base64(file, mime_type):
     if mime_type.startswith("image/"):
@@ -42,9 +43,37 @@ def ocr_api(file_name, mime_type, base64_str):
     except Exception as e:
         return {"success": False, "error": str(e), "data": {}}
 
-def save_to_word(text, file_name):
+def extract_figures_from_pdf(pdf_bytes):
+    images = []
+    pdf_pages = convert_from_bytes(pdf_bytes)
+    for i, im in enumerate(pdf_pages):
+        buf = BytesIO()
+        im.save(buf, format="JPEG")
+        page_bytes = buf.getvalue()
+        figs = extract_figures_from_image(page_bytes, min_area=1200, max_figures=8)
+        for fig in figs:
+            fig['name'] = f"page-{i+1}-{fig['name']}"
+        images.extend(figs)
+    return images
+
+def extract_figures_from_uploaded_image(img_file):
+    img = Image.open(img_file)
+    buf = BytesIO()
+    img.save(buf, format=img.format if img.format else "PNG")
+    img_bytes = buf.getvalue()
+    figs = extract_figures_from_image(img_bytes, min_area=1200, max_figures=8)
+    for fig in figs:
+        fig['name'] = f"img-{fig['name']}"
+    return figs
+
+def save_to_word(text, figures, file_name):
     doc = Document()
     doc.add_paragraph(text)
+    for fig in figures:
+        img_bytes = base64.b64decode(fig["base64"])
+        img_stream = BytesIO(img_bytes)
+        doc.add_picture(img_stream, width=None)
+        doc.add_paragraph(fig["name"])
     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
         doc.save(tmp.name)
         tmp.seek(0)
@@ -52,29 +81,85 @@ def save_to_word(text, file_name):
     os.remove(tmp.name)
     return data
 
+def save_to_latex(text, figures, file_name):
+    content = []
+    content.append("\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}")
+    content.append(text)
+    for fig in figures:
+        fname = fig["name"] + ".png"
+        img_bytes = base64.b64decode(fig["base64"])
+        img_path = os.path.join(tempfile.gettempdir(), fname)
+        with open(img_path, "wb") as f:
+            f.write(img_bytes)
+        content.append(f"\\begin{{figure}}[h]\n\\centering\n\\includegraphics[width=0.8\\textwidth]{{{fname}}}\n\\caption{{{fig['name']}}}\n\\end{{figure}}")
+    content.append("\\end{document}")
+    latex_code = "\n\n".join(content)
+    return latex_code
+
+import re
+def format_math_expr(text):
+    def wrap(match):
+        expr = match.group(0)
+        if len(expr) >= 3:
+            return "${" + expr + "}$"
+        else:
+            return expr
+    pattern = r'([a-zA-Z0-9\^_+=\-*/]+)'
+    return re.sub(pattern, wrap, text)
+
 tab1, tab2 = st.tabs(["📄 OCR PDF", "🖼️ OCR Image"])
 
-# --- TAB 1: PDF ---
 with tab1:
     st.header("📄 OCR cho file PDF")
     uploaded_pdf = st.file_uploader("Chọn file PDF để OCR", type=["pdf"])
     if uploaded_pdf:
+        file_bytes = uploaded_pdf.read()
         st.info(f"**Tên file:** {uploaded_pdf.name}")
+        st.info(f"**Loại file:** application/pdf")
+        st.info(f"**Kích thước:** {round(len(file_bytes)/1024,1)} KB")
+        try:
+            from PyPDF2 import PdfReader
+            reader = PdfReader(BytesIO(file_bytes))
+            st.info(f"**Số trang:** {len(reader.pages)}")
+        except:
+            st.info("**Số trang:** ?")
+
         if st.button("🚀 Xử lý OCR PDF", use_container_width=True):
             with st.spinner("Đang gửi file lên Smart OCR..."):
-                base64_str, _ = convert_file_to_base64(uploaded_pdf, "application/pdf")
+                base64_str = base64.b64encode(file_bytes).decode()
                 result = ocr_api(uploaded_pdf.name, "application/pdf", base64_str)
             if result.get("success"):
                 st.success("✅ Xử lý thành công!")
                 text_content = result["data"].get("text_content", "")
-                st.text_area("Kết quả OCR:", text_content, height=300)
-                if st.button("⬇️ Tải về file Word", use_container_width=True):
-                    word_bytes = save_to_word(text_content, "ket_qua_ocr.docx")
+                st.subheader("📝 Văn bản OCR:")
+                math_text = format_math_expr(text_content)
+                st.text_area("Kết quả OCR:", math_text, height=300)
+
+                st.subheader("🖼️ Hình minh họa từ PDF:")
+                figures = extract_figures_from_pdf(file_bytes)
+                if figures:
+                    cols = st.columns(2)
+                    selected_names = []
+                    for i, fig in enumerate(figures):
+                        with cols[i % 2]:
+                            checked = st.checkbox(f"{fig['name']}", value=True, key=f"fig_check_pdf_{i}")
+                            st.image(base64.b64decode(fig["base64"]), caption=fig["name"], use_container_width=True)
+                            if checked:
+                                selected_names.append(fig["name"])
+                    export_figures = [fig for fig in figures if fig["name"] in selected_names]
+                else:
+                    st.info("Không phát hiện hình minh họa.")
+                    export_figures = []
+
+                if st.button("⬇️ Xuất file Word", use_container_width=True):
+                    word_bytes = save_to_word(math_text, export_figures, "ket_qua_ocr.docx")
                     st.download_button("Tải file Word", word_bytes, file_name="ket_qua_ocr.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+                if st.button("⬇️ Xuất file LaTeX", use_container_width=True):
+                    latex_code = save_to_latex(math_text, export_figures, "ket_qua_ocr.tex")
+                    st.download_button("Tải file LaTeX", latex_code, file_name="ket_qua_ocr.tex", mime="text/plain", use_container_width=True)
             else:
                 st.error("❌ Lỗi: " + result.get("error", "Không rõ nguyên nhân"))
 
-# --- TAB 2: ẢNH ---
 with tab2:
     st.header("🖼️ OCR cho ảnh (PNG/JPG)")
     uploaded_img = st.file_uploader("Chọn ảnh để OCR", type=["png", "jpg", "jpeg"])
@@ -82,16 +167,38 @@ with tab2:
         st.image(uploaded_img, caption="Ảnh đã chọn", use_column_width=True)
         if st.button("🚀 Xử lý OCR ảnh", use_container_width=True):
             with st.spinner("Đang gửi ảnh lên Smart OCR..."):
-                base64_str, _ = convert_file_to_base64(uploaded_img, "image/png")
+                base64_str, img_bytes = convert_file_to_base64(uploaded_img, "image/png")
                 result = ocr_api(uploaded_img.name, "image/png", base64_str)
             if result.get("success"):
                 st.success("✅ Xử lý thành công!")
                 text_content = result["data"].get("text_content", "")
-                st.text_area("Kết quả OCR:", text_content, height=300)
-                if st.button("⬇️ Tải về file Word", key="wordimg", use_container_width=True):
-                    word_bytes = save_to_word(text_content, "ket_qua_ocr.docx")
+                st.subheader("📝 Văn bản OCR:")
+                math_text = format_math_expr(text_content)
+                st.text_area("Kết quả OCR:", math_text, height=300)
+
+                st.subheader("🖼️ Hình cắt từ ảnh gốc:")
+                figures = extract_figures_from_uploaded_image(uploaded_img)
+                if figures:
+                    cols = st.columns(2)
+                    selected_names = []
+                    for i, fig in enumerate(figures):
+                        with cols[i % 2]:
+                            checked = st.checkbox(f"{fig['name']}", value=True, key=f"fig_check_img_{i}")
+                            st.image(base64.b64decode(fig["base64"]), caption=fig["name"], use_container_width=True)
+                            if checked:
+                                selected_names.append(fig["name"])
+                    export_figures = [fig for fig in figures if fig["name"] in selected_names]
+                else:
+                    st.info("Không phát hiện vùng ảnh minh họa.")
+                    export_figures = []
+
+                if st.button("⬇️ Xuất file Word", key="word_img", use_container_width=True):
+                    word_bytes = save_to_word(math_text, export_figures, "ket_qua_ocr.docx")
                     st.download_button("Tải file Word", word_bytes, file_name="ket_qua_ocr.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+                if st.button("⬇️ Xuất file LaTeX", key="latex_img", use_container_width=True):
+                    latex_code = save_to_latex(math_text, export_figures, "ket_qua_ocr.tex")
+                    st.download_button("Tải file LaTeX", latex_code, file_name="ket_qua_ocr.tex", mime="text/plain", use_container_width=True)
             else:
                 st.error("❌ Lỗi: " + result.get("error", "Không rõ nguyên nhân"))
 
-st.caption("© 2025 - Smart OCR (Apps Script API) - Python + Streamlit")
+st.caption("© 2025 - Smart OCR Math, xuất chuẩn Word/LaTeX, tự động tách ảnh minh họa")
