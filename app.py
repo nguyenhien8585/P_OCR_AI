@@ -7,49 +7,48 @@ import itertools
 import os
 from PIL import Image
 from io import BytesIO
+import numpy as np
+import cv2
 from config import API_URL, API_KEY
 from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 from PyPDF2 import PdfReader
 
-# ==== Prompt Gemini ====
-GEMINI_PROMPT = '''
-YÊU CẦU:
-1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh
-2. Giữ nguyên cấu trúc đoạn văn và xuống dòng
-3. Với công thức toán học: gõ lại chính xác, tất cả công thức Toán dưới dạng ${...}$
-   - Inline: ${x^2 + 2x + 1}$
-   - Hệ: $\begin{cases} ... \end{cases}$
-   - Ký hiệu: các từ đặt tên cho tên bằng chữ A,B,C... hoặc các cụm từ AB, CD, Oxyz,... hoặc các số 1,2,3,..., tỉ lệ phần trăm 1%,0.1% , 0,1%,.... ví dụ ${Oxyz}$, ${A}$, ${AB}$, ${0{,}1\%}$, ${CD}$, ${1}$,${Oxyz}$, ${S.ABCD}$.....
-4. Với bảng biểu: dùng markdown nếu có thể
-5. Dạng bài:
-   - Trắc nghiệm:
-     Câu X: Nội dung
-     A. Đáp án A
-     B. Đáp án B
-     C. Đáp án C
-     D. Đáp án D
-   - Đúng/Sai: a), b), c)...
-   - Tự luận: Câu X: ... (Lời giải...)
-
-✅ Gợi ý thêm:
-- Nếu ảnh dài hoặc nhiều trang, chia nhỏ xử lý từng ảnh để tránh thiếu trang.
-- Khi lưu kết quả, nên xuất file Word định dạng .docx để hiển thị tiếng Việt chuẩn và hỗ trợ tốt Unicode.
-'''
-
-# ======== NHẬP NHIỀU KEY TRONG CODE ========
+# =========== GEMINI KEY LIST ===========
 GEMINI_API_KEYS = [
-  "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
-  "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
-  "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
-  "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
-  "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
-  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I",
+    "AIzaSyAAA111111111111111111111111",
+    "AIzaSyBBB222222222222222222222222"
 ]
 api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
     return next(api_key_cycle)
+
+# =========== PROMPT ==============
+GEMINI_PROMPT = '''
+YÊU CẦU:
+1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh.
+2. Nếu phát hiện hình minh hoạ (hình vẽ, đồ thị, bảng, ...), đánh dấu đúng vị trí bằng cú pháp markdown: ![Hình minh hoạ](subimg-x.jpeg) với x là số thứ tự hình minh hoạ bạn phát hiện trên ảnh này (bắt đầu từ 0).
+3. Giữ nguyên cấu trúc đoạn văn và xuống dòng.
+4. Công thức toán học: tất cả ở dạng ${...}$ (inline, hệ, ký hiệu ... như hướng dẫn chi tiết).
+5. Bảng biểu: dùng markdown nếu có thể.
+6. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
+'''
+
+# =========== HÀM TÁCH ẢNH MINH HOẠ ==========
+def extract_sub_images(pil_img, min_area=3000):
+    img = np.array(pil_img.convert("L"))
+    _, thresh = cv2.threshold(img, 180, 255, cv2.THRESH_BINARY_INV)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    sub_images = []
+    for i, cnt in enumerate(contours):
+        x, y, w, h = cv2.boundingRect(cnt)
+        if w * h > min_area:
+            crop = pil_img.crop((x, y, x + w, y + h))
+            buf = BytesIO()
+            crop.save(buf, format="JPEG")
+            sub_images.append({"name": f"subimg-{i}.jpeg", "base64": base64.b64encode(buf.getvalue()).decode()})
+    return sub_images
 
 def gemini_generate_text(image_bytes, api_key):
     api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
@@ -73,16 +72,14 @@ def gemini_generate_text(image_bytes, api_key):
     text = res["candidates"][0]["content"]["parts"][0]["text"]
     return text
 
-# ============= GIAO DIỆN APP =============
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="centered")
-st.title("✨ Chuyển PDF & Ảnh Toán sang Word, giữ công thức và minh hoạ ✨")
-st.caption("👨‍💻 by CGPT – OCR PDF, sinh tài liệu toán chuẩn từ ảnh, xuất Word Unicode.")
+st.title("✨ Chuyển PDF & Ảnh Toán sang Word, giữ công thức, ảnh minh hoạ ✨")
 
-tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Word + LaTeX"])
+tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Word + Minh hoạ"])
 
 # =========== TAB PDF ===========
 with tab_pdf:
-    st.markdown("#### 📝 OCR cho file PDF, giữ công thức và ảnh minh hoạ")
+    st.markdown("#### 📝 OCR PDF Toán, giữ công thức, ảnh minh hoạ")
     uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"], label_visibility="collapsed")
     num_pages = None
     if uploaded_file:
@@ -173,59 +170,75 @@ with tab_pdf:
 
 # =========== TAB ẢNH ===========
 with tab_img:
-    st.markdown("#### 🖼️ Chuyển ảnh Toán sang Word, giữ LaTeX và ảnh minh hoạ")
-    uploaded_images = st.file_uploader("Chọn ảnh (PNG/JPEG)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+    st.markdown("#### 🖼️ Tách minh hoạ từ ảnh, sinh văn bản, xuất Word đúng vị trí ảnh minh hoạ")
+    uploaded_images = st.file_uploader(
+        "Chọn hình ảnh để xử lý OCR",
+        type=["png", "jpg", "jpeg", "webp"],
+        accept_multiple_files=True,
+        help="Drag & drop hoặc chọn nhiều ảnh. Mỗi ảnh là 1 trang, hệ thống sẽ tách minh hoạ tự động."
+    )
     if uploaded_images:
-        latex_results = []
-        images_data = []
-        st.info("⏳ Đang sinh văn bản từng ảnh bằng Gemini...")
-        for i, img_file in enumerate(uploaded_images):
+        tab1, tab2 = st.tabs(["📋 Văn bản", "🖼️ Hình minh hoạ"])
+        all_subimgs = []
+        markdown_results = []
+        for idx, img_file in enumerate(uploaded_images):
             img_bytes = img_file.read()
-            try:
-                api_key = get_next_api_key()
-                text = gemini_generate_text(img_bytes, api_key)
-            except Exception as e:
-                text = f"[Lỗi khi sinh văn bản: {e}]"
-            latex_results.append((img_file.name, text))
-            # Chuẩn hóa ảnh (JPEG, base64) để chèn Word
             pil_img = Image.open(BytesIO(img_bytes)).convert("RGB")
-            buf = BytesIO()
-            pil_img.save(buf, format="JPEG")
-            img_b64 = base64.b64encode(buf.getvalue()).decode()
-            images_data.append({"name": f"img-{i}.jpeg", "base64": img_b64})
-        # HIỂN THỊ TÁCH RIÊNG: mỗi ảnh - mỗi kết quả
-        for idx, (img_name, latex) in enumerate(latex_results):
-            with st.container():
-                st.markdown(f"**Ảnh minh hoạ {idx+1}:**")
-                st.image(uploaded_images[idx], caption=img_name, width=350)
-                st.markdown("**Kết quả văn bản sinh bởi Gemini:**")
-                for line in latex.split("\n"):
-                    line = line.strip()
-                    if line.startswith("$") and line.endswith("$"):
-                        try:
-                            st.latex(line[1:-1])
-                        except:
-                            st.write(line)
+            api_key = get_next_api_key()
+            with st.spinner(f"Đang nhận diện trang {idx+1}..."):
+                subimgs = extract_sub_images(pil_img)
+                all_subimgs.extend(subimgs)
+                try:
+                    text = gemini_generate_text(img_bytes, api_key)
+                except Exception as e:
+                    text = f"[Lỗi Gemini: {e}]"
+                markdown_results.append((text, subimgs))
+
+        # Tab văn bản: preview từng trang (ảnh), có markdown ảnh minh hoạ
+        with tab1:
+            st.markdown("### 📋 Kết quả OCR Image:")
+            for idx, (text, subimgs) in enumerate(markdown_results):
+                st.markdown(f"#### Trang {idx+1}:")
+                parts = re.split(r"(!\[Hình minh hoạ\]\(subimg-\d+\.jpeg\))", text)
+                for part in parts:
+                    img_match = re.match(r"!\[Hình minh hoạ\]\((subimg-(\d+)\.jpeg)\)", part)
+                    if img_match:
+                        imgname = img_match.group(1)
+                        found = next((img for img in subimgs if img["name"] == imgname), None)
+                        if found:
+                            st.image(base64.b64decode(found["base64"]), caption=imgname, width=340)
+                        else:
+                            st.warning(f"Không tìm thấy ảnh {imgname}")
                     else:
-                        st.write(line)
-        # XUẤT WORD: mỗi ảnh - mỗi đoạn, sau đó đến ảnh minh hoạ
-        markdown_out = ""
-        for idx, (img_name, latex) in enumerate(latex_results):
-            markdown_out += f"{latex}\n\n![Hình minh hoạ](img-{idx}.jpeg)\n\n"
-        if st.button("📝 Tạo và tải file Word từ ảnh + văn bản", use_container_width=True):
+                        st.markdown(part)
+        # Tab hình minh hoạ: preview toàn bộ ảnh nhỏ đã tách
+        with tab2:
+            st.markdown(f"### 🖼️ Đã tách {len(all_subimgs)} hình minh hoạ từ {len(uploaded_images)} ảnh:")
+            for img in all_subimgs:
+                st.image(base64.b64decode(img["base64"]), caption=img["name"], width=260)
+
+        # Tạo file Word giữ đúng vị trí ảnh minh hoạ
+        all_markdown = ""
+        all_images = []
+        for idx, (text, subimgs) in enumerate(markdown_results):
+            all_markdown += f"### Trang {idx+1}\n{text}\n\n"
+            all_images.extend(subimgs)
+        if st.button("📝 Tạo và tải file Word giữ ảnh minh hoạ", use_container_width=True):
             with st.spinner("Đang tạo file Word..."):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                    insert_images_to_word_from_markdown(markdown_out, images_data, tmp_word.name)
+                    insert_images_to_word_from_markdown(all_markdown, all_images, tmp_word.name)
                 with open(tmp_word.name, "rb") as f:
                     word_data = f.read()
                 st.success("✅ Đã tạo file Word thành công!")
                 st.download_button(
                     "⬇️ Tải về file Word",
                     word_data,
-                    file_name="ket_qua_anh_latex.docx",
+                    file_name="ket_qua_anh_toan.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     use_container_width=True
                 )
                 os.remove(tmp_word.name)
-    st.markdown("---")
-    st.caption("📷 Mỗi ảnh thành một mục riêng, kết quả tách biệt. Word giữ đúng minh hoạ và công thức.")
+    else:
+        st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
+
+st.caption("✨ Kết quả Word luôn giữ vị trí ảnh minh hoạ, công thức toán học chuẩn LaTeX, chuẩn Unicode.")
