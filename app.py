@@ -153,7 +153,7 @@ if st.session_state.get("ocr_done"):
         st.markdown(
             """
             <small>
-            Ảnh minh hoạ được tự động chèn vào đúng vị trí sau mỗi trang. <br>
+            Ảnh minh hoạ được tự động chèn vào đúng vị trí sau mỗi trang.<br>
             Công thức được chuyển về dạng <b>${...}$</b> trong LaTeX.
             </small>
             """,
