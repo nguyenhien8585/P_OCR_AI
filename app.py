@@ -3,7 +3,7 @@ from app_config import API_URL, API_KEY
 from ocr_client_api import EnhancedSmartOCRClient
 from extract_figures_from_image_pillow import extract_figures_from_image
 from word_export import insert_images_to_word_from_markdown
-from pix2tex_wrapper import recognize_latex_from_images  # MỚI
+from pix2tex_wrapper import recognize_latex_from_images  # Pix2Tex
 import os
 import base64
 import re
@@ -15,19 +15,23 @@ from pdf2image import convert_from_bytes
 
 st.set_page_config(page_title="OCR PDF & Image", layout="centered")
 
-# -------------------- FILTER TOÁN HỌC ----------------------
+# -------------------- TOÁN: FORMAT LaTeX CHUẨN MATH TYPE ----------------------
+def sanitize_latex_expr(expr):
+    return expr.replace('\\_', '_').replace('\\^', '^').replace('\\\\', '\\')
+
 def format_math_ocr(text):
     excluded_keywords = [
         "BỘ GIÁO DỤC VÀ ĐÀO TẠO", "KỲ THI", "ĐỀ THI", "Môn thi", "Họ, tên thí sinh",
         "Số báo danh", "Mã đề", "Trang", "Thời gian làm bài", "PHẦN", "Bảng", "BẢNG"
     ]
+
     def should_exclude(line):
         return any(line.strip().startswith(kw) for kw in excluded_keywords)
 
     def is_choice_line(line):
         return re.match(r"^\s*[ABCD]\.?\)?", line)
 
-    math_pattern = r'(\d+([.,]\d+)?|[a-zA-Z_][a-zA-Z_\d]*|\\?[a-zA-Z]+|\\?\^\{[^}]+\}|\\?\_[^ ]+)'  # nhận diện biến và hàm
+    math_pattern = r'(\d+([.,]\d+)?|[a-zA-Z_][a-zA-Z_\d]*|\\?[a-zA-Z]+|\\?\^\{[^}]+\}|\\?\_[^ ]+)'
 
     lines = text.split("\n")
     output = []
@@ -39,14 +43,14 @@ def format_math_ocr(text):
             m = re.match(r'^(Câu\s*\d+[:：]?)\s*(.*)', l)
             if m:
                 header, rest = m.groups()
-                rest = re.sub(math_pattern, lambda m: f"${{{m.group(0)}}}$", rest)
+                rest = re.sub(math_pattern, lambda m: f"${{{sanitize_latex_expr(m.group(0))}}}$", rest)
                 output.append(f"{header} {rest}".strip())
             else:
-                l = re.sub(math_pattern, lambda m: f"${{{m.group(0)}}}$", l)
+                l = re.sub(math_pattern, lambda m: f"${{{sanitize_latex_expr(m.group(0))}}}$", l)
                 output.append(l)
     return "\n".join(output)
 
-# -------------------- TAB PDF ----------------------------
+# -------------------- GIAO DIỆN ----------------------------
 tab1, tab2 = st.tabs(["📄 OCR PDF", "🖼️ OCR Image"])
 
 with tab1:
@@ -114,7 +118,7 @@ with tab1:
 
             export_figures = [fig for fig in figures if fig["name"] in selected_names]
 
-            # 📌 Thêm xử lý Pix2Tex tại đây:
+            # Nhận diện Pix2Tex
             if st.button("✨ Nhận diện công thức từ hình ảnh (pix2tex)", use_container_width=True):
                 with st.spinner("Đang nhận diện công thức bằng Pix2Tex..."):
                     latex_results = recognize_latex_from_images(export_figures)
