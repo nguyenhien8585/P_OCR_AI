@@ -15,12 +15,12 @@ from PyPDF2 import PdfReader
 
 # =========== GEMINI KEY LIST ===========
 GEMINI_API_KEYS = [
- "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
+   "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
   "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
-  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
+  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I",
 ]
 api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
@@ -154,17 +154,17 @@ with tab_pdf:
 
 # =========== TAB ẢNH ===========
 with tab_img:
-    st.markdown("#### 🖼️ Ảnh (văn bản + ảnh minh hoạ) → Word, giữ vị trí ảnh minh hoạ")
+    st.markdown("#### 🖼️ Ảnh (văn bản + ảnh minh hoạ) → Word, giữ vị trí ảnh minh hoạ, LaTeX dạng copy")
     uploaded_images = st.file_uploader(
-        "Chọn ảnh gốc (ảnh đề thi, ảnh có văn bản hoặc ảnh minh hoạ rời):",
+        "Chọn ảnh gốc (ảnh đề hoặc các ảnh minh hoạ rời, đặt tên img-0.jpeg, img-1.jpeg...)",
         type=["png", "jpg", "jpeg", "webp"],
         accept_multiple_files=True,
-        help="Drag & drop nhiều ảnh. Nếu là ảnh minh hoạ rời, đặt tên img-0.jpeg, img-1.jpeg..."
+        help="Chọn nhiều ảnh. Nếu là ảnh minh hoạ rời, đặt tên img-0.jpeg, img-1.jpeg..."
     )
     if uploaded_images:
         images_data = []
         latex_results = []
-        # Chuẩn hóa ảnh để chèn Word (JPEG, base64), đồng thời lấy tên ảnh để Gemini biết đánh dấu
+        # Chuẩn hóa ảnh để chèn Word (JPEG, base64), lấy tên đúng để markdown
         for i, img_file in enumerate(uploaded_images):
             img_bytes = img_file.read()
             pil_img = Image.open(BytesIO(img_bytes)).convert("RGB")
@@ -173,7 +173,6 @@ with tab_img:
             img_b64 = base64.b64encode(buf.getvalue()).decode()
             name = img_file.name if img_file.name.endswith('.jpeg') else f"img-{i}.jpeg"
             images_data.append({"name": name, "base64": img_b64})
-            # Gửi ảnh lên Gemini sinh văn bản
             api_key = get_next_api_key()
             with st.spinner(f"Đang nhận diện ảnh {i+1}..."):
                 try:
@@ -182,13 +181,12 @@ with tab_img:
                     text = f"[Lỗi Gemini: {e}]"
             latex_results.append((name, text))
 
-        # Tab preview
-        tab1, tab2 = st.tabs(["📋 Văn bản", "🖼️ Hình ảnh minh hoạ"])
+        tab1, tab2 = st.tabs(["📋 Văn bản (copy LaTeX)", "🖼️ Hình ảnh minh hoạ"])
         with tab1:
-            st.markdown("### 📋 Kết quả OCR từng ảnh:")
+            st.markdown("### 📋 Kết quả từng ảnh (LaTeX dạng code):")
             for idx, (img_name, latex) in enumerate(latex_results):
                 st.markdown(f"#### Ảnh {idx+1}: {img_name}")
-                # Hiển thị markdown có thể chứa ![Hình minh hoạ](img-x.jpeg)
+                # Hiển thị markdown, LaTeX để code, ảnh đúng vị trí
                 parts = re.split(r"(!\[Hình minh hoạ\]\(img-\d+\.jpeg\))", latex)
                 for part in parts:
                     img_match = re.match(r"!\[Hình minh hoạ\]\((img-\d+\.jpeg)\)", part)
@@ -200,13 +198,19 @@ with tab_img:
                         else:
                             st.warning(f"Không tìm thấy ảnh {findname}")
                     else:
-                        st.markdown(part)
+                        lines = part.split("\n")
+                        for line in lines:
+                            if re.fullmatch(r"\$\{?.+\}?\$", line.strip()):
+                                st.code(line.strip())
+                            else:
+                                st.markdown(line)
+
         with tab2:
             st.markdown("### 🖼️ Danh sách ảnh đã upload:")
             for img in images_data:
                 st.image(base64.b64decode(img["base64"]), caption=img["name"], width=260)
 
-        # Nút tạo file Word
+        # Xuất Word
         markdown_out = ""
         for idx, (img_name, latex) in enumerate(latex_results):
             markdown_out += f"{latex}\n\n"
@@ -228,4 +232,4 @@ with tab_img:
     else:
         st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
 
-st.caption("✨ Mỗi ảnh là 1 trang, có thể là văn bản hoặc ảnh minh hoạ. Chèn ảnh đúng vị trí khi xuất Word, không cần OpenCV.")
+st.caption("✨ Ảnh minh hoạ upload dạng base64, LaTeX luôn ở chế độ code dễ copy, chèn đúng vị trí khi xuất Word.")
