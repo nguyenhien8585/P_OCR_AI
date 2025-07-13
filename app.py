@@ -1,136 +1,98 @@
 import streamlit as st
-from app_config import API_URL, API_KEY
-from ocr_client_api import EnhancedSmartOCRClient
-from extract_figures_from_image_pillow import extract_figures_from_image
-from word_export import insert_images_to_word_from_markdown
-from pix2tex_wrapper import recognize_latex_from_images  # Pix2Tex
-import os
+import requests
 import base64
-import re
-from PyPDF2 import PdfReader
+import os
 import tempfile
 from PIL import Image
-import io
-from pdf2image import convert_from_bytes
+from io import BytesIO
+from docx import Document
 
-st.set_page_config(page_title="OCR PDF & Image", layout="centered")
+# --- CONFIG ---
+API_URL = 'https://script.google.com/macros/s/AKfycby6GUWKFttjWTDJuQuX5IAeGAzS5tQULLja3SHbSfZIhQyaWVMuxyRNAE-fykxnznkqIw/exec'
+API_KEY = 'sk_k'
 
-# ------------------ FORMAT LATEX CHUẨN CHO MATH TYPE ------------------------
+st.set_page_config(page_title="Smart OCR PDF/Image", layout="centered")
 
-def format_math_ocr(text):
-    excluded_keywords = [
-        "BỘ GIÁO DỤC VÀ ĐÀO TẠO", "KỲ THI", "ĐỀ THI", "Môn thi", "Họ, tên thí sinh",
-        "Số báo danh", "Mã đề", "Trang", "Thời gian làm bài", "PHẦN", "Bảng", "BẢNG"
-    ]
-    def should_exclude(line):
-        return any(line.strip().startswith(kw) for kw in excluded_keywords)
-    def is_choice_line(line):
-        return re.match(r"^\s*[ABCD]\.?\)?", line)
-    # Chỉ bắt biến, công thức (vd: x, x_1, a^2, 2x, 3xy, x^2y^3...), không bắt số đơn lẻ
-    math_pattern = r'([a-zA-Z][a-zA-Z0-9_\^]*|[0-9]+[a-zA-Z][a-zA-Z0-9_\^]*)'
-    def replace_math(m):
-        s = m.group(0)
-        if re.fullmatch(r"\d+", s):  # Số đơn lẻ, không bọc
-            return s
-        return f"${s}$"
-    lines = text.split("\n")
-    output = []
-    for line in lines:
-        l = line.strip()
-        if should_exclude(l) or is_choice_line(l) or l == "":
-            output.append(l)
-        else:
-            m = re.match(r'^(Câu\s*\d+[:：]?)\s*(.*)', l)
-            if m:
-                header, rest = m.groups()
-                rest = re.sub(math_pattern, replace_math, rest)
-                output.append(f"{header} {rest}".strip())
-            else:
-                l = re.sub(math_pattern, replace_math, l)
-                output.append(l)
-    # Sửa các trường hợp còn sót ${...}$ thành $...$
-    result = "\n".join(output)
-    result = re.sub(r"\$\{(.*?)\}\$", r"$\1$", result)
-    result = re.sub(r"\{([^\{\}]+)\}", r"\1", result)
-    return result
+def convert_file_to_base64(file, mime_type):
+    if mime_type.startswith("image/"):
+        image = Image.open(file)
+        buf = BytesIO()
+        image.save(buf, format=image.format if image.format else "PNG")
+        file_bytes = buf.getvalue()
+    else:
+        file_bytes = file.read()
+    return base64.b64encode(file_bytes).decode(), file_bytes
 
-# ------------------------- GIAO DIỆN ------------------------------
+def ocr_api(file_name, mime_type, base64_str):
+    payload = {
+        "endpoint": "convert",
+        "apiKey": API_KEY,
+        "file_data": f"data:{mime_type};base64,{base64_str}",
+        "file_name": file_name,
+        "options": {
+            "language": "auto",
+            "include_page_numbers": True,
+            "output_format": "text"
+        }
+    }
+    try:
+        resp = requests.post(API_URL, json=payload, timeout=120)
+        resp.raise_for_status()
+        result = resp.json()
+        return result
+    except Exception as e:
+        return {"success": False, "error": str(e), "data": {}}
+
+def save_to_word(text, file_name):
+    doc = Document()
+    doc.add_paragraph(text)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
+        doc.save(tmp.name)
+        tmp.seek(0)
+        data = tmp.read()
+    os.remove(tmp.name)
+    return data
+
 tab1, tab2 = st.tabs(["📄 OCR PDF", "🖼️ OCR Image"])
 
+# --- TAB 1: PDF ---
 with tab1:
     st.header("📄 OCR cho file PDF")
-    uploaded_pdf = st.file_uploader("Chọn file PDF để xử lý OCR", type=["pdf"])
-
+    uploaded_pdf = st.file_uploader("Chọn file PDF để OCR", type=["pdf"])
     if uploaded_pdf:
-        pdf_bytes = uploaded_pdf.read()
-        file_name = uploaded_pdf.name
-        mime_type = "application/pdf"
-
-        try:
-            uploaded_pdf.seek(0)
-            reader = PdfReader(uploaded_pdf)
-            num_pages = len(reader.pages)
-        except:
-            num_pages = "?"
-
-        st.info(f"**Tên file:** {file_name} | **Số trang:** {num_pages}")
-
+        st.info(f"**Tên file:** {uploaded_pdf.name}")
         if st.button("🚀 Xử lý OCR PDF", use_container_width=True):
-            with st.spinner("Đang xử lý OCR và trích xuất hình ảnh..."):
-                client = EnhancedSmartOCRClient(API_URL, API_KEY)
-                uploaded_pdf.seek(0)
-                result = client.convert(pdf_bytes, file_name, mime_type)
-                pdf_images = convert_from_bytes(pdf_bytes)
-                images = []
-                for i, im in enumerate(pdf_images):
-                    buf = io.BytesIO()
-                    im.save(buf, format="JPEG")
-                    page_bytes = buf.getvalue()
-                    figs = extract_figures_from_image(page_bytes, min_area=1200, max_figures=8)
-                    for fig in figs:
-                        fig['name'] = f"page-{i+1}-{fig['name']}"
-                    images.extend(figs)
-                if not result.get("success"):
-                    st.error("❌ OCR thất bại: " + str(result.get("error")))
-                    st.stop()
-                st.session_state["ocr_text"] = result["data"].get("text_content", "")
-                st.session_state["ocr_figures"] = images
-                st.session_state["ocr_done"] = True
-                st.success("✅ Đã xử lý OCR thành công!")
+            with st.spinner("Đang gửi file lên Smart OCR..."):
+                base64_str, _ = convert_file_to_base64(uploaded_pdf, "application/pdf")
+                result = ocr_api(uploaded_pdf.name, "application/pdf", base64_str)
+            if result.get("success"):
+                st.success("✅ Xử lý thành công!")
+                text_content = result["data"].get("text_content", "")
+                st.text_area("Kết quả OCR:", text_content, height=300)
+                if st.button("⬇️ Tải về file Word", use_container_width=True):
+                    word_bytes = save_to_word(text_content, "ket_qua_ocr.docx")
+                    st.download_button("Tải file Word", word_bytes, file_name="ket_qua_ocr.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+            else:
+                st.error("❌ Lỗi: " + result.get("error", "Không rõ nguyên nhân"))
 
-    if st.session_state.get("ocr_done"):
-        raw_text = st.session_state["ocr_text"]
-        figures = st.session_state["ocr_figures"]
-        st.subheader("📝 Văn bản OCR (MathType):")
-        filtered_text = format_math_ocr(raw_text)
-        st.text_area("Kết quả OCR:", filtered_text, height=300, label_visibility="collapsed")
+# --- TAB 2: ẢNH ---
+with tab2:
+    st.header("🖼️ OCR cho ảnh (PNG/JPG)")
+    uploaded_img = st.file_uploader("Chọn ảnh để OCR", type=["png", "jpg", "jpeg"])
+    if uploaded_img:
+        st.image(uploaded_img, caption="Ảnh đã chọn", use_column_width=True)
+        if st.button("🚀 Xử lý OCR ảnh", use_container_width=True):
+            with st.spinner("Đang gửi ảnh lên Smart OCR..."):
+                base64_str, _ = convert_file_to_base64(uploaded_img, "image/png")
+                result = ocr_api(uploaded_img.name, "image/png", base64_str)
+            if result.get("success"):
+                st.success("✅ Xử lý thành công!")
+                text_content = result["data"].get("text_content", "")
+                st.text_area("Kết quả OCR:", text_content, height=300)
+                if st.button("⬇️ Tải về file Word", key="wordimg", use_container_width=True):
+                    word_bytes = save_to_word(text_content, "ket_qua_ocr.docx")
+                    st.download_button("Tải file Word", word_bytes, file_name="ket_qua_ocr.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+            else:
+                st.error("❌ Lỗi: " + result.get("error", "Không rõ nguyên nhân"))
 
-        st.subheader("🖼️ Hình minh hoạ và ảnh công thức:")
-        if figures:
-            cols = st.columns(2)
-            selected_names = []
-            for i, fig in enumerate(figures):
-                with cols[i % 2]:
-                    checked = st.checkbox(f"{fig['name']}", value=True, key=f"fig_check{i}")
-                    st.image(base64.b64decode(fig["base64"]), caption=fig["name"], use_container_width=True)
-                    if checked:
-                        selected_names.append(fig["name"])
-            export_figures = [fig for fig in figures if fig["name"] in selected_names]
-
-            if st.button("✨ Nhận diện công thức từ hình ảnh (pix2tex)", use_container_width=True):
-                with st.spinner("Đang nhận diện công thức bằng Pix2Tex..."):
-                    latex_results = recognize_latex_from_images(export_figures)
-                st.success("✅ Đã nhận diện công thức thành công!")
-                for item in latex_results:
-                    st.markdown(f"**{item['name']}** ➜ `${item['latex']}$`")
-
-        if st.button("📝 Tạo file Word", use_container_width=True):
-            with st.spinner("Đang tạo file Word..."):
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                    insert_images_to_word_from_markdown(filtered_text, export_figures, tmp_word.name)
-                with open(tmp_word.name, "rb") as f:
-                    word_data = f.read()
-                st.download_button("⬇️ Tải file Word", word_data, file_name="ket_qua_ocr.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
-                os.remove(tmp_word.name)
-
-st.caption("© 2025 - Ứng dụng OCR MathType + Pix2Tex hỗ trợ đề Toán chuẩn LaTeX + Word")
+st.caption("© 2025 - Smart OCR (Apps Script API) - Python + Streamlit")
