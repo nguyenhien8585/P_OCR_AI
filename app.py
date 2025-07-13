@@ -13,14 +13,12 @@ from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 from PyPDF2 import PdfReader
 
+from extract_figures_from_image_pillow import extract_figures_from_image  # Hàm tách ảnh minh hoạ
+
 # =========== GEMINI KEY LIST ===========
 GEMINI_API_KEYS = [
-   "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
-  "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
-  "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
-  "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
-  "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
-  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I",
+    "AIzaSyAAA111111111111111111111111",
+    "AIzaSyBBB222222222222222222222222"
 ]
 api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
@@ -29,7 +27,7 @@ def get_next_api_key():
 GEMINI_PROMPT = '''
 YÊU CẦU:
 1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh.
-2. Nếu phát hiện hình minh hoạ (hình vẽ, đồ thị, bảng, ...), đánh dấu đúng vị trí bằng cú pháp markdown: ![Hình minh hoạ](img-x.jpeg) với x là số thứ tự ảnh minh hoạ bạn upload (bắt đầu từ 0).
+2. Nếu phát hiện hình minh hoạ (hình vẽ, đồ thị, bảng, ...), đánh dấu đúng vị trí bằng cú pháp markdown: ![Hình minh hoạ](img-x.jpeg) với x là số thứ tự ảnh minh hoạ đã tách từ ảnh này (bắt đầu từ 1).
 3. Giữ nguyên cấu trúc đoạn văn và xuống dòng.
 4. Công thức toán học: tất cả ở dạng ${...}$ (inline, hệ, ký hiệu ... như hướng dẫn chi tiết).
 5. Bảng biểu: dùng markdown nếu có thể.
@@ -59,7 +57,7 @@ def gemini_generate_text(image_bytes, api_key):
     return text
 
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="centered")
-st.title("✨ Chuyển PDF & Ảnh Toán sang Word, giữ công thức, ảnh minh hoạ ✨")
+st.title("✨ Chuyển PDF & Ảnh Toán sang Word, giữ công thức & minh hoạ ✨")
 
 tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Word + Minh hoạ"])
 
@@ -154,70 +152,68 @@ with tab_pdf:
 
 # =========== TAB ẢNH ===========
 with tab_img:
-    st.markdown("#### 🖼️ Ảnh (văn bản + ảnh minh hoạ) → Word, giữ vị trí ảnh minh hoạ, LaTeX dạng copy")
+    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động) → Word, LaTeX dạng code copy")
     uploaded_images = st.file_uploader(
-        "Chọn ảnh gốc (ảnh đề hoặc các ảnh minh hoạ rời, đặt tên img-0.jpeg, img-1.jpeg...)",
+        "Chọn nhiều ảnh (mỗi ảnh là một trang):",
         type=["png", "jpg", "jpeg", "webp"],
         accept_multiple_files=True,
-        help="Chọn nhiều ảnh. Nếu là ảnh minh hoạ rời, đặt tên img-0.jpeg, img-1.jpeg..."
+        help="Mỗi ảnh là 1 trang, hệ thống sẽ tự động tách các hình minh hoạ lớn bên trong."
     )
     if uploaded_images:
-        images_data = []
         latex_results = []
-        # Chuẩn hóa ảnh để chèn Word (JPEG, base64), lấy tên đúng để markdown
+        all_figures = []
         for i, img_file in enumerate(uploaded_images):
             img_bytes = img_file.read()
-            pil_img = Image.open(BytesIO(img_bytes)).convert("RGB")
-            buf = BytesIO()
-            pil_img.save(buf, format="JPEG")
-            img_b64 = base64.b64encode(buf.getvalue()).decode()
-            name = img_file.name if img_file.name.endswith('.jpeg') else f"img-{i}.jpeg"
-            images_data.append({"name": name, "base64": img_b64})
+            # 1. Tách minh hoạ tự động
+            figures = extract_figures_from_image(img_bytes)
+            all_figures.extend(figures)
+            # 2. Gọi Gemini sinh văn bản (markdown giữ vị trí ![Hình minh hoạ](img-x.jpeg))
             api_key = get_next_api_key()
-            with st.spinner(f"Đang nhận diện ảnh {i+1}..."):
+            with st.spinner(f"Đang nhận diện trang {i+1}..."):
                 try:
                     text = gemini_generate_text(img_bytes, api_key)
                 except Exception as e:
                     text = f"[Lỗi Gemini: {e}]"
-            latex_results.append((name, text))
+            latex_results.append((img_file.name, text, figures))
 
-        tab1, tab2 = st.tabs(["📋 Văn bản (copy LaTeX)", "🖼️ Hình ảnh minh hoạ"])
+        # Preview: Văn bản & minh hoạ từng trang
+        tab1, tab2 = st.tabs(["📋 Văn bản (copy LaTeX)", "🖼️ Ảnh minh hoạ đã tách"])
         with tab1:
-            st.markdown("### 📋 Kết quả từng ảnh (LaTeX dạng code):")
-            for idx, (img_name, latex) in enumerate(latex_results):
-                st.markdown(f"#### Ảnh {idx+1}: {img_name}")
-                # Hiển thị markdown, LaTeX để code, ảnh đúng vị trí
+            st.markdown("### 📋 Kết quả từng trang:")
+            for idx, (img_name, latex, figures) in enumerate(latex_results):
+                st.markdown(f"#### Trang {idx+1}: {img_name}")
+                # Chèn hình minh hoạ đúng vị trí nếu có markdown ![Hình minh hoạ](img-x.jpeg)
                 parts = re.split(r"(!\[Hình minh hoạ\]\(img-\d+\.jpeg\))", latex)
                 for part in parts:
-                    img_match = re.match(r"!\[Hình minh hoạ\]\((img-\d+\.jpeg)\)", part)
+                    img_match = re.match(r"!\[Hình minh hoạ\]\((img-(\d+)\.jpeg)\)", part)
                     if img_match:
                         findname = img_match.group(1)
-                        found = next((img for img in images_data if img["name"] == findname), None)
+                        found = next((img for img in figures if img["name"] == findname), None)
                         if found:
                             st.image(base64.b64decode(found["base64"]), caption=findname, width=340)
                         else:
                             st.warning(f"Không tìm thấy ảnh {findname}")
                     else:
+                        # Hiển thị LaTeX dạng code dễ copy
                         lines = part.split("\n")
                         for line in lines:
                             if re.fullmatch(r"\$\{?.+\}?\$", line.strip()):
                                 st.code(line.strip())
                             else:
                                 st.markdown(line)
-
         with tab2:
-            st.markdown("### 🖼️ Danh sách ảnh đã upload:")
-            for img in images_data:
-                st.image(base64.b64decode(img["base64"]), caption=img["name"], width=260)
+            st.markdown("### 🖼️ Tất cả minh hoạ đã tách:")
+            for fig in all_figures:
+                st.image(base64.b64decode(fig["base64"]), caption=fig["name"], width=200)
 
-        # Xuất Word
+        # Xuất Word: Chèn lại các minh hoạ vào đúng vị trí markdown
         markdown_out = ""
-        for idx, (img_name, latex) in enumerate(latex_results):
+        for idx, (img_name, latex, figures) in enumerate(latex_results):
             markdown_out += f"{latex}\n\n"
-        if st.button("📝 Tạo và tải file Word giữ ảnh minh hoạ", use_container_width=True):
+        if st.button("📝 Tạo và tải file Word giữ ảnh minh hoạ đã tách", use_container_width=True):
             with st.spinner("Đang tạo file Word..."):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                    insert_images_to_word_from_markdown(markdown_out, images_data, tmp_word.name)
+                    insert_images_to_word_from_markdown(markdown_out, all_figures, tmp_word.name)
                 with open(tmp_word.name, "rb") as f:
                     word_data = f.read()
                 st.success("✅ Đã tạo file Word thành công!")
@@ -232,4 +228,4 @@ with tab_img:
     else:
         st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
 
-st.caption("✨ Ảnh minh hoạ upload dạng base64, LaTeX luôn ở chế độ code dễ copy, chèn đúng vị trí khi xuất Word.")
+st.caption("✨ Ảnh minh hoạ tự tách bằng Pillow+scipy, LaTeX luôn để dạng code dễ copy, xuất Word đúng vị trí.")
