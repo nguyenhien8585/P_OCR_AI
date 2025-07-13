@@ -4,3 +4,4 @@ python-docx
 pillow
 pymupdf
 PyPDF2
+img2pdf
