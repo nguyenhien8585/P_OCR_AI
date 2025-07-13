@@ -1,9 +1,0 @@
-streamlit
-python-docx
-pillow
-PyPDF2
-numpy
-scipy
-pdf2image
-regex
-requests
