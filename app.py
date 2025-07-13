@@ -32,8 +32,16 @@ YÊU CẦU:
 3. Với mỗi hình minh hoạ, hãy chèn markdown ngay sau dòng mô tả có từ “xem hình dưới”, “hình dưới đây”, “bảng biến thiên”, “hình vẽ”, “biểu đồ”, hoặc ngay sau dòng câu hỏi liên quan tới hình/bảng/biểu đồ đó.
 4. Giữ nguyên cấu trúc đoạn văn và xuống dòng.
 5. Công thức toán học: tất cả ở dạng ${...}$ (inline, hệ, ký hiệu ... như hướng dẫn chi tiết).
-6. Bảng biểu: dùng markdown nếu có thể.
-7. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
+6. CÔNG THỨC TOÁN HỌC
+- Giữ nguyên công thức dưới dạng LaTeX chuẩn:
+- Toán inline: `${...}$`
+- Toán độc lập hoặc hệ phương trình: `$begin{{cases}}...\end{{cases}}$`
+- Các chữ kí hiệu cho hình học và các số để dạng ${....}$.
+Ví dụ: ${Oxyz}$, ${A}$,${AB}$,${0,1%}$,${0.1%}$,....
+- KHÔNG dùng `\(...\)` hoặc `\[...\]`
+7. Bảng biểu: dùng markdown nếu có thể.
+8. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
+Lưu ý: không được bịa ra phải nhận dạng từ ảnh.
 '''
 
 def gemini_generate_text(image_bytes, api_key):
