@@ -60,7 +60,6 @@ if uploaded_file:
             st.error("❌ Xử lý OCR PDF thất bại: " + str(result.get("error")))
             st.stop()
 
-        # Lưu vào session_state để không bị mất khi bấm nút khác
         st.session_state["ocr_text_raw"] = result["data"].get("text_content", "")
         st.session_state["ocr_images"] = images
         st.session_state["ocr_done"] = True
@@ -68,7 +67,6 @@ if uploaded_file:
 
 # --------- HÀM TIỆN ÍCH ---------
 def to_mathptn_latex(s):
-    # Đổi toàn bộ $...$ thành ${...}$ nếu chưa phải dạng ${...}$
     def replacer(match):
         expr = match.group(1)
         if expr.startswith("{") and expr.endswith("}"):
@@ -77,20 +75,16 @@ def to_mathptn_latex(s):
     return re.sub(r'\$(.+?)\$', replacer, s)
 
 def merge_text_and_images_by_page(text_content, images):
-    # Tách text theo từng trang dựa trên ký tự formfeed (nếu có)
-    # Nếu không có, coi toàn bộ là 1 trang
     if '\f' in text_content:
         pages = text_content.split('\f')
     else:
         pages = [text_content]
-    # Gom ảnh theo trang
     page_images = {}
     for img in images:
         page_images.setdefault(img.get("page", 0), []).append(img)
     result = ""
     for idx, page_text in enumerate(pages):
         result += page_text.strip() + "\n"
-        # Chèn ảnh thuộc trang này vào
         if idx in page_images:
             for img in page_images[idx]:
                 result += f'![]({img["name"]})\n'
@@ -98,7 +92,6 @@ def merge_text_and_images_by_page(text_content, images):
     return result.strip()
 
 def markdown_to_latex(text):
-    # Chuyển công thức sang dạng ${...}$ và markdown ảnh sang figure
     text = to_mathptn_latex(text)
     def repl(match):
         caption, img_name = match.groups()
@@ -142,8 +135,6 @@ def export_latex_with_images(text, image_list):
 if st.session_state.get("ocr_done"):
     raw_text = st.session_state.get("ocr_text_raw", "")
     images = st.session_state.get("ocr_images", [])
-
-    # Tạo text_content tự động chèn ảnh vào từng trang
     text_content = merge_text_and_images_by_page(raw_text, images)
 
     tab1, tab2 = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
