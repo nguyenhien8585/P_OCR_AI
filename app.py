@@ -7,50 +7,83 @@ import itertools
 import os
 from PIL import Image
 from io import BytesIO
-from config import API_URL, API_KEY  # API_URL, API_KEY cho OCR PDF
+from config import API_URL, API_KEY
 from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 from PyPDF2 import PdfReader
 
-# ======= Sidebar: Nhập nhiều Gemini API Key =======
-st.sidebar.markdown("### 🔑 Nhập các Gemini API Key")
-api_keys_input = st.sidebar.text_area(
-    "Nhập mỗi key một dòng hoặc phân tách bởi dấu phẩy (,)", 
-    value="", 
-    height=100,
-    help="Có thể nhập nhiều key Gemini để tự động luân phiên sử dụng khi gọi API."
-)
-def get_api_keys_list(text):
-    # Tách key bởi xuống dòng hoặc dấu phẩy
-    return [k.strip() for k in text.replace(',', '\n').split('\n') if k.strip()]
+# ==== Prompt Gemini ====
+GEMINI_PROMPT = '''
+YÊU CẦU:
+1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh
+2. Giữ nguyên cấu trúc đoạn văn và xuống dòng
+3. Với công thức toán học: gõ lại chính xác, tất cả công thức Toán dưới dạng ${...}$
+   - Inline: ${x^2 + 2x + 1}$
+   - Hệ: $\begin{cases} ... \end{cases}$
+   - Ký hiệu: các từ đặt tên cho tên bằng chữ A,B,C... hoặc các cụm từ AB, CD, Oxyz,... hoặc các số 1,2,3,..., tỉ lệ phần trăm 1%,0.1% , 0,1%,.... ví dụ ${Oxyz}$, ${A}$, ${AB}$, ${0{,}1\%}$, ${CD}$, ${1}$,${Oxyz}$, ${S.ABCD}$.....
+4. Với bảng biểu: dùng markdown nếu có thể
+5. Dạng bài:
+   - Trắc nghiệm:
+     Câu X: Nội dung
+     A. Đáp án A
+     B. Đáp án B
+     C. Đáp án C
+     D. Đáp án D
+   - Đúng/Sai: a), b), c)...
+   - Tự luận: Câu X: ... (Lời giải...)
 
-GEMINI_API_KEYS = get_api_keys_list(api_keys_input)
-if not GEMINI_API_KEYS:
-    st.sidebar.warning("⚠️ Vui lòng nhập ít nhất 1 Gemini API Key để sử dụng tab Ảnh.")
+✅ Gợi ý thêm:
+- Nếu ảnh dài hoặc nhiều trang, chia nhỏ xử lý từng ảnh để tránh thiếu trang.
+- Khi lưu kết quả, nên xuất file Word định dạng .docx để hiển thị tiếng Việt chuẩn và hỗ trợ tốt Unicode.
+'''
 
-api_key_cycle = itertools.cycle(GEMINI_API_KEYS) if GEMINI_API_KEYS else None
+# ======== NHẬP NHIỀU KEY TRONG CODE ========
+GEMINI_API_KEYS = [
+  "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
+  "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
+  "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
+  "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
+  "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
+  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
+]
+api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
+
 def get_next_api_key():
-    if not api_key_cycle:
-        return None
     return next(api_key_cycle)
 
-# =================== HEADER ===================
-st.set_page_config(page_title="OCR PDF/Ảnh Toán & Gemini LaTeX", layout="centered")
-st.title("✨ Chuyển PDF & Ảnh Toán sang Word kèm ảnh minh hoạ, LaTeX ✨")
-st.caption("👨‍💻 by CGPT – Hỗ trợ OCR PDF, sinh LaTeX từ ảnh qua Gemini, xuất file Word đúng vị trí ảnh.")
+def gemini_generate_text(image_bytes, api_key):
+    api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+    b64_img = base64.b64encode(image_bytes).decode()
+    payload = {
+        "contents": [{
+            "role": "user",
+            "parts": [
+                {"text": GEMINI_PROMPT},
+                {"inlineData": {
+                    "mimeType": "image/png",
+                    "data": b64_img
+                }}
+            ]
+        }]
+    }
+    headers = {"Content-Type": "application/json"}
+    r = requests.post(f"{api_url}?key={api_key}", json=payload, headers=headers, timeout=90)
+    r.raise_for_status()
+    res = r.json()
+    text = res["candidates"][0]["content"]["parts"][0]["text"]
+    return text
 
-tab_pdf, tab_img = st.tabs(["📄 PDF (giữ nguyên)", "🖼️ Ảnh → LaTeX + Word"])
+# ============= GIAO DIỆN APP =============
+st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="centered")
+st.title("✨ Chuyển PDF & Ảnh Toán sang Word, giữ công thức và minh hoạ ✨")
+st.caption("👨‍💻 by CGPT – OCR PDF, sinh tài liệu toán chuẩn từ ảnh, xuất Word Unicode.")
 
-# =========== TAB 1: XỬ LÝ PDF ===========
+tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Word + LaTeX"])
+
+# =========== TAB PDF ===========
 with tab_pdf:
-    st.markdown(
-        """
-        <h4>📝 OCR cho file PDF</h4>
-        <small>📁 <b>Chọn file PDF để nhận diện văn bản, trích xuất ảnh, xuất Word kèm ảnh minh hoạ đúng vị trí.</b></small>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown("#### 📝 OCR cho file PDF, giữ công thức và ảnh minh hoạ")
     uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"], label_visibility="collapsed")
     num_pages = None
     if uploaded_file:
@@ -70,10 +103,11 @@ with tab_pdf:
             st.write(f"**Loại file:** {mime_type}")
             st.write(f"**Kích thước:** {size_mb:.1f} MB")
             st.write(f"**Số trang:** {num_pages}")
-    # ---------- Nút xử lý OCR ----------
+
+    # --------- Nút OCR ----------
     if uploaded_file:
         if st.button("🚀 Xử lý OCR PDF", type="primary", use_container_width=True):
-            st.info("⏳ Đang xử lý OCR PDF... (quá trình này có thể mất vài phút)")
+            st.info("⏳ Đang xử lý OCR PDF... (vui lòng chờ)")
             with st.spinner("Đang nhận diện văn bản và trích xuất hình ảnh..."):
                 client = EnhancedSmartOCRClient(API_URL, API_KEY)
                 uploaded_file.seek(0)
@@ -86,8 +120,8 @@ with tab_pdf:
             st.session_state["ocr_text_raw"] = result["data"].get("text_content", "")
             st.session_state["ocr_images"] = images
             st.session_state["ocr_done"] = True
-            st.success("✅ Xử lý OCR PDF hoàn tất thành công!")
-    # ---------- Hiển thị kết quả nếu đã OCR ----------
+            st.success("✅ Đã nhận diện PDF thành công!")
+    # --------- Hiển thị kết quả ----------
     if st.session_state.get("ocr_done"):
         def dollar_to_mathptn(s):
             return re.sub(r'\$(.+?)\$', r'${\1}$', s)
@@ -136,72 +170,41 @@ with tab_pdf:
             else:
                 st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
     st.markdown("---")
-    st.caption("🔖 <b>OCR PDF: hỗ trợ MathType, ảnh minh hoạ, xuất Word/TXT. Giao diện thân thiện.</b>", unsafe_allow_html=True)
+    st.caption("🔖 OCR PDF hỗ trợ MathType, ảnh minh hoạ, xuất Word/TXT. Chuẩn Unicode.")
 
-# =========== TAB 2: ẢNH → LaTeX & WORD ===============
+# =========== TAB ẢNH ===========
 with tab_img:
-    st.markdown("#### 🖼️ Chuyển ảnh thành LaTeX, xuất Word đúng vị trí ảnh minh hoạ.")
+    st.markdown("#### 🖼️ Chuyển ảnh Toán sang Word, giữ LaTeX và ảnh minh hoạ")
     uploaded_images = st.file_uploader("Chọn ảnh (PNG/JPEG)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
     if uploaded_images:
-        if not GEMINI_API_KEYS:
-            st.error("⚠️ Bạn cần nhập ít nhất 1 Gemini API Key bên sidebar để sử dụng chức năng này.")
-            st.stop()
         latex_results = []
         images_data = []
-        st.info("⏳ Đang sinh LaTeX từng ảnh bằng Gemini...")
+        st.info("⏳ Đang sinh văn bản từng ảnh bằng Gemini...")
         for i, img_file in enumerate(uploaded_images):
             img_bytes = img_file.read()
-            # Gọi Gemini API sinh LaTeX
             try:
                 api_key = get_next_api_key()
-                api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-                b64_img = base64.b64encode(img_bytes).decode()
-                payload = {
-                    "contents": [{
-                        "role": "user",
-                        "parts": [
-                            {
-                                "text": "Chuyển ảnh này thành mã LaTeX dạng ${...}$, giữ nguyên ký hiệu Toán học, không diễn giải, chỉ trả về mã LaTeX."
-                            },
-                            {
-                                "inlineData": {
-                                    "mimeType": "image/png",
-                                    "data": b64_img
-                                }
-                            }
-                        ]
-                    }]
-                }
-                headers = {"Content-Type": "application/json"}
-                r = requests.post(f"{api_url}?key={api_key}", json=payload, headers=headers, timeout=60)
-                r.raise_for_status()
-                res = r.json()
-                text = res["candidates"][0]["content"]["parts"][0]["text"]
+                text = gemini_generate_text(img_bytes, api_key)
             except Exception as e:
-                text = "[Lỗi khi sinh LaTeX: {}]".format(e)
-            # Sửa lại định dạng cho đúng ${...}$ nếu Gemini trả về $...$
-            text = re.sub(r"^\$([^\$]*)\$$", r"${\1}$", text.strip())
+                text = f"[Lỗi khi sinh văn bản: {e}]"
             latex_results.append((img_file.name, text))
-            # Chuẩn hóa ảnh (JPEG, base64) để chèn Word
             pil_img = Image.open(BytesIO(img_bytes)).convert("RGB")
             buf = BytesIO()
             pil_img.save(buf, format="JPEG")
             img_b64 = base64.b64encode(buf.getvalue()).decode()
             images_data.append({"name": f"img-{i}.jpeg", "base64": img_b64})
-        # Hiển thị từng ảnh & LaTeX
         for idx, (img_name, latex) in enumerate(latex_results):
             st.image(uploaded_images[idx], caption=img_name, width=220)
-            st.markdown("**LaTeX:**")
+            st.markdown("**Kết quả văn bản:**")
             st.code(latex)
             try:
-                st.latex(latex.replace("$", ""))
+                st.latex(latex.replace("$", ""))  # thử hiển thị nếu chỉ là công thức
             except:
                 pass
-        # Tạo markdown tổng hợp để xuất Word
         markdown_out = ""
         for idx, (img_name, latex) in enumerate(latex_results):
             markdown_out += f"{latex}\n\n![Hình minh hoạ](img-{idx}.jpeg)\n\n"
-        if st.button("📝 Tạo và tải file Word từ ảnh + LaTeX", use_container_width=True):
+        if st.button("📝 Tạo và tải file Word từ ảnh + văn bản", use_container_width=True):
             with st.spinner("Đang tạo file Word..."):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
                     insert_images_to_word_from_markdown(markdown_out, images_data, tmp_word.name)
@@ -217,5 +220,4 @@ with tab_img:
                 )
                 os.remove(tmp_word.name)
     st.markdown("---")
-    st.caption("📷 Chuyển nhiều ảnh thành LaTeX, xuất Word chuẩn với ảnh minh hoạ và mã Toán học.")
-
+    st.caption("📷 Chuyển nhiều ảnh Toán thành tài liệu Word: giữ ảnh, giữ công thức, bảng, câu trắc nghiệm, tự luận, tiếng Việt chuẩn Unicode.")
