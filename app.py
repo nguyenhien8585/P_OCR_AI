@@ -11,9 +11,18 @@ from app_config import API_URL, API_KEY
 from pdf2image import convert_from_bytes
 from extract_figures_from_image_pillow import extract_figures_from_image
 
-import re
+import regex as re
 
 st.set_page_config(page_title="Smart OCR PDF & Image", layout="centered")
+
+# Từ điển tiếng Việt phổ biến để loại trừ
+VIET_WORDS = set([
+    "trong", "nhau", "sai", "sau", "cho", "thoi", "trung", "điểm", "cạnh", "các", "hình", "vuông", "chữ", "nhật", "có",
+    "là", "và", "tâm", "của", "lần", "lượt", "các", "đúng", "khẳng", "định", "với", "mặt", "bằng", "tính", "đáy",
+    "cạnh", "cạnh", "số", "góc", "vuông", "nằm", "cùng", "phẳng", "diện", "thẳng", "mặt", "khối", "song", "song",
+    "vuông", "của", "cạnh", "trục", "tạo", "độ", "phép", "chứa", "dài", "đường", "phẳng", "hợp", "giữa", "theo",
+    "cạnh", "toạ", "độ", "hình", "chóp", "đỉnh", "đáy", "vuông", "tại", "cạnh", "đường", "tròn", "bán", "kính"
+])
 
 def convert_file_to_base64(file, mime_type):
     if mime_type.startswith("image/"):
@@ -98,14 +107,30 @@ def save_to_latex(text, figures, file_name):
     latex_code = "\n\n".join(content)
     return latex_code
 
+def clean_latex(text):
+    # Sửa các lỗi nhận dạng phổ biến
+    text = re.sub(r'//', r'\\parallel ', text)
+    text = re.sub(r"\^'|'\^", r'^{\\prime}', text)
+    text = re.sub(r"\^\\prime|\^{\\prime}", r'^{\\prime}', text)
+    text = re.sub(r'90\^(\{?circ\}?)', r'90^{\\circ}', text)
+    text = re.sub(r"\$(\s*)\$", '', text)
+    text = re.sub(r'\{(\${.*?}\$)\}', r'\1', text)  # Gỡ ${...}$ khỏi ngoặc nhọn thừa
+    return text
+
 def format_math_expr(text):
+    # Chỉ bọc biến, số, công thức, KHÔNG bọc từ tiếng Việt
     def wrap(match):
         expr = match.group(0)
-        if len(expr) >= 3:
-            return "${" + expr + "}$"
-        else:
+        # Nếu là từ tiếng Việt hoặc chữ thường 3 ký tự trở lên (tránh bọc "trong", "nhau", ...)
+        if expr.lower() in VIET_WORDS or re.match(r"^[a-zA-ZÀ-ỹà-ỹ']{3,}$", expr):
             return expr
-    pattern = r'([a-zA-Z0-9\^_+=\-*/]+)'
+        # Không bọc số trang, số câu hỏi, page, Câu, ...
+        if expr.isdigit() or expr in ['Page', 'Câu']:
+            return expr
+        # Chỉ bọc nếu là 1-2 ký tự, số, hoặc chuỗi có kí tự toán đặc trưng
+        return "${" + expr + "}$"
+    # Bắt các biến, số, ký hiệu toán, chỉ số, công thức
+    pattern = r'(A|B|C|D|O|M|N|S|a|b|c|d|x|y|z|n|m|i|j|k|l|D^{\\prime}|B^{\\prime}|C^{\\prime}|A^{\\prime}|\\perp|\\parallel|//|[0-9]+|[+\-*/=^()]|[A-Za-z]\^{\\prime}|\\left|\\right|\\circ|\\prime|\\cdot|\\ldots|\\dots|\\overline|\\sqrt)'
     return re.sub(pattern, wrap, text)
 
 tab1, tab2 = st.tabs(["📄 OCR PDF", "🖼️ OCR Image"])
@@ -133,7 +158,8 @@ with tab1:
                 st.success("✅ Xử lý thành công!")
                 text_content = result["data"].get("text_content", "")
                 st.subheader("📝 Văn bản OCR:")
-                math_text = format_math_expr(text_content)
+                clean_text = clean_latex(text_content)
+                math_text = format_math_expr(clean_text)
                 st.text_area("Kết quả OCR:", math_text, height=300)
 
                 st.subheader("🖼️ Hình minh họa từ PDF (tách tự động):")
@@ -174,7 +200,8 @@ with tab2:
                 st.success("✅ Xử lý thành công!")
                 text_content = result["data"].get("text_content", "")
                 st.subheader("📝 Văn bản OCR:")
-                math_text = format_math_expr(text_content)
+                clean_text = clean_latex(text_content)
+                math_text = format_math_expr(clean_text)
                 st.text_area("Kết quả OCR:", math_text, height=300)
 
                 st.subheader("🖼️ Các vùng ảnh tách được (tách tự động):")
