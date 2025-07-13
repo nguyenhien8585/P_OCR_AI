@@ -11,6 +11,8 @@ from app_config import API_URL, API_KEY
 from pdf2image import convert_from_bytes
 from extract_figures_from_image_pillow import extract_figures_from_image
 
+import re
+
 st.set_page_config(page_title="Smart OCR PDF & Image", layout="centered")
 
 def convert_file_to_base64(file, mime_type):
@@ -96,7 +98,6 @@ def save_to_latex(text, figures, file_name):
     latex_code = "\n\n".join(content)
     return latex_code
 
-import re
 def format_math_expr(text):
     def wrap(match):
         expr = match.group(0)
@@ -135,7 +136,7 @@ with tab1:
                 math_text = format_math_expr(text_content)
                 st.text_area("Kết quả OCR:", math_text, height=300)
 
-                st.subheader("🖼️ Hình minh họa từ PDF:")
+                st.subheader("🖼️ Hình minh họa từ PDF (tách tự động):")
                 figures = extract_figures_from_pdf(file_bytes)
                 if figures:
                     cols = st.columns(2)
@@ -176,7 +177,7 @@ with tab2:
                 math_text = format_math_expr(text_content)
                 st.text_area("Kết quả OCR:", math_text, height=300)
 
-                st.subheader("🖼️ Hình cắt từ ảnh gốc:")
+                st.subheader("🖼️ Các vùng ảnh tách được (tách tự động):")
                 figures = extract_figures_from_uploaded_image(uploaded_img)
                 if figures:
                     cols = st.columns(2)
@@ -201,4 +202,4 @@ with tab2:
             else:
                 st.error("❌ Lỗi: " + result.get("error", "Không rõ nguyên nhân"))
 
-st.caption("© 2025 - Smart OCR Math, xuất chuẩn Word/LaTeX, tự động tách ảnh minh họa")
+st.caption("© 2025 - Smart OCR Math, xuất chuẩn Word/LaTeX, tách ảnh minh họa tự động cho PDF và ảnh")
