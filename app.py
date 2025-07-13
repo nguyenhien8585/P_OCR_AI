@@ -134,9 +134,9 @@ def remove_all_figure_markdown(text):
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
-st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & minh hoạ ✨")
+st.title("✨ Chuyển PDF & Ảnh Toán sang word, giữ công thức & minh hoạ ✨")
 
-tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Markdown + Minh hoạ"])
+tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh Toán"])
 
 # =========== TAB PDF ===========
 with tab_pdf:
@@ -233,11 +233,10 @@ with tab_pdf:
             else:
                 st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
     st.markdown("---")
-    st.caption("🔖 OCR PDF hỗ trợ MathType, ảnh minh hoạ, xuất Word/TXT. Chuẩn Unicode.")
 
 # =========== TAB ẢNH ===========
 with tab_img:
-    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, mapping chuẩn, cho phép tải/copy) → Markdown/Text/Word")
+    st.markdown("#### 🖼️ Chuyển ảnh sang word")
     uploaded_images = st.file_uploader(
         "Chọn nhiều ảnh (mỗi ảnh là một trang):",
         type=["png", "jpg", "jpeg", "webp"],
@@ -253,7 +252,7 @@ with tab_img:
                 st.write(f"**Loại file:** {img_file.type}")
                 st.write(f"**Kích thước:** {img_file.size / 1024:.1f} KB")
 
-    tab1, tab2 = st.tabs(["📋 Văn bản (Markdown)", "🖼️ Hình ảnh đã tách"])
+    tab1, tab2 = st.tabs(["📋 Văn bản", "🖼️ Hình ảnh đã tách"])
     if uploaded_images:
         latex_results = []
         all_figures = []
@@ -280,11 +279,11 @@ with tab_img:
             latex_results.append((img_file.name, text, figures_with_caption))
 
         with tab1:
-            st.markdown("### 📋 Kết quả từng trang (có markdown minh hoạ):")
+            st.markdown("### 📋 Kết quả từng trang:")
             for idx, (img_name, latex, figures) in enumerate(latex_results):
                 st.markdown(f"#### Trang {idx+1}: {img_name}")
                 st.code(latex, language="markdown")
-            if st.button("📝 Tạo và tải file Word giữ minh hoạ đúng vị trí", use_container_width=True):
+            if st.button("📝 Tạo và tải file Word", use_container_width=True):
                 with st.spinner("Đang tạo file Word..."):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
                         insert_images_to_word_from_markdown(
@@ -322,4 +321,4 @@ with tab_img:
         with tab2:
             st.info("Chưa có ảnh nào để xem.")
 
-st.caption("✨ Văn bản chuẩn Markdown, mapping ảnh không dư/lặp, cho phép copy/tải về. Tách minh hoạ và caption từng ảnh hoàn toàn tự động. Xuất Word minh hoạ đúng vị trí!")
+st.caption("✨ PDF, ảnh sang word - NBH")
