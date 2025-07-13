@@ -21,7 +21,7 @@ GEMINI_API_KEYS = [
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
   "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
-  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I",
+  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
 ]
 api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
@@ -30,8 +30,8 @@ def get_next_api_key():
 GEMINI_PROMPT = '''
 YÊU CẦU:
 1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh.
-2. Nếu phát hiện hình minh hoạ (hình vẽ, đồ thị, bảng, ...), đánh dấu đúng vị trí bằng cú pháp markdown: ![Hình minh hoạ](img-x.jpeg) với x là số thứ tự ảnh minh hoạ đã tách từ ảnh này (bắt đầu từ 1).
-3. Nếu trong ảnh có hình minh hoạ, khi trả lời, hãy chèn mã markdown ![Hình minh hoạ](img-1.jpeg) ngay sau dòng chứa từ “xem hình dưới”, “hình dưới đây”, “bảng biến thiên”, “hình vẽ”, “biểu đồ” hoặc ngay sau dòng câu hỏi có đề cập hình/bảng.
+2. Nếu phát hiện nhiều hình minh hoạ (hình vẽ, đồ thị, bảng, ...), hãy đánh dấu đúng vị trí từng hình bằng cú pháp markdown: ![Hình minh hoạ](img-x.jpeg) với x là số thứ tự hình đã tách từ trên xuống dưới trong ảnh này (bắt đầu từ 1).
+3. Với mỗi hình minh hoạ, hãy chèn markdown ngay sau dòng mô tả có từ “xem hình dưới”, “hình dưới đây”, “bảng biến thiên”, “hình vẽ”, “biểu đồ”, hoặc ngay sau dòng câu hỏi liên quan tới hình/bảng/biểu đồ đó.
 4. Giữ nguyên cấu trúc đoạn văn và xuống dòng.
 5. Công thức toán học: tất cả ở dạng ${...}$ (inline, hệ, ký hiệu ... như hướng dẫn chi tiết).
 6. Bảng biểu: dùng markdown nếu có thể.
@@ -60,25 +60,28 @@ def gemini_generate_text(image_bytes, api_key):
     text = res["candidates"][0]["content"]["parts"][0]["text"]
     return text
 
-def auto_insert_figure(text, figure_name):
+# ==== HÀM AUTO CHÈN ĐÚNG VỊ TRÍ NHIỀU HÌNH ====
+def auto_insert_figures_multi(text, figures):
     lines = text.split('\n')
     new_lines = []
-    inserted = False
+    fig_idx = 0
+    keywords = [
+        "xem hình dưới", "hình dưới đây", "hình bên dưới", "hình sau",
+        "hình minh hoạ", "hình minh họa", "bảng biến thiên", "hình vẽ", "biểu đồ"
+    ]
     for i, line in enumerate(lines):
         new_lines.append(line)
-        if not inserted:
-            keywords = [
-                "xem hình dưới", "hình dưới đây", "hình bên dưới", "hình sau",
-                "hình minh hoạ", "hình minh họa", "bảng biến thiên", "hình vẽ", "biểu đồ"
-            ]
-            # Chèn sau dòng nếu chứa từ khoá, hoặc "Câu" và "hình"/"bảng"/"biểu đồ"
-            if (any(kw in line.lower() for kw in keywords) or
-                ("câu" in line.lower() and ("hình" in line.lower() or "bảng" in line.lower() or "biểu đồ" in line.lower()))):
-                new_lines.append(f"![Hình minh hoạ]({figure_name})")
-                inserted = True
-    if not inserted:
-        # Nếu không thấy vị trí phù hợp, thêm cuối
-        new_lines.append(f"![Hình minh hoạ]({figure_name})")
+        # Nếu còn hình và dòng chứa từ khoá, hoặc "Câu" và "hình"/"bảng"/"biểu đồ", chèn hình tiếp theo
+        if (fig_idx < len(figures)) and (
+            any(kw in line.lower() for kw in keywords) or
+            ("câu" in line.lower() and ("hình" in line.lower() or "bảng" in line.lower() or "biểu đồ" in line.lower()))
+        ):
+            new_lines.append(f"![Hình minh hoạ]({figures[fig_idx]['name']})")
+            fig_idx += 1
+    # Nếu còn hình mà chưa chèn hết, cứ chèn sau cuối cùng
+    while fig_idx < len(figures):
+        new_lines.append(f"![Hình minh hoạ]({figures[fig_idx]['name']})")
+        fig_idx += 1
     return '\n'.join(new_lines)
 
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="centered")
@@ -197,9 +200,9 @@ with tab_img:
                     text = gemini_generate_text(img_bytes, api_key)
                 except Exception as e:
                     text = f"[Lỗi Gemini: {e}]"
-            # Nếu Gemini KHÔNG tự sinh markdown hình hoặc sinh sai vị trí: auto chèn lại
-            if figures and not any([fig["name"] in text for fig in figures]):
-                text = auto_insert_figure(text, figures[0]["name"])
+            # Nếu số hình tách ra nhiều hơn số markdown chèn trong text, auto chèn đúng vị trí theo thứ tự
+            if figures and sum([fig["name"] in text for fig in figures]) < len(figures):
+                text = auto_insert_figures_multi(text, figures)
             latex_results.append((img_file.name, text, figures))
 
         tab1, tab2 = st.tabs(["📋 Văn bản (copy LaTeX)", "🖼️ Ảnh minh hoạ đã tách"])
@@ -250,4 +253,4 @@ with tab_img:
     else:
         st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
 
-st.caption("✨ Ảnh minh hoạ tự tách bằng Pillow+scipy, luôn được chèn đúng vị trí gần dòng liên quan hình vẽ, LaTeX để code dễ copy, xuất Word giữ minh hoạ chuẩn.")
+st.caption("✨ Ảnh minh hoạ tự tách, mỗi hình sẽ được chèn sát đúng câu hỏi/bảng mô tả liên quan, LaTeX luôn code dễ copy, xuất Word giữ minh hoạ CHUẨN.")
