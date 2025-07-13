@@ -17,8 +17,12 @@ from PyPDF2 import PdfReader
 
 # =========== GEMINI KEY LIST ===========
 GEMINI_API_KEYS = [
-    "AIzaSyAAA111111111111111111111111",
-    "AIzaSyBBB222222222222222222222222"
+  "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
+  "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
+  "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
+  "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
+  "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
+  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I",
 ]
 api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
