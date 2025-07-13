@@ -7,9 +7,8 @@ from PIL import Image
 from io import BytesIO
 from docx import Document
 
-# --- CONFIG ---
-API_URL = 'https://script.google.com/macros/s/AKfycby6GUWKFttjWTDJuQuX5IAeGAzS5tQULLja3SHbSfZIhQyaWVMuxyRNAE-fykxnznkqIw/exec'
-API_KEY = 'sk_k'
+# Lấy cấu hình API từ file app_config.py
+from app_config import API_URL, API_KEY
 
 st.set_page_config(page_title="Smart OCR PDF/Image", layout="centered")
 
