@@ -10,45 +10,45 @@ from app_config import API_URL, API_KEY
 
 from pdf2image import convert_from_bytes
 from extract_figures_from_image_pillow import extract_figures_from_image
-import regex as re
 
 st.set_page_config(page_title="Smart OCR PDF & Image + GPT-4o LaTeX", layout="centered")
 
 # ==================== GPT-4o LaTeX ====================
-
 def call_gpt4o_latex(text, api_key, api_url):
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
-    prompt = (
+    system_prompt = (
         "Bạn là AI chuyên chuyển đề Toán tiếng Việt sang LaTeX. "
-        "Hãy chuyển toàn bộ nội dung dưới đây thành mã LaTeX thuần túy, chuẩn chỉnh để chép vào Word hoặc Overleaf. "
-        "Không thêm lời giải thích, chỉ trả về mã LaTeX. "
-        "Các biểu thức toán, ký hiệu, cụm như AB, AC, BC, S, x^2, a=10,... đều phải được bọc đúng LaTeX ($...$), các ký hiệu hình học như \\perp, \\parallel, \\angle, ... giữ nguyên LaTeX. "
-        "Với bảng/phương án trắc nghiệm, trình bày đúng cấu trúc. "
-        "Nếu có xuống dòng giữa các ý, giữ nguyên. Không dịch nghĩa."
+        "Chỉ trả về mã LaTeX thuần túy, không giải thích. "
+        "Biểu thức, biến, ký hiệu đều bọc đúng LaTeX, trắc nghiệm giữ nguyên cấu trúc."
     )
     payload = {
         "model": "gpt-4o",
         "messages": [
-            {"role": "system", "content": prompt},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": text}
         ],
         "temperature": 0.2
     }
     resp = requests.post(api_url, headers=headers, json=payload, timeout=60)
-    resp.raise_for_status()
-    data = resp.json()
-    # Tùy format API, thử 2 kiểu phổ biến
-    if "choices" in data and data["choices"]:
-        return data["choices"][0]["message"]["content"]
-    if "result" in data:
-        return data["result"]
-    return ""
+    if resp.status_code != 200:
+        st.error(f"❌ API trả về lỗi HTTP {resp.status_code}: {resp.text}")
+        return ""
+    try:
+        data = resp.json()
+        if "choices" in data and data["choices"]:
+            return data["choices"][0]["message"]["content"]
+        if "result" in data:
+            return data["result"]
+        st.error("❌ API trả về JSON nhưng không có trường 'choices' hoặc 'result'.")
+        return ""
+    except Exception as e:
+        st.error(f"❌ Lỗi khi parse JSON API: {resp.text}")
+        return ""
 
 # ==================== Tách ảnh minh họa ====================
-
 def extract_figures_from_pdf(pdf_bytes):
     images = []
     pdf_pages = convert_from_bytes(pdf_bytes)
@@ -100,6 +100,7 @@ def ocr_api(file_name, mime_type, base64_str):
         result = resp.json()
         return result
     except Exception as e:
+        st.error(f"❌ OCR API lỗi: {e}")
         return {"success": False, "error": str(e), "data": {}}
 
 def save_to_word(text, figures, file_name):
