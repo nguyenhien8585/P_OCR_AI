@@ -8,8 +8,6 @@ import base64
 import re
 from PyPDF2 import PdfReader
 import tempfile
-import io
-import zipfile
 
 st.set_page_config(page_title="OCR cho file PDF", layout="centered")
 st.markdown(
@@ -60,98 +58,26 @@ if uploaded_file:
             st.error("❌ Xử lý OCR PDF thất bại: " + str(result.get("error")))
             st.stop()
 
+        # Lưu vào session_state để không bị mất khi bấm nút khác
         st.session_state["ocr_text_raw"] = result["data"].get("text_content", "")
         st.session_state["ocr_images"] = images
         st.session_state["ocr_done"] = True
         st.success("✅ Xử lý OCR PDF hoàn tất thành công!")
 
-# --------- HÀM TIỆN ÍCH ---------
-def to_mathptn_latex(s):
-    def replacer(match):
-        expr = match.group(1)
-        if expr.startswith("{") and expr.endswith("}"):
-            return f"${expr}$"
-        return f"${{{expr}}}$"
-    return re.sub(r'\$(.+?)\$', replacer, s)
-
-def merge_text_and_images_by_page(text_content, images):
-    if '\f' in text_content:
-        pages = text_content.split('\f')
-    else:
-        pages = [text_content]
-    page_images = {}
-    for img in images:
-        page_images.setdefault(img.get("page", 0), []).append(img)
-    result = ""
-    for idx, page_text in enumerate(pages):
-        result += page_text.strip() + "\n"
-        if idx in page_images:
-            for img in page_images[idx]:
-                result += f'![]({img["name"]})\n'
-        result += "\n\\pagebreak\n"
-    return result.strip()
-
-def markdown_to_latex(text):
-    text = to_mathptn_latex(text)
-    def repl(match):
-        caption, img_name = match.groups()
-        return (
-            "\\begin{figure}[H]\n"
-            "  \\centering\n"
-            f"  \\includegraphics[width=0.6\\textwidth]{{{img_name}}}\n"
-            f"  \\caption{{{caption}}}\n"
-            "\\end{figure}\n"
-        )
-    latex_body = re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', repl, text)
-    latex_body = re.sub(r'!\[\]\(([^)]+)\)', lambda m: (
-        "\\begin{figure}[H]\n"
-        "  \\centering\n"
-        f"  \\includegraphics[width=0.6\\textwidth]{{{m.group(1)}}}\n"
-        "\\end{figure}\n"
-    ), latex_body)
-    latex_full = (
-        "\\documentclass{article}\n"
-        "\\usepackage[utf8]{inputenc}\n"
-        "\\usepackage{graphicx}\n"
-        "\\usepackage{float}\n"
-        "\\begin{document}\n"
-        + latex_body +
-        "\n\\end{document}"
-    )
-    return latex_full
-
-def export_latex_with_images(text, image_list):
-    latex_code = markdown_to_latex(text)
-    mem_zip = io.BytesIO()
-    with zipfile.ZipFile(mem_zip, mode="w") as zf:
-        zf.writestr("ket_qua_ocr.tex", latex_code)
-        for img in image_list:
-            img_bytes = base64.b64decode(img["base64"])
-            zf.writestr(img["name"], img_bytes)
-    mem_zip.seek(0)
-    return mem_zip.getvalue()
-
 # ---------- Hiển thị kết quả nếu đã OCR ----------
 if st.session_state.get("ocr_done"):
+    def dollar_to_mathptn(s):
+        return re.sub(r'\$(.+?)\$', r'${\1}$', s)
     raw_text = st.session_state.get("ocr_text_raw", "")
+    text_content = dollar_to_mathptn(raw_text)
     images = st.session_state.get("ocr_images", [])
-    text_content = merge_text_and_images_by_page(raw_text, images)
 
     tab1, tab2 = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
     with tab1:
-        st.markdown("#### 📋 Kết quả OCR PDF (ảnh tự động chèn vào đúng trang):")
+        st.markdown("#### 📋 Kết quả OCR PDF:")
         st.text_area("Kết quả OCR PDF:", text_content, height=350, label_visibility="collapsed")
-        st.markdown(
-            """
-            <small>
-            Ảnh minh hoạ được tự động chèn vào đúng vị trí sau mỗi trang.<br>
-            Công thức được chuyển về dạng <b>${...}$</b> trong LaTeX.
-            </small>
-            """,
-            unsafe_allow_html=True
-        )
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         with col1:
             st.download_button(
                 "📄 Tải văn bản (TXT)",
@@ -177,19 +103,6 @@ if st.session_state.get("ocr_done"):
                         use_container_width=True
                     )
                     os.remove(tmp_word.name)
-        with col3:
-            latex_btn = st.button("📝 Tạo và tải file LaTeX", use_container_width=True, key="latex")
-            if latex_btn:
-                with st.spinner("Đang tạo file LaTeX..."):
-                    tex_bytes = export_latex_with_images(text_content, images)
-                    st.success("✅ Đã tạo file LaTeX thành công!")
-                    st.download_button(
-                        "⬇️ Tải về file LaTeX (.zip)",
-                        tex_bytes,
-                        file_name="ket_qua_ocr_latex.zip",
-                        mime="application/zip",
-                        use_container_width=True
-                    )
 
     with tab2:
         if images:
@@ -197,11 +110,11 @@ if st.session_state.get("ocr_done"):
             for img in images:
                 try:
                     img_bytes = base64.b64decode(img["base64"])
-                    st.image(img_bytes, caption=f'{img["name"]} (trang {img["page"]+1})', use_container_width=True)
+                    st.image(img_bytes, caption=img["name"], use_container_width=True)
                 except Exception as e:
                     st.error(f"Không đọc được ảnh {img['name']}: {e}")
         else:
             st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
 
 st.markdown("---")
-st.caption("🔖 <b>OCR PDF: tự động tách ảnh, gắn ảnh đúng vị trí trang, xuất Word/LaTeX/TXT.</b>", unsafe_allow_html=True)
+st.caption("🔖 <b>OCR PDF: hỗ trợ MathType, ảnh minh hoạ, xuất Word/TXT. Giao diện thân thiện.</b>", unsafe_allow_html=True)
