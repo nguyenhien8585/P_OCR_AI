@@ -6,25 +6,39 @@ import tempfile
 from PIL import Image
 from io import BytesIO
 from docx import Document
-from app_config import API_URL, API_KEY
+from app_config import OCR_API_URL, OCR_API_KEY, GPT4O_API_URL, GPT4O_API_KEY
 
 from pdf2image import convert_from_bytes
 from extract_figures_from_image_pillow import extract_figures_from_image
 
 st.set_page_config(page_title="OCR PDF/Ảnh ➔ LaTeX + Word minh hoạ", layout="centered")
 
-# ==== Hàm gọi GPT-4o sinh LaTeX ====
-def call_gpt4o_latex(text, api_key, api_url):
+# ==== Hàm gọi OCR ====
+def ocr_api(file_name, mime_type, base64_str):
+    payload = {
+        "apiKey": OCR_API_KEY,
+        "file_name": file_name,
+        "mime_type": mime_type,
+        "base64": base64_str
+    }
+    try:
+        resp = requests.post(OCR_API_URL, json=payload, timeout=120)
+        st.write(f"OCR status: {resp.status_code} - {resp.text[:300]}")
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        st.error(f"❌ OCR API lỗi: {e}\n{resp.text if 'resp' in locals() else ''}")
+        return {"success": False, "error": str(e), "data": {}}
+
+# ==== Hàm gọi GPT-4o chuyển sang LaTeX ====
+def call_gpt4o_latex(text):
     headers = {
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {GPT4O_API_KEY}",
         "Content-Type": "application/json"
     }
     system_prompt = (
         "Bạn là AI chuyên chuyển đề Toán tiếng Việt sang LaTeX. "
-        "Chỉ trả về mã LaTeX thuần túy, không chú thích, không giải thích. "
-        "Nếu có vị trí nào có minh hoạ (ví dụ: [IMAGE-1]), hãy thêm vào dòng đó: \\includegraphics[width=\\linewidth]{IMAGE-1.png}. "
-        "Không bỏ sót bất kỳ minh hoạ nào nếu gặp placeholder. "
-        "Chỉ trả về LaTeX hoàn chỉnh."
+        "Chỉ trả về mã LaTeX thuần túy, không giải thích, không chú thích."
     )
     payload = {
         "model": "openai:gpt-4o",
@@ -34,23 +48,21 @@ def call_gpt4o_latex(text, api_key, api_url):
         ],
         "temperature": 0.2
     }
-    resp = requests.post(api_url, headers=headers, json=payload, timeout=120)
+    resp = requests.post(GPT4O_API_URL, headers=headers, json=payload, timeout=120)
     if resp.status_code != 200:
-        st.error(f"❌ API lỗi HTTP {resp.status_code}: {resp.text}")
+        st.error(f"❌ GPT-4o lỗi HTTP {resp.status_code}: {resp.text}")
         return ""
     try:
         data = resp.json()
         if "choices" in data and data["choices"]:
             return data["choices"][0]["message"]["content"]
-        if "result" in data:
-            return data["result"]
-        st.error("❌ API trả về JSON nhưng không có trường 'choices' hoặc 'result'.")
+        st.error("❌ GPT-4o trả về JSON nhưng không có trường 'choices'.")
         return ""
     except Exception as e:
-        st.error(f"❌ Lỗi khi parse JSON API: {resp.text}")
+        st.error(f"❌ Lỗi khi parse JSON GPT-4o: {resp.text}")
         return ""
 
-# ==== Các hàm tách minh hoạ (ảnh) ====
+# ==== Tách ảnh minh hoạ ====
 def extract_figures_from_pdf(pdf_bytes):
     figures = []
     pdf_pages = convert_from_bytes(pdf_bytes)
@@ -76,27 +88,6 @@ def extract_figures_from_uploaded_image(img_file):
         fig['page'] = 1
     return figs
 
-def ocr_api(file_name, mime_type, base64_str):
-    payload = {
-        "endpoint": "convert",
-        "apiKey": API_KEY,
-        "file_data": f"data:{mime_type};base64,{base64_str}",
-        "file_name": file_name,
-        "options": {
-            "language": "auto",
-            "include_page_numbers": True,
-            "output_format": "text"
-        }
-    }
-    try:
-        resp = requests.post(API_URL, json=payload, timeout=120)
-        resp.raise_for_status()
-        result = resp.json()
-        return result
-    except Exception as e:
-        st.error(f"❌ OCR API lỗi: {e}")
-        return {"success": False, "error": str(e), "data": {}}
-
 def convert_file_to_base64(file, mime_type):
     if mime_type.startswith("image/"):
         image = Image.open(file)
@@ -108,9 +99,8 @@ def convert_file_to_base64(file, mime_type):
     return base64.b64encode(file_bytes).decode(), file_bytes
 
 # ==== Xuất Word, chèn ảnh vào vị trí placeholder ====
-def save_to_word(text, figures, file_name):
+def save_to_word(text, figures):
     doc = Document()
-    # Tách các dòng và chèn ảnh đúng vị trí placeholder [IMAGE-x]
     for line in text.splitlines():
         img_placeholder = None
         for fig in figures:
@@ -132,17 +122,13 @@ def save_to_word(text, figures, file_name):
     os.remove(tmp.name)
     return data
 
-def save_to_latex(latex_content, figures, file_name):
-    # Save all figures as png to temp
-    fig_paths = {}
+def save_to_latex(latex_content, figures):
     for fig in figures:
         img_bytes = base64.b64decode(fig["base64"])
         fname = f"{fig['name']}.png"
         img_path = os.path.join(tempfile.gettempdir(), fname)
         with open(img_path, "wb") as f:
             f.write(img_bytes)
-        fig_paths[fig['name']] = fname
-    # Không thay đổi nội dung latex (đã có includegraphics do GPT-4o sinh)
     content = []
     content.append("\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}")
     content.append(latex_content)
@@ -150,7 +136,6 @@ def save_to_latex(latex_content, figures, file_name):
     latex_code = "\n\n".join(content)
     return latex_code
 
-# ==== Giao diện Streamlit ====
 tab1, tab2 = st.tabs(["📄 PDF sang LaTeX+Word", "🖼️ Ảnh sang LaTeX+Word"])
 
 with tab1:
@@ -168,19 +153,16 @@ with tab1:
                 st.success("✅ Đã nhận diện văn bản!")
                 text_content = result["data"].get("text_content", "")
                 figures = extract_figures_from_pdf(file_bytes)
-                # Tạo placeholder ảnh [IMAGE-x] trong text
                 for idx, fig in enumerate(figures):
-                    # Chèn vào text nếu có từ "Hình", "Minh hoạ", ... (hoặc cuối mỗi trang nếu không tìm thấy)
                     text_content += f"\n[{fig['name']}]"
                 st.text_area("Văn bản đã OCR (có chèn placeholder minh hoạ):", text_content, height=300)
-                # Nút chuyển LaTeX bằng GPT-4o
                 if st.button("✨ Chuyển sang LaTeX bằng GPT-4o", use_container_width=True):
                     with st.spinner("Đang chuyển sang LaTeX bằng GPT-4o..."):
-                        latex = call_gpt4o_latex(text_content, API_KEY, API_URL)
+                        latex = call_gpt4o_latex(text_content)
                         st.text_area("Kết quả LaTeX (GPT-4o):", latex, height=300)
                         st.download_button("Tải file LaTeX", latex, file_name="output_gpt4o.tex", mime="text/plain", use_container_width=True)
                         if st.button("⬇️ Xuất file Word (minh hoạ đúng vị trí)", use_container_width=True):
-                            word_bytes = save_to_word(text_content, figures, "output.docx")
+                            word_bytes = save_to_word(text_content, figures)
                             st.download_button("Tải file Word", word_bytes, file_name="output.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
             else:
                 st.error("❌ Lỗi: " + result.get("error", "Không rõ nguyên nhân"))
@@ -203,11 +185,11 @@ with tab2:
                 st.text_area("Văn bản đã OCR (có chèn placeholder minh hoạ):", text_content, height=300)
                 if st.button("✨ Chuyển sang LaTeX bằng GPT-4o", key="gpt4o_img", use_container_width=True):
                     with st.spinner("Đang chuyển sang LaTeX bằng GPT-4o..."):
-                        latex = call_gpt4o_latex(text_content, API_KEY, API_URL)
+                        latex = call_gpt4o_latex(text_content)
                         st.text_area("Kết quả LaTeX (GPT-4o):", latex, height=300)
                         st.download_button("Tải file LaTeX", latex, file_name="output_gpt4o.tex", mime="text/plain", use_container_width=True)
                         if st.button("⬇️ Xuất file Word (minh hoạ đúng vị trí)", use_container_width=True):
-                            word_bytes = save_to_word(text_content, figures, "output.docx")
+                            word_bytes = save_to_word(text_content, figures)
                             st.download_button("Tải file Word", word_bytes, file_name="output.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
             else:
                 st.error("❌ Lỗi: " + result.get("error", "Không rõ nguyên nhân"))
