@@ -16,11 +16,10 @@ st.set_page_config(page_title="OCR PDF/Ảnh ➔ LaTeX + Word minh hoạ", layou
 # ==== Hàm gọi OCR SmartOCR chuẩn ====
 def ocr_api(file_name, mime_type, base64_str):
     payload = {
-        "endpoint": "convert",    # BẮT BUỘC phải có cho SmartOCR
+        "endpoint": "convert",    # BẮT BUỘC
         "apiKey": OCR_API_KEY,
         "file_name": file_name,
-        "mime_type": mime_type,
-        "base64": base64_str
+        "file_data": f"data:{mime_type};base64,{base64_str}"  # BẮT BUỘC
     }
     try:
         resp = requests.post(OCR_API_URL, json=payload, timeout=120)
