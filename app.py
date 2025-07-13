@@ -10,18 +10,17 @@ from app_config import API_URL, API_KEY
 
 from pdf2image import convert_from_bytes
 from extract_figures_from_image_pillow import extract_figures_from_image
-
 import regex as re
 
 st.set_page_config(page_title="Smart OCR PDF & Image", layout="centered")
 
-# Từ điển tiếng Việt phổ biến để loại trừ
+# Từ điển từ tiếng Việt loại trừ
 VIET_WORDS = set([
-    "trong", "nhau", "sai", "sau", "cho", "thoi", "trung", "điểm", "cạnh", "các", "hình", "vuông", "chữ", "nhật", "có",
-    "là", "và", "tâm", "của", "lần", "lượt", "các", "đúng", "khẳng", "định", "với", "mặt", "bằng", "tính", "đáy",
-    "cạnh", "cạnh", "số", "góc", "vuông", "nằm", "cùng", "phẳng", "diện", "thẳng", "mặt", "khối", "song", "song",
-    "vuông", "của", "cạnh", "trục", "tạo", "độ", "phép", "chứa", "dài", "đường", "phẳng", "hợp", "giữa", "theo",
-    "cạnh", "toạ", "độ", "hình", "chóp", "đỉnh", "đáy", "vuông", "tại", "cạnh", "đường", "tròn", "bán", "kính"
+    "trong", "cạnh", "của", "hình", "vuông", "nhật", "các", "tính", "đúng", "sai", "đều", "bằng", "cho",
+    "thoi", "tâm", "đáy", "trung", "điểm", "khẳng", "định", "xét", "mặt", "là", "và", "có", "giá", "trị",
+    "chóp", "tổng", "hiệu", "trừ", "chia", "nhân", "phần", "diện", "tích", "chu", "vi", "số", "góc", "song",
+    "song", "vuông", "với", "bán", "kính", "lượt", "phải", "trái", "thẳng", "đúng", "sai", "theo", "phép",
+    "toạ", "độ", "thẳng", "giả", "thiết", "ngược", "hướng", "cạnh", "bởi", "lấy", "lúc", "dài", "ngắn"
 ])
 
 def convert_file_to_base64(file, mime_type):
@@ -108,30 +107,39 @@ def save_to_latex(text, figures, file_name):
     return latex_code
 
 def clean_latex(text):
-    # Sửa các lỗi nhận dạng phổ biến
     text = re.sub(r'//', r'\\parallel ', text)
     text = re.sub(r"\^'|'\^", r'^{\\prime}', text)
     text = re.sub(r"\^\\prime|\^{\\prime}", r'^{\\prime}', text)
     text = re.sub(r'90\^(\{?circ\}?)', r'90^{\\circ}', text)
     text = re.sub(r"\$(\s*)\$", '', text)
-    text = re.sub(r'\{(\${.*?}\$)\}', r'\1', text)  # Gỡ ${...}$ khỏi ngoặc nhọn thừa
+    text = re.sub(r'\{(\${.*?}\$)\}', r'\1', text)
     return text
 
 def format_math_expr(text):
-    # Chỉ bọc biến, số, công thức, KHÔNG bọc từ tiếng Việt
+    lines = text.split('\n')
+    out_lines = []
+    for line in lines:
+        # Nếu là dòng ý trắc nghiệm: "A. ..." hoặc "B) ..." hoặc "C. ..."
+        m = re.match(r'^([ABCD])[\.\)]\s*(.*)', line.strip())
+        if m:
+            prefix, content = m.groups()
+            content = wrap_math_in_line(content)
+            out_lines.append(f"{prefix}. {content}")
+        else:
+            out_lines.append(wrap_math_in_line(line))
+    return "\n".join(out_lines)
+
+def wrap_math_in_line(line):
+    # Chỉ bọc biến/công thức, không bọc từ tiếng Việt
     def wrap(match):
         expr = match.group(0)
-        # Nếu là từ tiếng Việt hoặc chữ thường 3 ký tự trở lên (tránh bọc "trong", "nhau", ...)
-        if expr.lower() in VIET_WORDS or re.match(r"^[a-zA-ZÀ-ỹà-ỹ']{3,}$", expr):
+        # Không bọc từ tiếng Việt nhiều hơn 1 ký tự, hoặc chữ thường >=2
+        if expr.lower() in VIET_WORDS or re.match(r"^[a-zA-ZÀ-ỹà-ỹ]{2,}$", expr):
             return expr
-        # Không bọc số trang, số câu hỏi, page, Câu, ...
-        if expr.isdigit() or expr in ['Page', 'Câu']:
-            return expr
-        # Chỉ bọc nếu là 1-2 ký tự, số, hoặc chuỗi có kí tự toán đặc trưng
-        return "${" + expr + "}$"
-    # Bắt các biến, số, ký hiệu toán, chỉ số, công thức
-    pattern = r'(A|B|C|D|O|M|N|S|a|b|c|d|x|y|z|n|m|i|j|k|l|D^{\\prime}|B^{\\prime}|C^{\\prime}|A^{\\prime}|\\perp|\\parallel|//|[0-9]+|[+\-*/=^()]|[A-Za-z]\^{\\prime}|\\left|\\right|\\circ|\\prime|\\cdot|\\ldots|\\dots|\\overline|\\sqrt)'
-    return re.sub(pattern, wrap, text)
+        return f"${expr}$"
+    # Nhận diện biến toán, số, công thức (không bọc từ/cụm tiếng Việt)
+    pattern = r'\b(?:[A-Z]{1,3}|[A-Z][A-Z0-9]{1,3}|a|b|c|d|x|y|z|n|m|i|j|k|l|A|B|C|D|O|M|N|S|a|b|c|d)(?:_{[0-9]+}|\^{\\prime})?([ ]*[=+\-*/^][ ]*[0-9A-Za-z]+)?\b'
+    return re.sub(pattern, wrap, line)
 
 tab1, tab2 = st.tabs(["📄 OCR PDF", "🖼️ OCR Image"])
 
