@@ -15,24 +15,24 @@ from pdf2image import convert_from_bytes
 
 st.set_page_config(page_title="OCR PDF & Image", layout="centered")
 
-# -------------------- TOÁN: FORMAT LaTeX CHUẨN MATH TYPE ----------------------
-def sanitize_latex_expr(expr):
-    return expr.replace('\\_', '_').replace('\\^', '^').replace('\\\\', '\\')
+# ------------------ FORMAT LATEX CHUẨN CHO MATH TYPE ------------------------
 
 def format_math_ocr(text):
     excluded_keywords = [
         "BỘ GIÁO DỤC VÀ ĐÀO TẠO", "KỲ THI", "ĐỀ THI", "Môn thi", "Họ, tên thí sinh",
         "Số báo danh", "Mã đề", "Trang", "Thời gian làm bài", "PHẦN", "Bảng", "BẢNG"
     ]
-
     def should_exclude(line):
         return any(line.strip().startswith(kw) for kw in excluded_keywords)
-
     def is_choice_line(line):
         return re.match(r"^\s*[ABCD]\.?\)?", line)
-
-    math_pattern = r'(\d+([.,]\d+)?|[a-zA-Z_][a-zA-Z_\d]*|\\?[a-zA-Z]+|\\?\^\{[^}]+\}|\\?\_[^ ]+)'
-
+    # Chỉ bắt biến, công thức (vd: x, x_1, a^2, 2x, 3xy, x^2y^3...), không bắt số đơn lẻ
+    math_pattern = r'([a-zA-Z][a-zA-Z0-9_\^]*|[0-9]+[a-zA-Z][a-zA-Z0-9_\^]*)'
+    def replace_math(m):
+        s = m.group(0)
+        if re.fullmatch(r"\d+", s):  # Số đơn lẻ, không bọc
+            return s
+        return f"${s}$"
     lines = text.split("\n")
     output = []
     for line in lines:
@@ -43,14 +43,18 @@ def format_math_ocr(text):
             m = re.match(r'^(Câu\s*\d+[:：]?)\s*(.*)', l)
             if m:
                 header, rest = m.groups()
-                rest = re.sub(math_pattern, lambda m: f"${{{sanitize_latex_expr(m.group(0))}}}$", rest)
+                rest = re.sub(math_pattern, replace_math, rest)
                 output.append(f"{header} {rest}".strip())
             else:
-                l = re.sub(math_pattern, lambda m: f"${{{sanitize_latex_expr(m.group(0))}}}$", l)
+                l = re.sub(math_pattern, replace_math, l)
                 output.append(l)
-    return "\n".join(output)
+    # Sửa các trường hợp còn sót ${...}$ thành $...$
+    result = "\n".join(output)
+    result = re.sub(r"\$\{(.*?)\}\$", r"$\1$", result)
+    result = re.sub(r"\{([^\{\}]+)\}", r"\1", result)
+    return result
 
-# -------------------- GIAO DIỆN ----------------------------
+# ------------------------- GIAO DIỆN ------------------------------
 tab1, tab2 = st.tabs(["📄 OCR PDF", "🖼️ OCR Image"])
 
 with tab1:
@@ -77,7 +81,6 @@ with tab1:
                 uploaded_pdf.seek(0)
                 result = client.convert(pdf_bytes, file_name, mime_type)
                 pdf_images = convert_from_bytes(pdf_bytes)
-
                 images = []
                 for i, im in enumerate(pdf_images):
                     buf = io.BytesIO()
@@ -87,11 +90,9 @@ with tab1:
                     for fig in figs:
                         fig['name'] = f"page-{i+1}-{fig['name']}"
                     images.extend(figs)
-
                 if not result.get("success"):
                     st.error("❌ OCR thất bại: " + str(result.get("error")))
                     st.stop()
-
                 st.session_state["ocr_text"] = result["data"].get("text_content", "")
                 st.session_state["ocr_figures"] = images
                 st.session_state["ocr_done"] = True
@@ -100,7 +101,6 @@ with tab1:
     if st.session_state.get("ocr_done"):
         raw_text = st.session_state["ocr_text"]
         figures = st.session_state["ocr_figures"]
-
         st.subheader("📝 Văn bản OCR (MathType):")
         filtered_text = format_math_ocr(raw_text)
         st.text_area("Kết quả OCR:", filtered_text, height=300, label_visibility="collapsed")
@@ -115,10 +115,8 @@ with tab1:
                     st.image(base64.b64decode(fig["base64"]), caption=fig["name"], use_container_width=True)
                     if checked:
                         selected_names.append(fig["name"])
-
             export_figures = [fig for fig in figures if fig["name"] in selected_names]
 
-            # Nhận diện Pix2Tex
             if st.button("✨ Nhận diện công thức từ hình ảnh (pix2tex)", use_container_width=True):
                 with st.spinner("Đang nhận diện công thức bằng Pix2Tex..."):
                     latex_results = recognize_latex_from_images(export_figures)
