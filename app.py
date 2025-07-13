@@ -14,12 +14,8 @@ from extract_figures_from_image_pillow import extract_figures_from_image
 
 # =========== GEMINI KEY LIST ===========
 GEMINI_API_KEYS = [
-  "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
-  "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
-  "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
-  "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
-  "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
-  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
+    "AIzaSyAAA111111111111111111111111",
+    "AIzaSyBBB222222222222222222222222"
 ]
 api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
@@ -177,6 +173,8 @@ with tab_pdf:
         images = st.session_state.get("ocr_images", [])
         tab1, tab2 = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
         with tab1:
+            st.markdown("#### 📋 Kết quả OCR PDF:")
+            st.text_area("Kết quả OCR PDF:", text_content, height=350, label_visibility="collapsed")
             col1, col2 = st.columns(2)
             with col1:
                 st.download_button(
@@ -234,6 +232,15 @@ with tab_img:
         accept_multiple_files=True,
         help="Mỗi ảnh là 1 trang, minh hoạ sẽ được tách tự động, nhận diện caption và chèn đúng vị trí."
     )
+
+    # --- Hiện thông tin file ảnh ---
+    if uploaded_images:
+        with st.expander("ℹ️ Thông tin ảnh đã tải lên", expanded=True):
+            for img_file in uploaded_images:
+                st.write(f"**Tên file:** {img_file.name}")
+                st.write(f"**Loại file:** {img_file.type}")
+                st.write(f"**Kích thước:** {img_file.size / 1024:.1f} KB")
+
     tab1, tab2 = st.tabs(["📋 Văn bản (Markdown)", "🖼️ Hình ảnh đã tách"])
     if uploaded_images:
         latex_results = []
