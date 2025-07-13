@@ -8,63 +8,82 @@ import base64
 import re
 from PyPDF2 import PdfReader
 import tempfile
+import zipfile
+import io
 
-st.set_page_config(page_title="OCR cho file PDF", layout="centered")
+st.set_page_config(page_title="OCR PDF & Ảnh", layout="centered")
 st.markdown(
     """
-    <h2>📝 OCR cho file PDF</h2>
-    <small>📁 <b>Chọn file PDF để xử lý OCR</b></small>
+    <h2>📝 OCR cho PDF và Ảnh (PNG, JPG)</h2>
+    <small>📁 <b>Chọn file PDF hoặc ảnh để xử lý OCR</b></small>
     """,
     unsafe_allow_html=True,
 )
 
 uploaded_file = st.file_uploader(
-    "Chọn file PDF để xử lý OCR", type=["pdf"], label_visibility="collapsed"
+    "Chọn file PDF hoặc ảnh (PNG/JPG) để xử lý OCR", 
+    type=["pdf", "png", "jpg", "jpeg"], 
+    label_visibility="collapsed"
 )
 
 # ---------- Thông tin file ----------
-num_pages = None
 if uploaded_file:
-    pdf_bytes = uploaded_file.read()
     file_name = uploaded_file.name
-    mime_type = "application/pdf"
-    size_mb = len(pdf_bytes) / (1024 * 1024)
-
-    try:
-        uploaded_file.seek(0)
-        reader = PdfReader(uploaded_file)
-        num_pages = len(reader.pages)
-        uploaded_file.seek(0)
-    except:
-        num_pages = "?"
-
+    file_type = file_name.split(".")[-1].lower()
+    mime_type = uploaded_file.type
+    uploaded_file.seek(0)
+    file_bytes = uploaded_file.read()
+    size_mb = len(file_bytes) / (1024 * 1024)
+    num_pages = None
+    if file_type == "pdf":
+        try:
+            uploaded_file.seek(0)
+            reader = PdfReader(uploaded_file)
+            num_pages = len(reader.pages)
+            uploaded_file.seek(0)
+        except:
+            num_pages = "?"
     with st.expander("ℹ️ Thông tin file", expanded=True):
         st.write(f"**Tên file:** {file_name}")
         st.write(f"**Loại file:** {mime_type}")
         st.write(f"**Kích thước:** {size_mb:.1f} MB")
-        st.write(f"**Số trang:** {num_pages}")
+        if file_type == "pdf":
+            st.write(f"**Số trang:** {num_pages}")
 
-# ---------- Nút xử lý OCR ----------
+# ---------- Xử lý OCR ----------
 if uploaded_file:
-    if st.button("🚀 Xử lý OCR PDF", type="primary", use_container_width=True):
-        st.info("⏳ Đang xử lý OCR PDF... (quá trình này có thể mất vài phút)")
+    is_pdf = file_type == "pdf"
+    if st.button("🚀 Xử lý OCR", type="primary", use_container_width=True):
+        st.info("⏳ Đang xử lý OCR... (có thể mất vài phút)")
         with st.spinner("Đang nhận diện văn bản và trích xuất hình ảnh..."):
             client = EnhancedSmartOCRClient(API_URL, API_KEY)
-            uploaded_file.seek(0)
-            pdf_bytes = uploaded_file.read()
-            result = client.convert(pdf_bytes, file_name, mime_type)
-            images = extract_images_from_pdf(pdf_bytes)
+            result = client.convert(file_bytes, file_name, mime_type)
+            if is_pdf:
+                images = extract_images_from_pdf(file_bytes)
+            else:
+                img_b64 = base64.b64encode(file_bytes).decode()
+                images = [{"name": file_name, "base64": img_b64}]
         if not result.get("success"):
-            st.error("❌ Xử lý OCR PDF thất bại: " + str(result.get("error")))
+            st.error("❌ Xử lý OCR thất bại: " + str(result.get("error")))
             st.stop()
-
-        # Lưu vào session_state để không bị mất khi bấm nút khác
         st.session_state["ocr_text_raw"] = result["data"].get("text_content", "")
         st.session_state["ocr_images"] = images
         st.session_state["ocr_done"] = True
-        st.success("✅ Xử lý OCR PDF hoàn tất thành công!")
+        st.success("✅ Xử lý OCR hoàn tất!")
 
 # ---------- Hiển thị kết quả nếu đã OCR ----------
+def images_to_latex(images, image_dir='images'):
+    latex_code = ""
+    for img in images:
+        img_name = img['name']
+        latex_code += (
+            "\\begin{figure}[H]\n"
+            "    \\centering\n"
+            f"    \\includegraphics[width=0.6\\textwidth]{{{image_dir}/{img_name}}}\n"
+            "\\end{figure}\n\n"
+        )
+    return latex_code
+
 if st.session_state.get("ocr_done"):
     def dollar_to_mathptn(s):
         return re.sub(r'\$(.+?)\$', r'${\1}$', s)
@@ -74,8 +93,8 @@ if st.session_state.get("ocr_done"):
 
     tab1, tab2 = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
     with tab1:
-        st.markdown("#### 📋 Kết quả OCR PDF:")
-        st.text_area("Kết quả OCR PDF:", text_content, height=350, label_visibility="collapsed")
+        st.markdown("#### 📋 Kết quả OCR:")
+        st.text_area("Kết quả OCR:", text_content, height=350, label_visibility="collapsed")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -107,14 +126,45 @@ if st.session_state.get("ocr_done"):
     with tab2:
         if images:
             st.success(f"🖼️ Đã tìm thấy {len(images)} hình ảnh:")
+            # Tải tất cả ảnh ZIP
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w") as zipf:
+                for img in images:
+                    img_bytes = base64.b64decode(img["base64"])
+                    zipf.writestr(img["name"], img_bytes)
+            st.download_button(
+                "⬇️ Tải tất cả ảnh (ZIP)",
+                data=zip_buffer.getvalue(),
+                file_name="anh_tach.zip",
+                mime="application/zip",
+                use_container_width=True,
+            )
+            # Tải mã LaTeX ảnh
+            latex_code = images_to_latex(images)
+            st.download_button(
+                "📝 Tải mã LaTeX cho ảnh",
+                data=latex_code,
+                file_name="latex_anh.tex",
+                mime="text/plain",
+                use_container_width=True,
+            )
+            # Hiển thị từng ảnh + nút tải riêng
             for img in images:
                 try:
                     img_bytes = base64.b64decode(img["base64"])
                     st.image(img_bytes, caption=img["name"], use_container_width=True)
+                    st.download_button(
+                        f"⬇️ Tải {img['name']}",
+                        data=img_bytes,
+                        file_name=img["name"],
+                        mime="image/jpeg",
+                        use_container_width=True,
+                        key=img["name"]
+                    )
                 except Exception as e:
                     st.error(f"Không đọc được ảnh {img['name']}: {e}")
         else:
-            st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
+            st.warning("Không tìm thấy ảnh minh hoạ trong file!")
 
 st.markdown("---")
-st.caption("🔖 <b>OCR PDF: hỗ trợ MathType, ảnh minh hoạ, xuất Word/TXT. Giao diện thân thiện.</b>", unsafe_allow_html=True)
+st.caption("🔖 <b>OCR PDF/Ảnh: hỗ trợ MathType, tách ảnh, xuất Word/TXT, sinh mã LaTeX. Giao diện thân thiện.</b>", unsafe_allow_html=True)
