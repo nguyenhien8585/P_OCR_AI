@@ -12,8 +12,7 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 from PyPDF2 import PdfReader
-
-from extract_figures_from_image_pillow import extract_figures_from_image  # Hàm tách ảnh minh hoạ
+from extract_figures_from_image_pillow import extract_figures_from_image  # Hàm tách minh hoạ
 
 # =========== GEMINI KEY LIST ===========
 GEMINI_API_KEYS = [
@@ -32,10 +31,11 @@ GEMINI_PROMPT = '''
 YÊU CẦU:
 1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh.
 2. Nếu phát hiện hình minh hoạ (hình vẽ, đồ thị, bảng, ...), đánh dấu đúng vị trí bằng cú pháp markdown: ![Hình minh hoạ](img-x.jpeg) với x là số thứ tự ảnh minh hoạ đã tách từ ảnh này (bắt đầu từ 1).
-3. Giữ nguyên cấu trúc đoạn văn và xuống dòng.
-4. Công thức toán học: tất cả ở dạng ${...}$ (inline, hệ, ký hiệu ... như hướng dẫn chi tiết).
-5. Bảng biểu: dùng markdown nếu có thể.
-6. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
+3. Nếu trong ảnh có hình minh hoạ, khi trả lời, hãy chèn mã markdown ![Hình minh hoạ](img-1.jpeg) ngay sau dòng chứa từ “xem hình dưới”, “hình dưới đây” hoặc mô tả yêu cầu xem hình.
+4. Giữ nguyên cấu trúc đoạn văn và xuống dòng.
+5. Công thức toán học: tất cả ở dạng ${...}$ (inline, hệ, ký hiệu ... như hướng dẫn chi tiết).
+6. Bảng biểu: dùng markdown nếu có thể.
+7. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
 '''
 
 def gemini_generate_text(image_bytes, api_key):
@@ -59,6 +59,23 @@ def gemini_generate_text(image_bytes, api_key):
     res = r.json()
     text = res["candidates"][0]["content"]["parts"][0]["text"]
     return text
+
+def auto_insert_figure(text, figure_name):
+    lines = text.split('\n')
+    new_lines = []
+    inserted = False
+    for line in lines:
+        new_lines.append(line)
+        # Chèn ngay sau dòng có từ khóa
+        if (not inserted) and (any(kw in line.lower() for kw in [
+            "xem hình dưới", "hình dưới đây", "hình bên dưới", "hình sau", "hình minh hoạ", "hình minh họa"
+        ])):
+            new_lines.append(f"![Hình minh hoạ]({figure_name})")
+            inserted = True
+    if not inserted:
+        # Nếu không thấy từ khoá, thêm cuối đoạn
+        new_lines.append(f"![Hình minh hoạ]({figure_name})")
+    return '\n'.join(new_lines)
 
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="centered")
 st.title("✨ Chuyển PDF & Ảnh Toán sang Word, giữ công thức & minh hoạ ✨")
@@ -156,7 +173,7 @@ with tab_pdf:
 
 # =========== TAB ẢNH ===========
 with tab_img:
-    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động) → Word, LaTeX dạng code copy")
+    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động) → Word, LaTeX dạng code copy, minh hoạ đúng vị trí")
     uploaded_images = st.file_uploader(
         "Chọn nhiều ảnh (mỗi ảnh là một trang):",
         type=["png", "jpg", "jpeg", "webp"],
@@ -168,7 +185,7 @@ with tab_img:
         all_figures = []
         for i, img_file in enumerate(uploaded_images):
             img_bytes = img_file.read()
-            # 1. Tách minh hoạ tự động
+            # 1. Tách minh hoạ tự động (trả về list [{name, base64}])
             figures = extract_figures_from_image(img_bytes)
             all_figures.extend(figures)
             # 2. Gọi Gemini sinh văn bản (markdown giữ vị trí ![Hình minh hoạ](img-x.jpeg))
@@ -178,6 +195,9 @@ with tab_img:
                     text = gemini_generate_text(img_bytes, api_key)
                 except Exception as e:
                     text = f"[Lỗi Gemini: {e}]"
+            # 3. Nếu Gemini KHÔNG tự sinh markdown hình hoặc sinh sai vị trí: auto chèn lại
+            if figures and not any([fig["name"] in text for fig in figures]):
+                text = auto_insert_figure(text, figures[0]["name"])
             latex_results.append((img_file.name, text, figures))
 
         # Preview: Văn bản & minh hoạ từng trang
@@ -186,7 +206,6 @@ with tab_img:
             st.markdown("### 📋 Kết quả từng trang:")
             for idx, (img_name, latex, figures) in enumerate(latex_results):
                 st.markdown(f"#### Trang {idx+1}: {img_name}")
-                # Chèn hình minh hoạ đúng vị trí nếu có markdown ![Hình minh hoạ](img-x.jpeg)
                 parts = re.split(r"(!\[Hình minh hoạ\]\(img-\d+\.jpeg\))", latex)
                 for part in parts:
                     img_match = re.match(r"!\[Hình minh hoạ\]\((img-(\d+)\.jpeg)\)", part)
@@ -198,7 +217,6 @@ with tab_img:
                         else:
                             st.warning(f"Không tìm thấy ảnh {findname}")
                     else:
-                        # Hiển thị LaTeX dạng code dễ copy
                         lines = part.split("\n")
                         for line in lines:
                             if re.fullmatch(r"\$\{?.+\}?\$", line.strip()):
@@ -210,7 +228,6 @@ with tab_img:
             for fig in all_figures:
                 st.image(base64.b64decode(fig["base64"]), caption=fig["name"], width=200)
 
-        # Xuất Word: Chèn lại các minh hoạ vào đúng vị trí markdown
         markdown_out = ""
         for idx, (img_name, latex, figures) in enumerate(latex_results):
             markdown_out += f"{latex}\n\n"
@@ -232,4 +249,4 @@ with tab_img:
     else:
         st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
 
-st.caption("✨ Ảnh minh hoạ tự tách bằng Pillow+scipy, LaTeX luôn để dạng code dễ copy, xuất Word đúng vị trí.")
+st.caption("✨ Ảnh minh hoạ tự tách bằng Pillow+scipy, luôn được chèn đúng vị trí theo nội dung, LaTeX để code dễ copy, xuất Word giữ minh hoạ chuẩn.")
