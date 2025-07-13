@@ -6,3 +6,4 @@ numpy
 scipy
 pdf2image
 regex
+requests
