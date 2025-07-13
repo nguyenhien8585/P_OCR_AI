@@ -45,10 +45,9 @@ GEMINI_API_KEYS = [
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
   "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
-  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
+  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I",
 ]
 api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
-
 def get_next_api_key():
     return next(api_key_cycle)
 
@@ -188,19 +187,28 @@ with tab_img:
             except Exception as e:
                 text = f"[Lỗi khi sinh văn bản: {e}]"
             latex_results.append((img_file.name, text))
+            # Chuẩn hóa ảnh (JPEG, base64) để chèn Word
             pil_img = Image.open(BytesIO(img_bytes)).convert("RGB")
             buf = BytesIO()
             pil_img.save(buf, format="JPEG")
             img_b64 = base64.b64encode(buf.getvalue()).decode()
             images_data.append({"name": f"img-{i}.jpeg", "base64": img_b64})
+        # HIỂN THỊ TÁCH RIÊNG: mỗi ảnh - mỗi kết quả
         for idx, (img_name, latex) in enumerate(latex_results):
-            st.image(uploaded_images[idx], caption=img_name, width=220)
-            st.markdown("**Kết quả văn bản:**")
-            st.code(latex)
-            try:
-                st.latex(latex.replace("$", ""))  # thử hiển thị nếu chỉ là công thức
-            except:
-                pass
+            with st.container():
+                st.markdown(f"**Ảnh minh hoạ {idx+1}:**")
+                st.image(uploaded_images[idx], caption=img_name, width=350)
+                st.markdown("**Kết quả văn bản sinh bởi Gemini:**")
+                for line in latex.split("\n"):
+                    line = line.strip()
+                    if line.startswith("$") and line.endswith("$"):
+                        try:
+                            st.latex(line[1:-1])
+                        except:
+                            st.write(line)
+                    else:
+                        st.write(line)
+        # XUẤT WORD: mỗi ảnh - mỗi đoạn, sau đó đến ảnh minh hoạ
         markdown_out = ""
         for idx, (img_name, latex) in enumerate(latex_results):
             markdown_out += f"{latex}\n\n![Hình minh hoạ](img-{idx}.jpeg)\n\n"
@@ -220,4 +228,4 @@ with tab_img:
                 )
                 os.remove(tmp_word.name)
     st.markdown("---")
-    st.caption("📷 Chuyển nhiều ảnh Toán thành tài liệu Word: giữ ảnh, giữ công thức, bảng, câu trắc nghiệm, tự luận, tiếng Việt chuẩn Unicode.")
+    st.caption("📷 Mỗi ảnh thành một mục riêng, kết quả tách biệt. Word giữ đúng minh hoạ và công thức.")
