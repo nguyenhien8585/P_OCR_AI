@@ -18,7 +18,7 @@ st.markdown(
 
 tab_pdf, tab_img = st.tabs(["📄 PDF", "🖼️ Ảnh (PNG/JPG)"])
 
-# --- TAB PDF ---
+# =================== TAB PDF ===================
 with tab_pdf:
     uploaded_pdf = st.file_uploader("Chọn file PDF để xử lý OCR", type=["pdf"])
     num_pages = None
@@ -120,7 +120,7 @@ with tab_pdf:
             else:
                 st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
 
-# --- TAB ẢNH ---
+# =================== TAB ẢNH ===================
 with tab_img:
     uploaded_img = st.file_uploader("Chọn ảnh PNG/JPG để xử lý OCR", type=["png", "jpg", "jpeg"])
     if uploaded_img:
