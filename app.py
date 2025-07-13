@@ -25,7 +25,6 @@ api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
     return next(api_key_cycle)
 
-# ===== GEMINI PROMPT ==========
 GEMINI_PROMPT = '''
 YÊU CẦU:
 1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh.
@@ -95,7 +94,7 @@ def insert_figures_no_duplicate(text, figures):
     for idx, fig in enumerate(figures):
         inserted = False
         for i, line in enumerate(lines):
-            if not inserted and not any(p[0]==i for p in positions):  # dòng này chưa có hình nào
+            if not inserted and not any(p[0]==i for p in positions):
                 if 'bảng biến thiên' in fig['caption'] and 'bảng biến thiên' in line.lower():
                     positions.append((i, idx))
                     inserted = True
@@ -178,9 +177,6 @@ with tab_pdf:
         images = st.session_state.get("ocr_images", [])
         tab1, tab2 = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
         with tab1:
-            st.markdown("#### 📋 Kết quả OCR PDF:")
-            st.text_area("Kết quả OCR PDF:", text_content, height=350, label_visibility="collapsed")
-            st.code(text_content, language="markdown")
             col1, col2 = st.columns(2)
             with col1:
                 st.download_button(
@@ -210,7 +206,7 @@ with tab_pdf:
         with tab2:
             if images:
                 st.success(f"🖼️ Đã tìm thấy {len(images)} hình ảnh:")
-                for img in images:
+                for idx, img in enumerate(images):
                     try:
                         img_bytes = base64.b64decode(img["base64"])
                         st.image(img_bytes, caption=img["name"], use_container_width=True)
@@ -219,7 +215,8 @@ with tab_pdf:
                             img_bytes,
                             file_name=img["name"],
                             mime="image/jpeg",
-                            use_container_width=True
+                            use_container_width=True,
+                            key=f"pdf-download-{img['name']}-{idx}"
                         )
                     except Exception as e:
                         st.error(f"Không đọc được ảnh {img['name']}: {e}")
@@ -258,31 +255,24 @@ with tab_img:
                     text = gemini_generate_text(img_bytes, api_key)
                 except Exception as e:
                     text = f"[Lỗi Gemini: {e}]"
-            # Xóa mọi markdown hình Gemini đã sinh ra (nếu có)
             text = remove_all_figure_markdown(text)
-            # Chèn từng hình đúng vị trí (không lặp/dư)
             if figures_with_caption:
                 text = insert_figures_no_duplicate(text, figures_with_caption)
             latex_results.append((img_file.name, text, figures_with_caption))
 
         with tab1:
             st.markdown("### 📋 Kết quả từng trang (có markdown minh hoạ):")
-            full_markdown = ""
             for idx, (img_name, latex, figures) in enumerate(latex_results):
                 st.markdown(f"#### Trang {idx+1}: {img_name}")
                 st.code(latex, language="markdown")
-                full_markdown += latex + "\n\n"
-            st.download_button(
-                "📄 Tải toàn bộ markdown",
-                full_markdown,
-                file_name="ket_qua_ocr_anh.md",
-                mime="text/markdown",
-                use_container_width=True,
-            )
             if st.button("📝 Tạo và tải file Word giữ minh hoạ đúng vị trí", use_container_width=True):
                 with st.spinner("Đang tạo file Word..."):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                        insert_images_to_word_from_markdown(full_markdown, all_figures, tmp_word.name)
+                        insert_images_to_word_from_markdown(
+                            "\n\n".join([latex for _, latex, _ in latex_results]), 
+                            all_figures, 
+                            tmp_word.name
+                        )
                     with open(tmp_word.name, "rb") as f:
                         word_data = f.read()
                     st.success("✅ Đã tạo file Word thành công!")
@@ -296,7 +286,7 @@ with tab_img:
                     os.remove(tmp_word.name)
         with tab2:
             st.markdown("### 🖼️ Tất cả minh hoạ đã tách (kèm caption, cho tải ảnh):")
-            for fig in all_figures:
+            for idx, fig in enumerate(all_figures):
                 img_bytes = base64.b64decode(fig["base64"])
                 st.image(img_bytes, caption=f"{fig['name']} - {fig['caption']}", width=250)
                 st.download_button(
@@ -304,7 +294,8 @@ with tab_img:
                     img_bytes,
                     file_name=fig["name"],
                     mime="image/jpeg",
-                    use_container_width=True
+                    use_container_width=True,
+                    key=f"anh-download-{fig['name']}-{idx}"
                 )
     else:
         with tab1:
