@@ -31,7 +31,7 @@ GEMINI_PROMPT = '''
 YÊU CẦU:
 1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh.
 2. Nếu phát hiện hình minh hoạ (hình vẽ, đồ thị, bảng, ...), đánh dấu đúng vị trí bằng cú pháp markdown: ![Hình minh hoạ](img-x.jpeg) với x là số thứ tự ảnh minh hoạ đã tách từ ảnh này (bắt đầu từ 1).
-3. Nếu trong ảnh có hình minh hoạ, khi trả lời, hãy chèn mã markdown ![Hình minh hoạ](img-1.jpeg) ngay sau dòng chứa từ “xem hình dưới”, “hình dưới đây” hoặc mô tả yêu cầu xem hình.
+3. Nếu trong ảnh có hình minh hoạ, khi trả lời, hãy chèn mã markdown ![Hình minh hoạ](img-1.jpeg) ngay sau dòng chứa từ “xem hình dưới”, “hình dưới đây”, “bảng biến thiên”, “hình vẽ”, “biểu đồ” hoặc ngay sau dòng câu hỏi có đề cập hình/bảng.
 4. Giữ nguyên cấu trúc đoạn văn và xuống dòng.
 5. Công thức toán học: tất cả ở dạng ${...}$ (inline, hệ, ký hiệu ... như hướng dẫn chi tiết).
 6. Bảng biểu: dùng markdown nếu có thể.
@@ -64,16 +64,20 @@ def auto_insert_figure(text, figure_name):
     lines = text.split('\n')
     new_lines = []
     inserted = False
-    for line in lines:
+    for i, line in enumerate(lines):
         new_lines.append(line)
-        # Chèn ngay sau dòng có từ khóa
-        if (not inserted) and (any(kw in line.lower() for kw in [
-            "xem hình dưới", "hình dưới đây", "hình bên dưới", "hình sau", "hình minh hoạ", "hình minh họa"
-        ])):
-            new_lines.append(f"![Hình minh hoạ]({figure_name})")
-            inserted = True
+        if not inserted:
+            keywords = [
+                "xem hình dưới", "hình dưới đây", "hình bên dưới", "hình sau",
+                "hình minh hoạ", "hình minh họa", "bảng biến thiên", "hình vẽ", "biểu đồ"
+            ]
+            # Chèn sau dòng nếu chứa từ khoá, hoặc "Câu" và "hình"/"bảng"/"biểu đồ"
+            if (any(kw in line.lower() for kw in keywords) or
+                ("câu" in line.lower() and ("hình" in line.lower() or "bảng" in line.lower() or "biểu đồ" in line.lower()))):
+                new_lines.append(f"![Hình minh hoạ]({figure_name})")
+                inserted = True
     if not inserted:
-        # Nếu không thấy từ khoá, thêm cuối đoạn
+        # Nếu không thấy vị trí phù hợp, thêm cuối
         new_lines.append(f"![Hình minh hoạ]({figure_name})")
     return '\n'.join(new_lines)
 
@@ -185,22 +189,19 @@ with tab_img:
         all_figures = []
         for i, img_file in enumerate(uploaded_images):
             img_bytes = img_file.read()
-            # 1. Tách minh hoạ tự động (trả về list [{name, base64}])
             figures = extract_figures_from_image(img_bytes)
             all_figures.extend(figures)
-            # 2. Gọi Gemini sinh văn bản (markdown giữ vị trí ![Hình minh hoạ](img-x.jpeg))
             api_key = get_next_api_key()
             with st.spinner(f"Đang nhận diện trang {i+1}..."):
                 try:
                     text = gemini_generate_text(img_bytes, api_key)
                 except Exception as e:
                     text = f"[Lỗi Gemini: {e}]"
-            # 3. Nếu Gemini KHÔNG tự sinh markdown hình hoặc sinh sai vị trí: auto chèn lại
+            # Nếu Gemini KHÔNG tự sinh markdown hình hoặc sinh sai vị trí: auto chèn lại
             if figures and not any([fig["name"] in text for fig in figures]):
                 text = auto_insert_figure(text, figures[0]["name"])
             latex_results.append((img_file.name, text, figures))
 
-        # Preview: Văn bản & minh hoạ từng trang
         tab1, tab2 = st.tabs(["📋 Văn bản (copy LaTeX)", "🖼️ Ảnh minh hoạ đã tách"])
         with tab1:
             st.markdown("### 📋 Kết quả từng trang:")
@@ -249,4 +250,4 @@ with tab_img:
     else:
         st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
 
-st.caption("✨ Ảnh minh hoạ tự tách bằng Pillow+scipy, luôn được chèn đúng vị trí theo nội dung, LaTeX để code dễ copy, xuất Word giữ minh hoạ chuẩn.")
+st.caption("✨ Ảnh minh hoạ tự tách bằng Pillow+scipy, luôn được chèn đúng vị trí gần dòng liên quan hình vẽ, LaTeX để code dễ copy, xuất Word giữ minh hoạ chuẩn.")
