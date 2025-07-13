@@ -10,6 +10,7 @@ from PyPDF2 import PdfReader
 import tempfile
 from PIL import Image
 import io
+import img2pdf
 
 st.set_page_config(page_title="OCR PDF/Ảnh ➔ LaTeX + Word", layout="centered")
 st.markdown(
@@ -126,19 +127,22 @@ with tab_img:
     if uploaded_img:
         img_bytes = uploaded_img.read()
         file_name = uploaded_img.name
-        mime_type = "image/png"
         size_mb = len(img_bytes) / (1024 * 1024)
         with st.expander("ℹ️ Thông tin ảnh", expanded=True):
             st.write(f"**Tên file:** {file_name}")
-            st.write(f"**Loại file:** {mime_type}")
+            st.write(f"**Loại file:** PNG/JPG")
             st.write(f"**Kích thước:** {size_mb:.1f} MB")
 
         if st.button("🚀 Xử lý OCR ẢNH", type="primary", use_container_width=True, key="btn_ocr_img"):
             st.info("⏳ Đang xử lý OCR ẢNH...")
             with st.spinner("Đang nhận diện văn bản và tách hình ảnh..."):
+                # Convert ảnh sang PDF (để OCR)
+                pdf_bytes = img2pdf.convert(img_bytes)
+                file_name_pdf = file_name + ".pdf"
+                mime_type_pdf = "application/pdf"
                 client = EnhancedSmartOCRClient(API_URL, API_KEY)
-                result = client.convert(img_bytes, file_name, mime_type)
-                # Tách từng vùng ảnh nhỏ nếu muốn (hoặc lấy chính ảnh gốc)
+                result = client.convert(pdf_bytes, file_name_pdf, mime_type_pdf)
+                # Chèn ảnh gốc (minh hoạ) vào file Word/LaTeX
                 pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
                 buf = io.BytesIO()
                 pil_img.save(buf, format="JPEG")
