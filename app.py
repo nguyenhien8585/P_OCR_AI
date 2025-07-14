@@ -81,37 +81,28 @@ def insert_figures_map_by_cau(text, figures):
 def join_lines(text):
     lines = text.split('\n')
     output = []
-    buffer = []
-    pattern_cau = re.compile(r'^Câu\s*\d+\.')
-    for line in lines:
+    buffer = ""
+    for i, line in enumerate(lines):
         l = line.strip()
-        # Nếu là dòng đặc biệt: Câu N., hình, markdown --> đóng đoạn buffer
         if not l:
             if buffer:
-                output.append(' '.join(buffer))
-                buffer = []
-        elif l.startswith('![') or l.startswith('#') or pattern_cau.match(l):
+                output.append(buffer.strip())
+                buffer = ""
+            continue
+        # Nếu dòng là ảnh hoặc là tiêu đề câu hỏi thì đóng đoạn trước
+        if l.startswith('![') or re.match(r'^Câu\s*\d+\.|^HẾT\b', l):
             if buffer:
-                output.append(' '.join(buffer))
-                buffer = []
+                output.append(buffer.strip())
+                buffer = ""
             output.append(l)
         else:
-            buffer.append(l)
+            if buffer:
+                buffer += " " + l
+            else:
+                buffer = l
     if buffer:
-        output.append(' '.join(buffer))
-    # Xóa dòng trống thừa liên tiếp
-    result = []
-    prev_blank = False
-    for line in output:
-        if not line.strip():
-            if not prev_blank:
-                result.append("")
-            prev_blank = True
-        else:
-            result.append(line)
-            prev_blank = False
-    return '\n'.join(result)
-
+        output.append(buffer.strip())
+    return '\n'.join(output)
 # --- Gemini API Key (nhập vào nếu dùng AI) ---
 GEMINI_API_KEYS = [
     "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
