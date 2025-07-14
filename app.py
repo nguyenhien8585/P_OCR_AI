@@ -139,6 +139,7 @@ YÊU CẦU:
 Ví dụ: ${Oxyz}$, ${A}$,${AB}$,${0,1%}$,${0.1%}$,....
 7. Bảng biểu: dùng markdown nếu có thể.
 8. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
+9. Tên người, nhân vật không để trong ngoặc.
 Tuyệt đối không bịa nội dụng ra.
 '''
 def gemini_generate_text(image_bytes, api_key):
