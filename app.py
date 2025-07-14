@@ -55,27 +55,55 @@ def remove_all_figure_markdown(text):
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
 def insert_figures_to_markdown(text, figures):
-    # Xoá toàn bộ markdown cũ Gemini trả về
-    text = re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
-    lines = text.split('\n')
-    new_lines = []
+    # Tách từng đoạn dựa trên "Câu n." (giả sử số thứ tự 1-2 chữ số)
+    # Thêm 2 xuống dòng giữa các câu
+    pattern = r'(Câu\s*\d+\.|--------\s*HẾT--------)'
+    segments = [s.strip() for s in re.split(pattern, text) if s.strip()]
+    # Gộp lại theo từng cặp: (title, content)
+    grouped = []
+    i = 0
+    while i < len(segments):
+        if segments[i].startswith('Câu') or segments[i].startswith('--------'):
+            if i+1 < len(segments):
+                grouped.append((segments[i], segments[i+1]))
+                i += 2
+            else:
+                grouped.append((segments[i], ""))
+                i += 1
+        else:
+            grouped.append(("", segments[i]))
+            i += 1
+
+    # Chèn từng ảnh vào từng câu theo thứ tự (nếu có từ khóa liên quan)
+    result = []
     fig_idx = 0
     n_fig = len(figures)
-
-    for i, line in enumerate(lines):
-        new_lines.append(line)
-        # Sau mỗi câu hỏi, chèn ảnh vào nếu còn ảnh
-        if fig_idx < n_fig:
-            # Nhận diện dòng bắt đầu bằng "Câu X." (có thể có khoảng trắng, in đậm...)
-            if re.match(r'^\s*Câu\s*\d+', line):
-                new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
-                fig_idx += 1
-
-    # Nếu vẫn còn hình (hiếm khi), chèn vào cuối
+    for title, body in grouped:
+        lines = body.split('\n')
+        inserted = False
+        out = []
+        for line in lines:
+            out.append(line)
+            if fig_idx < n_fig:
+                # Chèn ngay sau dòng chứa từ khóa liên quan hình, nhưng chỉ 1 lần/câu
+                if not inserted and any(k in line.lower() for k in ["hình vẽ", "hình dưới", "xem hình", "bảng dưới", "minh hoạ", "minh họa"]):
+                    out.append(f'![{figures[fig_idx]["name"]}]({figures[fig_idx]["name"]})')
+                    inserted = True
+                    fig_idx += 1
+        # Nếu chưa chèn ảnh nào mà tiêu đề này là "Câu 5" v.v. thì có thể chèn ảnh tiếp theo vào đầu câu
+        if not inserted and fig_idx < n_fig and ("hình" in body.lower() or "bảng" in body.lower()):
+            out.insert(0, f'![{figures[fig_idx]["name"]}]({figures[fig_idx]["name"]})')
+            fig_idx += 1
+        # Gộp lại với tiêu đề
+        if title:
+            result.append(title)
+        result.append('\n'.join(out))
+    # Nếu còn ảnh chưa dùng, chèn xuống cuối
     while fig_idx < n_fig:
-        new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
+        result.append(f'![{figures[fig_idx]["name"]}]({figures[fig_idx]["name"]})')
         fig_idx += 1
-    return '\n'.join(new_lines)
+    # Kết quả chuẩn markdown với 2 dòng trắng giữa các câu
+    return '\n\n'.join(result)
 
 
 # --- NHẬP GEMINI KEY Ở ĐÂY (có thể để trống nếu không dùng AI) ---
