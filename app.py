@@ -7,15 +7,15 @@ import itertools
 import os
 import numpy as np
 import io
-from PIL import Image, ImageFilter
-from scipy.ndimage import label, find_objects, binary_dilation
+from PIL import Image
+import cv2
 from config import API_URL, API_KEY
 from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 from PyPDF2 import PdfReader
 
-# ====== Key Gemini ======
+# ==== GEMINI KEY (nhiều key) ====
 GEMINI_API_KEYS = [
   "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
@@ -28,7 +28,7 @@ api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
     return next(api_key_cycle)
 
-# ==== PROMPT CHUẨN ====
+# ==== GEMINI PROMPT ====
 GEMINI_PROMPT = '''
 YÊU CẦU:
 1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh.
@@ -77,7 +77,6 @@ def insert_figures_to_markdown(text, figures):
             if any(key in lower for key in ["xem hình", "hình vẽ", "hình dưới", "hình bên", "bảng dưới", "hình minh hoạ", "hình minh họa"]):
                 new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
                 fig_idx += 1
-    # Nếu vẫn còn hình, chèn sau dòng đầu tiên chứa "câu"
     if fig_idx < n_fig:
         for i, line in enumerate(new_lines):
             if "câu" in line.lower():
@@ -89,85 +88,64 @@ def insert_figures_to_markdown(text, figures):
         fig_idx += 1
     return '\n'.join(new_lines)
 
-# ===== HÀM TÁCH HÌNH MINH HOẠ: KHÔNG BAO GIỜ CẮT NHỎ, KHÔNG DÍNH CHỮ =====
-def extract_figures_from_image(img_bytes, min_area_ratio=0.04, border=8, edge_thr=13, merge_gap=30):
+# ==== HÀM TÁCH HÌNH MINH HOẠ CHUẨN (KHÔNG DÍNH/LẶP/THIẾU) ====
+def extract_figures_from_image(img_bytes, min_area_ratio=0.025, pad=6, min_height=60):
     """
-    Tách nhiều hình minh hoạ: không cắt nhỏ, không dính lề, không thiếu cạnh.
-    Nếu hình có nhiều box liền kề thì merge lại thành một box lớn.
+    Tách từng hình minh hoạ, không dính, không sót, cắt sát biên đen.
     """
-    im = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    arr = np.array(im)
+    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    arr = np.array(img)
     h, w = arr.shape[:2]
-    gray = np.mean(arr, axis=2).astype(np.uint8)
-
-    gray_blur = np.array(Image.fromarray(gray).filter(ImageFilter.GaussianBlur(2)))
-    edge = np.abs(gray.astype(np.int16) - gray_blur.astype(np.int16))
-    edge_mask = (edge > edge_thr)
-    edge_mask = binary_dilation(edge_mask, iterations=5)
-
-    lbl, n = label(edge_mask)
-    objs = find_objects(lbl)
+    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    blur = cv2.GaussianBlur(gray, (3,3), 0)
+    edges = cv2.Canny(blur, 60, 170)
+    kernel = np.ones((7, 7), np.uint8)
+    closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     bboxes = []
-    for slc in objs:
-        if slc is None: continue
-        y1, y2 = slc[0].start, slc[0].stop
-        x1, x2 = slc[1].start, slc[1].stop
-        area = (x2-x1)*(y2-y1)
-        aspect = (x2-x1)/(y2-y1+1e-5)
-        if (area > min_area_ratio*h*w and 0.35 < aspect < 2.5 and
-            x1 > border and x2 < w-border and y1 > border and y2 < h-border):
-            bboxes.append([x1,y1,x2,y2])
-
-    # === Merge các box nằm gần nhau thành 1 box lớn nếu bị chia nhỏ ===
-    merged = []
-    used = [False]*len(bboxes)
-    for i in range(len(bboxes)):
-        if used[i]: continue
-        x1, y1, x2, y2 = bboxes[i]
-        group = [bboxes[i]]
-        used[i] = True
-        for j in range(i+1, len(bboxes)):
-            if used[j]: continue
-            xx1, yy1, xx2, yy2 = bboxes[j]
-            # Nếu overlap hoặc sát nhau (< merge_gap pixels)
-            if (max(x1,xx1) - min(x2,xx2) < merge_gap and
-                max(y1,yy1) - min(y2,yy2) < merge_gap):
-                group.append(bboxes[j])
-                used[j] = True
-        # Gộp thành box lớn nhất
-        gx1 = min(g[0] for g in group)
-        gy1 = min(g[1] for g in group)
-        gx2 = max(g[2] for g in group)
-        gy2 = max(g[3] for g in group)
-        merged.append((gx1,gy1,gx2,gy2))
-
-    # Nếu không có vùng nào thỏa mãn, trả về nguyên ảnh
-    if not merged:
-        crop = im
+    for cnt in contours:
+        x, y, ww, hh = cv2.boundingRect(cnt)
+        area = ww*hh
+        if area > min_area_ratio*h*w and hh > min_height:
+            bboxes.append([x,y,x+ww,y+hh])
+    kept = []
+    for box in sorted(bboxes, key=lambda b: (b[1],b[0])):
+        ok = True
+        for k in kept:
+            xA = max(box[0], k[0])
+            yA = max(box[1], k[1])
+            xB = min(box[2], k[2])
+            yB = min(box[3], k[3])
+            interArea = max(0, xB - xA) * max(0, yB - yA)
+            boxArea = (box[2] - box[0]) * (box[3] - box[1])
+            kArea = (k[2] - k[0]) * (k[3] - k[1])
+            iou = interArea / float(boxArea + kArea - interArea + 1e-5)
+            if iou > 0.18:
+                ok = False
+                break
+        if ok:
+            kept.append(box)
+    if not kept:
+        crop = img
         buf = io.BytesIO()
         crop.save(buf, format="JPEG")
         b64 = base64.b64encode(buf.getvalue()).decode()
         return [{"name": "img-1.jpeg", "base64": b64}]
-
-    # Trả về tất cả các hình đã merge, SẮP XẾP TỪ TRÊN XUỐNG
-    merged = sorted(merged, key=lambda b: b[1])
+    kept = sorted(kept, key=lambda b: (b[1],b[0]))
     results = []
-    for idx, (x1, y1, x2, y2) in enumerate(merged):
-        # Mở rộng box để tránh cắt sát hình/chữ (tối đa ra ngoài viền)
-        pad = 6
+    for idx, (x1, y1, x2, y2) in enumerate(kept):
         x1 = max(x1 - pad, 0)
         y1 = max(y1 - pad, 0)
         x2 = min(x2 + pad, w)
         y2 = min(y2 + pad, h)
-        crop = im.crop((x1, y1, x2, y2))
+        crop = img.crop((x1, y1, x2, y2))
         buf = io.BytesIO()
         crop.save(buf, format="JPEG")
         b64 = base64.b64encode(buf.getvalue()).decode()
         results.append({"name": f"img-{idx+1}.jpeg", "base64": b64})
     return results
 
-
-# =============== UI STREAMLIT ===============
+# ====== GIAO DIỆN STREAMLIT ======
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
 st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & minh hoạ ✨")
 
@@ -293,7 +271,7 @@ with tab_img:
         all_figures = []
         for i, img_file in enumerate(uploaded_images):
             img_bytes = img_file.read()
-            figures = extract_figures_from_image(img_bytes)  # chỉ luôn ra đúng 1 hình lớn nhất, không tách dải
+            figures = extract_figures_from_image(img_bytes)
             all_figures.extend(figures)
             api_key = get_next_api_key()
             with st.spinner(f"Đang nhận diện trang {i+1}..."):
