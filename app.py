@@ -1,3 +1,5 @@
+[media pointer="file-service://file-K35w9TSpQirwWujMxMZu9p"]
+[media pointer="file-service://file-VmJT8QB2d5Kr3NqjLb2oKy"]
 import streamlit as st
 import tempfile, os, base64, re, io, itertools
 from PIL import Image
@@ -11,55 +13,52 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
-# ---- Hàm tách hình minh hoạ + bảng giá trị, bảng tần số, bảng biến thiên ----
-def extract_figures_and_tables(img_bytes, min_area_abs=1200, max_figures=10):
+# ----------- Hàm tách bảng giá trị/bảng biến thiên và hình minh hoạ (chuẩn nâng cao) ----------
+def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
     h, w = img.shape[:2]
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     blur = cv2.GaussianBlur(gray, (3,3), 0)
     th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 25, 10)
-
     # Tách bảng bằng morphology line horizontal + vertical
     horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.18),1))
     detected_lines = cv2.morphologyEx(th, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
     vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.08)))
     detected_columns = cv2.morphologyEx(th, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
     table_mask = cv2.addWeighted(detected_lines, 0.5, detected_columns, 0.5, 0.0)
+    # Find table contours
     contours, _ = cv2.findContours(table_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     tables = []
-    table_rects = []
     for idx, cnt in enumerate(contours):
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
-        if area > min_area_abs and ww > 45 and hh > 18:
+        if area > min_area_abs and ww > 40 and hh > 20:
             crop = img[y:y+hh, x:x+ww]
             buf = io.BytesIO()
             Image.fromarray(crop).save(buf, format="JPEG")
             b64 = base64.b64encode(buf.getvalue()).decode()
             tables.append({"name": f"table-{idx+1}.jpeg", "base64": b64, "is_table": True})
-            table_rects.append((x, y, x+ww, y+hh))
-
-    # Tách hình minh hoạ (không phải bảng)
+    # Tách hình minh hoạ (contour không phải bảng)
     contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     figures = []
     for idx, cnt in enumerate(contours):
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
         if area > min_area_abs and ww > 50 and hh > 50:
-            # Kiểm tra có overlap với bảng
-            overlap = False
-            for tb in table_rects:
-                if x >= tb[0] and y >= tb[1] and (x+ww) <= tb[2] and (y+hh) <= tb[3]:
-                    overlap = True
+            # Loại bỏ vùng bảng đã nhận phía trên
+            overlapped = False
+            for t in tables:
+                tb_x, tb_y, tb_w, tb_h = [int(v) for v in re.findall(r'\d+', t['name']+str(t['is_table']))[:4]]
+                if abs(tb_x-x)<12 and abs(tb_y-y)<12 and abs(tb_w-ww)<25 and abs(tb_h-hh)<25:
+                    overlapped = True
                     break
-            if not overlap:
+            if not overlapped:
                 crop = img[y:y+hh, x:x+ww]
                 buf = io.BytesIO()
                 Image.fromarray(crop).save(buf, format="JPEG")
                 b64 = base64.b64encode(buf.getvalue()).decode()
                 figures.append({"name": f"img-{idx+1}.jpeg", "base64": b64, "is_table": False})
-    # Trả ra bảng trước, hình sau
     return tables + figures
 
 def remove_all_figure_markdown(text):
@@ -69,7 +68,7 @@ def remove_all_figure_markdown(text):
     text = re.sub(r'\[BẢNG:.*?\]', '', text)
     return text
 
-# ---- Mapping nâng cao không chen giữa câu, đúng đoạn, hỗ trợ bảng ----
+# -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
 def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, table_kw=None):
     if keywords is None:
         keywords = [
@@ -169,12 +168,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
 
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
-    "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
-  "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
-  "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
-  "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
-  "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
-  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
+    # Nhập API key nếu dùng Gemini Vision
 ]
 api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
@@ -190,7 +184,6 @@ YÊU CẦU:
 6. Bảng biểu: dùng markdown nếu có thể.
 7. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
 '''
-
 def gemini_generate_text(image_bytes, api_key):
     api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     b64_img = base64.b64encode(image_bytes).decode()
@@ -215,11 +208,8 @@ def gemini_generate_text(image_bytes, api_key):
 
 # ========== Giao diện ==========
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
-st.title("📑 Kết quả OCR Image")
-
-tab_pdf, tab_img = st.tabs([
-    "📝 Văn bản", "🖼️ Hình ảnh"
-])
+st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & bảng (bảng giá trị, bảng tần số, biến thiên) ✨")
+tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Markdown + Minh hoạ/Bảng"])
 
 # =================== TAB ẢNH ===================
 with tab_img:
@@ -246,23 +236,22 @@ with tab_img:
                         text = f"[Lỗi Gemini: {e}]"
                 text = remove_all_figure_markdown(text)
                 text = join_paragraphs_and_insert_figures_tables(text, figures)
-                st.markdown("### 📋 Kết quả OCR Image:")
+
+                # Đếm số hình/bảng cho thông báo (giống UI bạn muốn)
+                n_img = sum(1 for f in figures if not f["is_table"])
+                n_tbl = sum(1 for f in figures if f["is_table"])
+                if n_img > 0 or n_tbl > 0:
+                    st.markdown(
+                        f'<div style="margin-top:10px">'
+                        f'<img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f5bc.svg" width="20"/> '
+                        f'<b>Đã tìm thấy {n_img} hình ảnh'
+                        + (f', {n_tbl} bảng' if n_tbl > 0 else '') +
+                        ':</b></div>', unsafe_allow_html=True
+                    )
+
+                st.markdown("### 📋 Kết quả mapping nâng cao:")
                 st.code(text, language="markdown")
-                # Hiển thị hình & bảng đã tách
                 if figures:
-                    st.markdown(f"### 🖼️ Hình & Bảng đã tách:")
-                    for idx, fig in enumerate(figures):
-                        img_bytes = base64.b64decode(fig["base64"])
-                        cap = f"{'Bảng' if fig['is_table'] else 'Hình'}: {fig['name']}"
-                        st.image(img_bytes, caption=cap, width=350)
-                        st.download_button(
-                            f"Tải {fig['name']}",
-                            img_bytes,
-                            file_name=fig["name"],
-                            mime="image/jpeg",
-                            use_container_width=True,
-                            key=f"anh-download-{fig['name']}-{idx}"
-                        )
                     if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", key=f"word-{img_file.name}"):
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
                             insert_images_to_word_from_markdown(
@@ -281,6 +270,19 @@ with tab_img:
                             use_container_width=True
                         )
                         os.remove(tmp_word.name)
+                    st.markdown("### 🖼️ Hình & Bảng đã tách:")
+                    for idx, fig in enumerate(figures):
+                        img_bytes = base64.b64decode(fig["base64"])
+                        cap = f"{'Bảng' if fig['is_table'] else 'Hình'}: {fig['name']}"
+                        st.image(img_bytes, caption=cap, width=350)
+                        st.download_button(
+                            f"Tải {fig['name']}",
+                            img_bytes,
+                            file_name=fig["name"],
+                            mime="image/jpeg",
+                            use_container_width=True,
+                            key=f"anh-download-{fig['name']}-{idx}"
+                        )
                 else:
                     st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh.")
     else:
