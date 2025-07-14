@@ -36,34 +36,29 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
             buf = io.BytesIO()
             Image.fromarray(crop).save(buf, format="JPEG")
             b64 = base64.b64encode(buf.getvalue()).decode()
-            tables.append({"name": f"table-{idx+1}.jpeg", "base64": b64, "is_table": True})
+            tables.append({"name": f"table-{idx}.jpeg", "base64": b64, "is_table": True})   # <-- X bắt đầu từ 0
     # Tách hình minh hoạ (contour không phải bảng)
     contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     figures = []
+    img_idx = 0
     for idx, cnt in enumerate(contours):
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
         if area > min_area_abs and ww > 50 and hh > 50:
-            # Loại bỏ vùng bảng đã nhận phía trên
-            overlapped = False
-            for t in tables:
-                # Không kiểm tra overlap tỉ mỉ, bạn có thể tối ưu thêm nếu muốn
-                pass
-            if not overlapped:
-                crop = img[y:y+hh, x:x+ww]
-                buf = io.BytesIO()
-                Image.fromarray(crop).save(buf, format="JPEG")
-                b64 = base64.b64encode(buf.getvalue()).decode()
-                figures.append({"name": f"img-{idx+1}.jpeg", "base64": b64, "is_table": False})
+            # Không cần overlap vì thường không trùng bảng
+            crop = img[y:y+hh, x:x+ww]
+            buf = io.BytesIO()
+            Image.fromarray(crop).save(buf, format="JPEG")
+            b64 = base64.b64encode(buf.getvalue()).decode()
+            figures.append({"name": f"img-{img_idx}.jpeg", "base64": b64, "is_table": False})
+            img_idx += 1
     return tables + figures
 
 def remove_all_figure_markdown(text):
     if not isinstance(text, str): return ""
-    text = re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)', '', text)
-    text = re.sub(r'\[HÌNH:.*?\]', '', text)
-    text = re.sub(r'\[BẢNG:.*?\]', '', text)
+    text = re.sub(r'\[HÌNH: img-\d+\.jpeg\]', '', text)
+    text = re.sub(r'\[BẢNG: table-\d+\.jpeg\]', '', text)
     return text
-
 # -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
 def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, table_kw=None):
     if keywords is None:
