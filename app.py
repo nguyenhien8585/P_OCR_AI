@@ -25,21 +25,21 @@ def get_next_api_key():
     return next(api_key_cycle)
 
 # ----------- HÀM TÁCH ẢNH MINH HOẠ SÁT NHẤT -----------
-def extract_figures_from_image(img_bytes, min_area_ratio=0.06, min_area_abs=2000, min_w=120, min_h=100):
+def extract_figures_from_image(img_bytes, min_area_ratio=0.05, min_area_abs=1800, min_w=100, min_h=90, max_figures=4):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
     h, w = img.shape[:2]
-    # Chuyển sang grayscale + threshold
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    # Làm nổi bật nét vẽ
     gray = cv2.GaussianBlur(gray, (3,3), 0)
-    # adaptive threshold sẽ lấy được viền hình học
-    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                   cv2.THRESH_BINARY_INV, 25, 7)
-    # Dilation để nối các nét đứt thành khung kín
+    # Tăng độ tương phản
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    gray = clahe.apply(gray)
+    # adaptive threshold
+    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+                                   cv2.THRESH_BINARY_INV, 25, 10)
+    # Dilation để nối viền
     kernel = np.ones((3,3),np.uint8)
     thresh = cv2.dilate(thresh, kernel, iterations=2)
-    # Tìm contour
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     candidates = []
     for cnt in contours:
@@ -47,22 +47,23 @@ def extract_figures_from_image(img_bytes, min_area_ratio=0.06, min_area_abs=2000
         area = ww * hh
         area_ratio = area / (w * h)
         aspect = ww / (hh + 1e-6)
-        # Chỉ lấy vùng có diện tích lớn hơn min_area_abs và tỷ lệ đủ lớn, và hình chữ nhật (không quá mỏng)
-        if area > min_area_abs and area_ratio > min_area_ratio and ww > min_w and hh > min_h and 0.15 < aspect < 7:
-            # Không lấy sát mép giấy (tránh lấy nguyên trang)
-            if x < 0.01 * w or y < 0.01 * h or (x+ww) > 0.99*w or (y+hh) > 0.99*h:
+        # Các điều kiện lọc hình minh hoạ
+        if area > min_area_abs and area_ratio > min_area_ratio and ww > min_w and hh > min_h and 0.18 < aspect < 6.5:
+            # Không lấy sát mép giấy
+            if x < 0.008 * w or y < 0.008 * h or (x+ww) > 0.992*w or (y+hh) > 0.992*h:
                 continue
             candidates.append((area, x, y, x+ww, y+hh))
-    # Nếu không có contour lớn -> trả về cả ảnh gốc
+    # Sắp xếp từ trên xuống dưới, trái sang phải
+    candidates = sorted(candidates, key=lambda box: (box[2], box[1]))
+    # Nếu vẫn không có hình, trả về ảnh gốc
     if not candidates:
         buf = io.BytesIO()
         img_pil.save(buf, format="JPEG")
         b64 = base64.b64encode(buf.getvalue()).decode()
         return [{"name": "img-1.jpeg", "base64": b64}]
-    # Sắp xếp từ trên xuống dưới, trái sang phải (theo y,x)
-    candidates = sorted(candidates, key=lambda box: (box[2], box[1]))
+    # Giới hạn số lượng hình tách ra (tránh lặp/dư)
     results = []
-    for idx, (_, x0, y0, x1, y1) in enumerate(candidates):
+    for idx, (_, x0, y0, x1, y1) in enumerate(candidates[:max_figures]):
         crop = img[y0:y1, x0:x1]
         buf = io.BytesIO()
         Image.fromarray(crop).save(buf, format="JPEG")
