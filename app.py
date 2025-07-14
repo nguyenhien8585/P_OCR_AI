@@ -25,56 +25,51 @@ def get_next_api_key():
     return next(api_key_cycle)
 
 # ----------- HÀM TÁCH ẢNH MINH HOẠ SÁT NHẤT -----------
-def extract_figures_from_image(img_bytes, min_area=12000, max_figures=5):
+def extract_figures_from_image(img_bytes, min_area=4000, margin=10, max_figures=3):
     """
-    Cắt sát viền các hình minh hoạ thực sự trong đề toán, 
-    không dính trang, không cắt dính chữ, không dư các contour nhỏ.
+    Cắt sát hình minh họa khỏi ảnh (dùng OpenCV), loại caption/văn bản ngoài hình.
+    Trả về tối đa max_figures hình, mỗi hình là dict {'name', 'base64'}
     """
-    img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    img = np.array(img_pil)
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    nparr = np.frombuffer(img_bytes, np.uint8)
+    img_cv = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (3,3), 0)
 
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, thres = cv2.threshold(blur, 240, 255, cv2.THRESH_BINARY_INV)
-    canny = cv2.Canny(blur, 60, 160)
-    combined = cv2.bitwise_or(thres, canny)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
-    closed = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel, iterations=2)
+    # Tìm cạnh
+    edges = cv2.Canny(blur, 40, 120)
+    # Làm dày cạnh cho dễ bắt contour
+    kernel = np.ones((5,5), np.uint8)
+    dilated = cv2.dilate(edges, kernel, iterations=2)
 
-    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    h, w = img.shape[:2]
-    rects = []
+    # Tìm contour
+    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    h, w = gray.shape
+    boxes = []
     for cnt in contours:
-        x, y, ww, hh = cv2.boundingRect(cnt)
-        area = ww * hh
-        aspect = ww / (hh + 1e-5)
-        area_ratio = area / (h * w)
-        # --- THÊM 2 điều kiện cắt: chiều rộng và chiều cao tối thiểu ---
-        if (area > min_area and 0.2 < aspect < 6 and 0.06 < area_ratio < 0.89 
-            and ww > w * 0.28 and hh > h * 0.18 and y > 0.03*h and x > 0.01*w):
-            # Không lấy contour gần như full trang (tránh lỗi contour toàn bộ A4)
-            if ww > w * 0.96 and hh > h * 0.96:
+        x, y, bw, bh = cv2.boundingRect(cnt)
+        area = bw * bh
+        # Lọc: vùng lớn, không nằm sát mép, không quá dẹt
+        if area > min_area and 0.1 < bw/bh < 6.5:
+            # Không lấy sát mép
+            if x < 0.03*w or x+bw > 0.97*w or y < 0.03*h or y+bh > 0.97*h:
                 continue
-            rects.append((x, y, ww, hh, area))
-    rects = sorted(rects, key=lambda x: -x[4])[:max_figures]
-
-    # Nếu không tìm được vùng phù hợp, trả về cả ảnh gốc (dạng fallback)
-    if not rects:
-        buf = io.BytesIO()
-        img_pil.save(buf, format="JPEG")
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        return [{"name": "img-1.jpeg", "base64": b64}]
-
+            # Lọc caption dính phía trên/dưới (caption thường mỏng, rộng, sát cạnh hình)
+            if bh < 0.13*h:
+                continue
+            boxes.append((area, x, y, x+bw, y+bh))
+    # Sắp xếp theo diện tích lớn, ưu tiên giữa trang
+    boxes = sorted(boxes, key=lambda x: (-x[0], abs((x[2]+x[4])/2-w/2)+abs((x[3]+x[5])/2-h/2)))
     results = []
-    for idx, (x, y, ww, hh, _) in enumerate(rects):
-        pad = 3
-        x1 = max(x - pad, 0)
-        y1 = max(y - pad, 0)
-        x2 = min(x + ww + pad, w)
-        y2 = min(y + hh + pad, h)
-        crop = img_pil.crop((x1, y1, x2, y2))
+    for idx, (_, x1, y1, x2, y2) in enumerate(boxes[:max_figures]):
+        # Thêm margin (crop sát nhưng không cắt vào hình)
+        x1 = max(x1-margin, 0)
+        y1 = max(y1-margin, 0)
+        x2 = min(x2+margin, w)
+        y2 = min(y2+margin, h)
+        crop = img_cv[y1:y2, x1:x2]
+        im_pil = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
         buf = io.BytesIO()
-        crop.save(buf, format='JPEG')
+        im_pil.save(buf, format="JPEG")
         b64 = base64.b64encode(buf.getvalue()).decode()
         results.append({"name": f"img-{idx+1}.jpeg", "base64": b64})
     return results
