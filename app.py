@@ -11,7 +11,7 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
-# === HÀM TÁCH ẢNH MINH HOẠ SIÊU CHUẨN, KHÔNG DÍNH CHỮ ===
+# --- Hàm tách ảnh minh hoạ chuẩn toán ---
 def extract_figures_from_image(img_bytes, min_area_ratio=0.04, min_area_abs=1500, min_w=70, min_h=60, max_figures=8):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
@@ -31,12 +31,10 @@ def extract_figures_from_image(img_bytes, min_area_ratio=0.04, min_area_abs=1500
         area = ww * hh
         area_ratio = area / (w * h)
         aspect = ww / (hh + 1e-6)
-        # Lọc hình lớn, không phải viền mép, không hình cực dài/mỏng
         if area > min_area_abs and area_ratio > min_area_ratio and ww > min_w and hh > min_h and 0.15 < aspect < 7.5:
             if x < 0.01*w or y < 0.01*h or (x+ww) > 0.99*w or (y+hh) > 0.99*h:
                 continue
             candidates.append((area, x, y, x+ww, y+hh))
-    # Sắp xếp từ trên xuống dưới, trái sang phải
     candidates = sorted(candidates, key=lambda box: (box[2], box[1]))
     if not candidates:
         buf = io.BytesIO()
@@ -58,60 +56,85 @@ def remove_all_figure_markdown(text):
     text = re.sub(r'\[HÌNH:.*?\]', '', text)
     return text
 
-# --- HÀM CHUẨN HÓA VĂN BẢN VÀ CHÈN HÌNH MINH HOẠ ĐÚNG SAU "Câu n." hoặc CUỐI CÂU ---
-def join_lines_and_insert_figures(text, figures, keywords=None):
+# --- Hàm mapping nâng cao ---
+def join_paragraphs_and_insert_figures(text, figures, keywords=None):
     if keywords is None:
-        keywords = ["xem hình", "hình dưới", "hình vẽ", "biểu đồ", "minh hoạ", "minh họa", "bảng dưới", "hình bên", "hình minh hoạ", "hình minh họa"]
-    lines = [l.strip() for l in text.split('\n') if l.strip()]
+        keywords = [
+            "xem hình", "hình dưới", "hình vẽ", "biểu đồ", "minh hoạ",
+            "minh họa", "bảng dưới", "hình bên", "hình minh hoạ", "hình minh họa"
+        ]
+    lines = [l.rstrip() for l in text.split('\n')]
     new_lines = []
     fig_idx = 0
     n_fig = len(figures)
     buffer = ""
+    pending_fig = None
+
     for idx, line in enumerate(lines):
-        # Nếu là dòng bắt đầu câu hỏi
-        if re.match(r"^Câu\s*\d+\.?", line):
+        line_strip = line.strip()
+        # Nếu bắt đầu câu hỏi mới
+        if re.match(r"^Câu\s*\d+\.?", line_strip):
             if buffer:
                 new_lines.append(buffer.strip())
+                if pending_fig is not None:
+                    new_lines.append(f"[HÌNH: {figures[pending_fig]['name']}]")
+                    pending_fig = None
                 buffer = ""
-            new_lines.append(line)
-            # Nếu ngay dòng này hoặc dòng sau có từ khóa minh hoạ thì chèn hình vào đây
-            kw = ""
-            lcur = line.lower()
-            lnext = lines[idx+1].lower() if idx+1 < len(lines) else ""
-            for k in keywords:
-                if k in lcur or k in lnext:
-                    kw = k
+            new_lines.append(line_strip)
+            kw_cur = line_strip.lower()
+            kw_next = lines[idx+1].lower() if idx+1 < len(lines) else ""
+            found = False
+            for kw in keywords:
+                if kw in kw_cur or kw in kw_next:
+                    found = True
                     break
-            if kw and fig_idx < n_fig:
+            if found and fig_idx < n_fig:
                 new_lines.append(f"[HÌNH: {figures[fig_idx]['name']}]")
                 fig_idx += 1
-        # Nếu là dòng đặc biệt
-        elif re.match(r"^(HẾT|Trang|---------|--+)$", line):
+        elif re.match(r"^(HẾT|Trang|Mã đề|----+)$", line_strip):
             if buffer:
                 new_lines.append(buffer.strip())
+                if pending_fig is not None:
+                    new_lines.append(f"[HÌNH: {figures[pending_fig]['name']}]")
+                    pending_fig = None
                 buffer = ""
-            new_lines.append(line)
-        else:
-            # Ghép các dòng lại thành một đoạn văn liền mạch
+            new_lines.append(line_strip)
+        elif not line_strip:
             if buffer:
-                if not re.search(r"[.!?…:]\s*$", buffer):
-                    buffer += " " + line
-                else:
-                    new_lines.append(buffer.strip())
-                    buffer = line
+                new_lines.append(buffer.strip())
+                if pending_fig is not None:
+                    new_lines.append(f"[HÌNH: {figures[pending_fig]['name']}]")
+                    pending_fig = None
+                buffer = ""
+        else:
+            # Ghép tiếp đoạn
+            if buffer and not re.search(r"[.!?…:]$", buffer):
+                buffer += " " + line_strip
             else:
-                buffer = line
+                if buffer:
+                    new_lines.append(buffer.strip())
+                    if pending_fig is not None:
+                        new_lines.append(f"[HÌNH: {figures[pending_fig]['name']}]")
+                        pending_fig = None
+                buffer = line_strip
+            lower_line = line_strip.lower()
+            if any(kw in lower_line for kw in keywords) and fig_idx < n_fig:
+                pending_fig = fig_idx
+                fig_idx += 1
+
     if buffer:
         new_lines.append(buffer.strip())
-    # Nếu còn hình, thêm ở cuối
+        if pending_fig is not None:
+            new_lines.append(f"[HÌNH: {figures[pending_fig]['name']}]")
+            pending_fig = None
     while fig_idx < n_fig:
         new_lines.append(f"[HÌNH: {figures[fig_idx]['name']}]")
         fig_idx += 1
-    return '\n'.join(new_lines)
+    return '\n'.join([l for l in new_lines if l.strip()])
 
-# ---- Gemini API KEY ----
+# --- Key Gemini ---
 GEMINI_API_KEYS = [
-    "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
+  "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
@@ -161,7 +184,7 @@ def gemini_generate_text(image_bytes, api_key):
     text = res["candidates"][0]["content"]["parts"][0]["text"]
     return text
 
-# ======= Giao diện =======
+# ========== Giao diện ==========
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
 st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & minh hoạ ✨")
 tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Markdown + Minh hoạ"])
@@ -264,15 +287,15 @@ with tab_pdf:
 
 # ================ TAB ẢNH ===================
 with tab_img:
-    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, mapping chuẩn, cho phép tải/copy) → Markdown/Text/Word")
+    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, mapping nâng cao, tải Word chuẩn) → Markdown/Text/Word")
     uploaded_images = st.file_uploader(
         "Chọn nhiều ảnh (mỗi ảnh là một trang):",
         type=["png", "jpg", "jpeg", "webp"],
         accept_multiple_files=True,
-        help="Mỗi ảnh là 1 trang, minh hoạ sẽ được tách tự động, nhận diện caption và chèn đúng vị trí."
+        help="Mỗi ảnh là 1 trang, minh hoạ sẽ được tách tự động, nhận diện caption và mapping đúng vị trí."
     )
 
-    tab1, tab2 = st.tabs(["📋 Văn bản (Mapping)", "🖼️ Hình ảnh đã tách"])
+    tab1, tab2 = st.tabs(["📋 Văn bản (Mapping nâng cao)", "🖼️ Hình ảnh đã tách"])
     if uploaded_images:
         latex_results = []
         all_figures = []
@@ -287,11 +310,11 @@ with tab_img:
                 except Exception as e:
                     text = f"[Lỗi Gemini: {e}]"
             text = remove_all_figure_markdown(text)
-            text = join_lines_and_insert_figures(text, figures)
+            text = join_paragraphs_and_insert_figures(text, figures)
             latex_results.append((img_file.name, text, figures))
 
         with tab1:
-            st.markdown("### 📋 Kết quả từng trang (chuẩn mapping, không chen hình vào giữa đoạn):")
+            st.markdown("### 📋 Kết quả từng trang (mapping nâng cao, không chen hình vào giữa đoạn):")
             for idx, (img_name, latex, figures) in enumerate(latex_results):
                 st.markdown(f"#### Trang {idx+1}: {img_name}")
                 st.code(latex, language="markdown")
@@ -333,4 +356,4 @@ with tab_img:
         with tab2:
             st.info("Chưa có ảnh nào để xem.")
 
-st.caption("✨ Văn bản chuẩn, mapping hình không dư/lặp, chèn đúng vị trí sau mỗi câu hỏi, xuất Word đúng vị trí minh hoạ. Custom logic ghép đoạn & mapping hình dễ dàng!")
+st.caption("✨ Mapping hình nâng cao, đúng đoạn, không chen giữa câu, không dư hình. Word đúng vị trí minh hoạ.")
