@@ -25,63 +25,49 @@ def get_next_api_key():
     return next(api_key_cycle)
 
 # ----------- HÀM TÁCH ẢNH MINH HOẠ SÁT NHẤT -----------
-import cv2
-import numpy as np
-import base64
-import io
-from PIL import Image
-
-def extract_figures_from_image(img_bytes, min_area=12000, max_figures=5):
+def extract_figures_from_image(img_bytes, min_area=10000, max_figures=5):
     """
-    Cắt sát viền các hình minh hoạ trong ảnh đề toán, không bỏ hình lớn sát mép, không lẫn chữ!
-    Trả về: [{"name": ..., "base64": ...}]
+    Cắt sát viền các hình minh hoạ trong ảnh đề toán, không cắt nguyên trang hoặc hình nhỏ dính chữ.
     """
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
-    # Làm mờ nhẹ, giảm nhiễu chữ và ngắt nét vùng nền
+    # Làm mờ nhẹ, threshold để nổi khối minh hoạ lên
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    # Tìm biên rõ bằng canny, dùng cả adaptive threshold cho ảnh màu nền
-    canny = cv2.Canny(blur, 70, 160)
-    thres = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 31, 12)
-    combined = cv2.bitwise_or(canny, thres)
-
-    # Dày nét hơn để không ngắt khối minh hoạ lớn
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
+    _, thres = cv2.threshold(blur, 245, 255, cv2.THRESH_BINARY_INV)
+    # Canny tăng nhạy
+    canny = cv2.Canny(blur, 70, 170)
+    combined = cv2.bitwise_or(thres, canny)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
     closed = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel, iterations=2)
 
-    # Tìm contour ngoài cùng
     contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     h, w = img.shape[:2]
     rects = []
     for cnt in contours:
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
-        # Điều kiện loại: diện tích lớn, không quá dài/mỏng
-        aspect = ww / (hh + 1e-6)
+        aspect = ww / (hh + 1e-5)
         area_ratio = area / (h * w)
-        # Để tránh dính khung, vẫn giữ hình sát biên
-        if area > min_area and 0.2 < aspect < 6 and 0.04 < area_ratio < 0.8:
+        # Độ rộng/tỉ lệ ảnh phải hợp lý (tránh hình nhỏ dính chữ hoặc cắt nguyên trang)
+        if area > min_area and 0.2 < aspect < 6 and 0.04 < area_ratio < 0.85:
+            # Không lấy contour gần như full trang (tránh lỗi contour toàn bộ A4)
+            if ww > w * 0.97 and hh > h * 0.97:
+                continue
             rects.append((x, y, ww, hh, area))
-    # Loại vùng nằm trong vùng khác
-    rects = sorted(rects, key=lambda x: -x[4])
-    final_rects = []
-    for x, y, ww, hh, area in rects:
-        contained = False
-        for fx, fy, fww, fhh, _ in final_rects:
-            if x > fx-5 and y > fy-5 and (x+ww) < (fx+fww+5) and (y+hh) < (fy+fhh+5):
-                contained = True
-        if not contained:
-            final_rects.append((x, y, ww, hh, area))
-        if len(final_rects) >= max_figures:
-            break
-    # Sắp theo từ trên xuống
-    final_rects = sorted(final_rects, key=lambda r: (r[1], r[0]))
-    # Cắt và mã hoá base64 trả về
+    rects = sorted(rects, key=lambda x: -x[4])[:max_figures]
+
+    # Nếu không tìm được vùng phù hợp, trả về cả ảnh gốc (dạng fallback)
+    if not rects:
+        buf = io.BytesIO()
+        img_pil.save(buf, format="JPEG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        return [{"name": "img-1.jpeg", "base64": b64}]
+
+    # Cắt đúng vùng, không dính lề, có thể mở rộng thêm 3 pixel cho đẹp
     results = []
-    for idx, (x, y, ww, hh, _) in enumerate(final_rects):
-        # Mở rộng 3 pixel mỗi phía (nếu còn trong ảnh) cho sát biên
+    for idx, (x, y, ww, hh, _) in enumerate(rects):
         pad = 3
         x1 = max(x - pad, 0)
         y1 = max(y - pad, 0)
@@ -92,11 +78,6 @@ def extract_figures_from_image(img_bytes, min_area=12000, max_figures=5):
         crop.save(buf, format='JPEG')
         b64 = base64.b64encode(buf.getvalue()).decode()
         results.append({"name": f"img-{idx+1}.jpeg", "base64": b64})
-    if not results:
-        buf = io.BytesIO()
-        img_pil.save(buf, format='JPEG')
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        results.append({"name": "img-1.jpeg", "base64": b64})
     return results
 
 # ----------- HÀM GỠ MARKDOWN ẢNH ----------
