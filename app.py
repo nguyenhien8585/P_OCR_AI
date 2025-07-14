@@ -11,7 +11,7 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
-# --- HÀM TÁCH ẢNH MINH HOẠ (OpenCV, chuẩn Toán) ---
+# --- TÁCH ẢNH MINH HOẠ (OpenCV) ---
 def extract_figures_from_image(img_bytes, min_area_ratio=0.05, min_area_abs=1800, min_w=100, min_h=90, max_figures=4):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
@@ -54,7 +54,7 @@ def remove_all_figure_markdown(text):
     if not isinstance(text, str): return ""
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
-# === Hàm mapping ảnh theo đúng CÂU SỐ ===
+# --- Hàm mapping ảnh đúng vị trí câu hỏi ---
 def insert_figures_map_by_cau(text, figures):
     cau_pos = [m.start() for m in re.finditer(r'(Câu\s*\d+\.)', text)]
     parts = []
@@ -77,9 +77,44 @@ def insert_figures_map_by_cau(text, figures):
         img_idx += 1
     return '\n\n'.join(result)
 
-# --- Gemini API Key (nhập của bạn vào đây) ---
+# --- Fix lỗi xuống dòng giữa câu ---
+def join_lines(text):
+    lines = text.split('\n')
+    output = []
+    buffer = []
+    pattern_cau = re.compile(r'^Câu\s*\d+\.')
+    for line in lines:
+        l = line.strip()
+        # Nếu là dòng đặc biệt: Câu N., hình, markdown --> đóng đoạn buffer
+        if not l:
+            if buffer:
+                output.append(' '.join(buffer))
+                buffer = []
+        elif l.startswith('![') or l.startswith('#') or pattern_cau.match(l):
+            if buffer:
+                output.append(' '.join(buffer))
+                buffer = []
+            output.append(l)
+        else:
+            buffer.append(l)
+    if buffer:
+        output.append(' '.join(buffer))
+    # Xóa dòng trống thừa liên tiếp
+    result = []
+    prev_blank = False
+    for line in output:
+        if not line.strip():
+            if not prev_blank:
+                result.append("")
+            prev_blank = True
+        else:
+            result.append(line)
+            prev_blank = False
+    return '\n'.join(result)
+
+# --- Gemini API Key (nhập vào nếu dùng AI) ---
 GEMINI_API_KEYS = [
-  "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
+    "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
@@ -99,6 +134,7 @@ YÊU CẦU:
 5. Công thức toán học: tất cả ở dạng ${...}$ (inline, hệ, ký hiệu ... như hướng dẫn chi tiết).
 6. Bảng biểu: dùng markdown nếu có thể.
 7. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
+Tuyệt đối không bịa nội dụng ra.
 '''
 def gemini_generate_text(image_bytes, api_key):
     api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
@@ -247,8 +283,8 @@ with tab_img:
                 except Exception as e:
                     text = f"[Lỗi Gemini: {e}]"
             text = remove_all_figure_markdown(text)
-            # --- mapping ảnh CHUẨN theo từng câu hỏi ---
             text = insert_figures_map_by_cau(text, figures)
+            text = join_lines(text)  # <-- fix lỗi xuống dòng
             latex_results.append((img_file.name, text, figures))
 
         with tab1:
@@ -256,7 +292,6 @@ with tab_img:
             for idx, (img_name, latex, figures) in enumerate(latex_results):
                 st.markdown(f"#### Trang {idx+1}: {img_name}")
                 st.code(latex, language="markdown")
-            # Nút xuất Word mapping chuẩn
             if st.button("📝 Tạo và tải file Word mapping đúng vị trí", use_container_width=True):
                 with st.spinner("Đang tạo file Word..."):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
@@ -295,4 +330,4 @@ with tab_img:
         with tab2:
             st.info("Chưa có ảnh nào để xem.")
 
-st.caption("✨ Văn bản chuẩn Markdown, mapping ảnh đúng từng câu hỏi, cho phép copy/tải về/xuất Word. Tách minh hoạ từng ảnh tự động, không chen vào đầu đề hoặc giữa chừng!")
+st.caption("✨ Văn bản chuẩn Markdown, mapping ảnh đúng từng câu hỏi, không bị lỗi xuống dòng giữa câu, cho phép copy/tải về/xuất Word.")
