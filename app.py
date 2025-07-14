@@ -221,15 +221,18 @@ with tab_img:
         accept_multiple_files=True,
         help="Mỗi ảnh là 1 trang, minh hoạ & bảng sẽ được tách tự động."
     )
+
     if uploaded_images:
         for img_idx, img_file in enumerate(uploaded_images):
-            with st.expander("ℹ️ Thông tin file", expanded=True):
+            with st.expander(f"ℹ️ Thông tin file {img_file.name}", expanded=True):
                 st.write(f"**🖼️ Tên file:** {img_file.name}")
                 st.write(f"**🟡 Loại file:** {img_file.type}")
                 st.write(f"**✏️ Kích thước:** {img_file.size/1024:.1f} KB")
+
             ocr_key = f"ocr_{img_file.name}_{img_idx}"
             text_key = f"text_{img_file.name}_{img_idx}"
             fig_key = f"fig_{img_file.name}_{img_idx}"
+
             # Nút xử lý OCR Image cho từng ảnh
             if st.button(f"🚀 Xử lý OCR Image ({img_file.name})", key=ocr_key):
                 img_bytes = img_file.read()
@@ -242,16 +245,21 @@ with tab_img:
                         text = f"[Lỗi Gemini: {e}]"
                 text = remove_all_figure_markdown(text)
                 text = join_paragraphs_and_insert_figures_tables(text, figures)
-                # Lưu vào session
+                # Lưu vào session để giữ kết quả khi chuyển tab
                 st.session_state[text_key] = text
                 st.session_state[fig_key] = figures
+
             # Nếu đã xử lý => Hiện kết quả và cho phép xuất Word
             if text_key in st.session_state and fig_key in st.session_state:
                 st.markdown("### 📋 Kết quả mapping nâng cao:")
                 st.code(st.session_state[text_key], language="markdown")
                 figures = st.session_state[fig_key]
+
+                # Đếm lại số hình/bảng cho caption đúng index
+                img_count = 0
+                tbl_count = 0
                 if figures:
-                    if st.button("📝 Tạo và tải file Word giữ hình đúng vị trí (không chèn bảng)", key=f"word-{img_file.name}-{img_idx}"):
+                    if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", key=f"word-{img_file.name}-{img_idx}"):
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
                             insert_images_to_word_from_markdown(
                                 st.session_state[text_key],
@@ -270,9 +278,14 @@ with tab_img:
                         )
                         os.remove(tmp_word.name)
                     st.markdown("### 🖼️ Hình & Bảng đã tách:")
-                    for idx, fig in enumerate(figures):
+                    for fig in figures:
                         img_bytes = base64.b64decode(fig["base64"])
-                        cap = f"{'Bảng' if fig['is_table'] else 'Hình'}: {fig['name']}"
+                        if fig['is_table']:
+                            cap = f"Bảng: table-{tbl_count}.jpeg"
+                            tbl_count += 1
+                        else:
+                            cap = f"Hình: img-{img_count}.jpeg"
+                            img_count += 1
                         st.image(img_bytes, caption=cap, width=350)
                         st.download_button(
                             f"Tải {fig['name']}",
@@ -280,13 +293,12 @@ with tab_img:
                             file_name=fig["name"],
                             mime="image/jpeg",
                             use_container_width=True,
-                            key=f"anh-download-{fig['name']}-{idx}-{img_file.name}"
+                            key=f"anh-download-{fig['name']}-{img_file.name}"
                         )
                 else:
                     st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh.")
     else:
         st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
-
 # =================== TAB PDF ===================
 with tab_pdf:
     st.markdown("#### 📝 OCR PDF Toán, giữ công thức, ảnh minh hoạ")
