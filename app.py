@@ -7,16 +7,15 @@ import itertools
 import os
 import numpy as np
 import io
-from PIL import Image
+from PIL import Image, ImageFilter
 from scipy.ndimage import label, find_objects
-from io import BytesIO
 from config import API_URL, API_KEY
 from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 from PyPDF2 import PdfReader
 
-# =========== GEMINI KEY LIST ===========
+# GEMINI KEY (bạn tự điền các key hợp lệ)
 GEMINI_API_KEYS = [
   "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
@@ -29,7 +28,6 @@ api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
     return next(api_key_cycle)
 
-# ===== GEMINI PROMPT ==========
 GEMINI_PROMPT = '''
 YÊU CẦU:
 1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh.
@@ -66,12 +64,12 @@ def gemini_generate_text(image_bytes, api_key):
 def remove_all_figure_markdown(text):
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
-# ==== HÀM TÁCH ẢNH MINH HOẠ CHỐNG CẮT VỤN ====
-def extract_figures_from_image(img_bytes, min_area=3000, blur_radius=2, max_figures=4):
+# --- HÀM TÁCH ẢNH KHÔNG BAO GIỜ CẮT NHỎ ---
+def extract_figures_from_image(img_bytes, min_area=3000, blur_radius=2):
     """
-    Tách các vùng hình minh hoạ thực sự, loại đường viền/mép giấy/cạnh nhỏ.
-    - Chỉ lấy vùng lớn, tỉ lệ khung hình hợp lý, không quá sát mép
-    - max_figures: số hình tối đa trả về (mặc định 2-4)
+    Cắt ra đúng 1 hình minh hoạ lớn nhất trong ảnh.
+    Không bao giờ cắt ra 2-3 dải nhỏ như bàn ghế lớp học.
+    Nếu không có minh hoạ nào lớn, trả về nguyên ảnh.
     """
     img = Image.open(io.BytesIO(img_bytes)).convert("L")
     arr = np.array(img)
@@ -83,33 +81,31 @@ def extract_figures_from_image(img_bytes, min_area=3000, blur_radius=2, max_figu
     labeled, num = label(edge)
     objects = find_objects(labeled)
     color_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    results = []
     candidates = []
     for obj in objects:
         if obj is None: continue
         y0, y1 = obj[0].start, obj[0].stop
         x0, x1 = obj[1].start, obj[1].stop
         area = (x1-x0)*(y1-y0)
-        # Lọc vùng lớn, không quá mỏng, tỉ lệ ảnh ~ hình chữ nhật
         aspect = (x1-x0)/(y1-y0+1e-5)
         area_ratio = area/(h*w)
-        # Loại vùng nhỏ hoặc cực dài/mỏng
-        if area > min_area and 0.25 < aspect < 4.0 and 0.015 < area_ratio < 0.5:
-            # Không lấy vùng sát mép giấy (chừa 2% mép)
-            if x0 < 0.02*w or x1 > 0.98*w or y0 < 0.02*h or y1 > 0.98*h:
-                continue
+        # Lọc vùng lớn, tỉ lệ gần hình chữ nhật, nằm trong trung tâm ảnh
+        if area > min_area and 0.25 < aspect < 4.0 and 0.08 < area_ratio < 0.8:
             candidates.append((area, x0, y0, x1, y1))
-    # Chỉ lấy các vùng lớn nhất
-    candidates = sorted(candidates, key=lambda x: -x[0])[:max_figures]
-    for idx, (area, x0, y0, x1, y1) in enumerate(candidates):
+    # Nếu có vùng, chọn vùng lớn nhất, trả về 1 hình duy nhất
+    if candidates:
+        area, x0, y0, x1, y1 = max(candidates, key=lambda x: x[0])
         crop = color_img.crop((x0, y0, x1, y1))
         buf = io.BytesIO()
         crop.save(buf, format="JPEG")
         b64 = base64.b64encode(buf.getvalue()).decode()
-        results.append({"name": f"img-{idx+1}.jpeg", "base64": b64})
-    return results
+        return [{"name": "img-1.jpeg", "base64": b64}]
+    # Không có vùng phù hợp, trả về cả ảnh gốc
+    buf = io.BytesIO()
+    color_img.save(buf, format="JPEG")
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    return [{"name": "img-1.jpeg", "base64": b64}]
 
-# === Hàm mapping chèn đúng vị trí (ưu tiên dòng có từ khoá hình) ===
 def insert_figures_to_markdown(text, figures):
     lines = text.split('\n')
     new_lines = []
