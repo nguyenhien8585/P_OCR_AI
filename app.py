@@ -65,16 +65,15 @@ def gemini_generate_text(image_bytes, api_key):
 def remove_all_figure_markdown(text):
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
-# === Hàm tách ảnh minh hoạ (chỉ lấy vùng lớn, giữ nguyên màu) ===
-def extract_figures_from_image(image_bytes, min_area_ratio=0.25):
+# === Hàm tách ảnh minh hoạ (lọc vùng hợp lý, giữ nguyên màu) ===
+def extract_figures_from_image(image_bytes, min_area_ratio=0.05, max_area_ratio=0.4, min_aspect=0.3, max_aspect=3.0):
     """
-    Chỉ cắt vùng lớn nhất và giữ nguyên màu, tránh cắt nhầm bàn ghế/bảng.
-    Nếu không tìm được vùng lớn nổi bật thì trả về ảnh gốc.
+    Tách các vùng minh hoạ vừa phải, loại vùng nhỏ hoặc vùng là cả trang.
     """
     im = Image.open(BytesIO(image_bytes)).convert("RGB")
     arr = np.array(im)
     h, w = arr.shape[:2]
-    min_area = int(h * w * min_area_ratio)
+    total_area = h * w
     arr_gray = np.mean(arr, axis=2).astype(np.uint8)
     bw = (arr_gray < 220).astype(np.uint8)
     lbl, n = label(bw)
@@ -84,17 +83,22 @@ def extract_figures_from_image(image_bytes, min_area_ratio=0.25):
         y1, y2 = slc[0].start, slc[0].stop
         x1, x2 = slc[1].start, slc[1].stop
         area = (y2-y1) * (x2-x1)
-        if area < min_area:
-            continue
-        fig_crop = im.crop((x1, y1, x2, y2))
-        buf = BytesIO()
-        fig_crop.save(buf, format="JPEG")
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        figures.append({
-            "base64": b64,
-            "name": f"img-{i}.jpeg",
-            "rect": (x1, y1, x2, y2)
-        })
+        ratio = area / total_area
+        width = x2 - x1
+        height = y2 - y1
+        aspect = width / height if height else 1
+        # Chỉ nhận vùng vừa phải (>=5% trang và <=40%), loại vùng cực nhỏ và cả trang
+        if min_area_ratio <= ratio <= max_area_ratio and min_aspect <= aspect <= max_aspect:
+            fig_crop = im.crop((x1, y1, x2, y2))
+            buf = BytesIO()
+            fig_crop.save(buf, format="JPEG")
+            b64 = base64.b64encode(buf.getvalue()).decode()
+            figures.append({
+                "base64": b64,
+                "name": f"img-{i}.jpeg",
+                "rect": (x1, y1, x2, y2)
+            })
+    # Nếu không tách được gì, trả về cả trang để tránh mất hình
     if not figures:
         buf = BytesIO()
         im.save(buf, format="JPEG")
@@ -103,17 +107,7 @@ def extract_figures_from_image(image_bytes, min_area_ratio=0.25):
             "name": "img-0.jpeg",
             "rect": (0, 0, w, h)
         })
-    # Chỉ lấy 2 vùng lớn nhất nếu diện tích lớn hơn min_area
-    figures = sorted(figures, key=lambda x: (x["rect"][3]-x["rect"][1]) * (x["rect"][2]-x["rect"][0]), reverse=True)
-    results = []
-    for f in figures:
-        x1, y1, x2, y2 = f["rect"]
-        area = (y2-y1) * (x2-x1)
-        if area > min_area:
-            results.append(f)
-    if not results:
-        results = [figures[0]]
-    return results[:2]
+    return sorted(figures, key=lambda x: x["rect"][1])  # sort theo y (trên xuống)
 
 # === Hàm mapping chèn đúng vị trí (ưu tiên dòng có từ khoá hình) ===
 def insert_figures_to_markdown(text, figures):
@@ -265,7 +259,7 @@ with tab_img:
         all_figures = []
         for i, img_file in enumerate(uploaded_images):
             img_bytes = img_file.read()
-            figures = extract_figures_from_image(img_bytes, min_area_ratio=0.25)
+            figures = extract_figures_from_image(img_bytes)
             all_figures.extend(figures)
             api_key = get_next_api_key()
             with st.spinner(f"Đang nhận diện trang {i+1}..."):
