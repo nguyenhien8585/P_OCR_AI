@@ -25,19 +25,18 @@ def get_next_api_key():
     return next(api_key_cycle)
 
 # ----------- HÀM TÁCH ẢNH MINH HOẠ SÁT NHẤT -----------
-def extract_figures_from_image(img_bytes, min_area=10000, max_figures=5):
+def extract_figures_from_image(img_bytes, min_area=12000, max_figures=5):
     """
-    Cắt sát viền các hình minh hoạ trong ảnh đề toán, không cắt nguyên trang hoặc hình nhỏ dính chữ.
+    Cắt sát viền các hình minh hoạ thực sự trong đề toán, 
+    không dính trang, không cắt dính chữ, không dư các contour nhỏ.
     """
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
-    # Làm mờ nhẹ, threshold để nổi khối minh hoạ lên
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, thres = cv2.threshold(blur, 245, 255, cv2.THRESH_BINARY_INV)
-    # Canny tăng nhạy
-    canny = cv2.Canny(blur, 70, 170)
+    _, thres = cv2.threshold(blur, 240, 255, cv2.THRESH_BINARY_INV)
+    canny = cv2.Canny(blur, 60, 160)
     combined = cv2.bitwise_or(thres, canny)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
     closed = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel, iterations=2)
@@ -50,10 +49,11 @@ def extract_figures_from_image(img_bytes, min_area=10000, max_figures=5):
         area = ww * hh
         aspect = ww / (hh + 1e-5)
         area_ratio = area / (h * w)
-        # Độ rộng/tỉ lệ ảnh phải hợp lý (tránh hình nhỏ dính chữ hoặc cắt nguyên trang)
-        if area > min_area and 0.2 < aspect < 6 and 0.04 < area_ratio < 0.85:
+        # --- THÊM 2 điều kiện cắt: chiều rộng và chiều cao tối thiểu ---
+        if (area > min_area and 0.2 < aspect < 6 and 0.06 < area_ratio < 0.89 
+            and ww > w * 0.28 and hh > h * 0.18 and y > 0.03*h and x > 0.01*w):
             # Không lấy contour gần như full trang (tránh lỗi contour toàn bộ A4)
-            if ww > w * 0.97 and hh > h * 0.97:
+            if ww > w * 0.96 and hh > h * 0.96:
                 continue
             rects.append((x, y, ww, hh, area))
     rects = sorted(rects, key=lambda x: -x[4])[:max_figures]
@@ -65,7 +65,6 @@ def extract_figures_from_image(img_bytes, min_area=10000, max_figures=5):
         b64 = base64.b64encode(buf.getvalue()).decode()
         return [{"name": "img-1.jpeg", "base64": b64}]
 
-    # Cắt đúng vùng, không dính lề, có thể mở rộng thêm 3 pixel cho đẹp
     results = []
     for idx, (x, y, ww, hh, _) in enumerate(rects):
         pad = 3
