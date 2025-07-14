@@ -58,7 +58,13 @@ def extract_figures_from_image(img_bytes, min_area=4000, margin=10, max_figures=
                 continue
             boxes.append((area, x, y, x+bw, y+bh))
     # Sắp xếp theo diện tích lớn, ưu tiên giữa trang
-    boxes = sorted(boxes, key=lambda x: (-x[0], abs((x[2]+x[4])/2-w/2)+abs((x[3]+x[5])/2-h/2)))
+    boxes = sorted(
+        boxes,
+        key=lambda x: (
+            -x[0],
+            abs((x[1]+x[3])/2 - w/2) + abs((x[2]+x[4])/2 - h/2)
+        )
+    )
     results = []
     for idx, (_, x1, y1, x2, y2) in enumerate(boxes[:max_figures]):
         # Thêm margin (crop sát nhưng không cắt vào hình)
