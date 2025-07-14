@@ -66,11 +66,17 @@ def remove_all_figure_markdown(text):
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
 # === Hàm tách ảnh minh hoạ (lọc vùng hợp lý, giữ nguyên màu) ===
-def extract_figures_from_image(image_bytes, min_area_ratio=0.05, max_area_ratio=0.4, min_aspect=0.3, max_aspect=3.0):
+def extract_figures_from_image(image_bytes, min_area_ratio=0.015, max_area_ratio=0.5, min_aspect=0.25, max_aspect=4.0):
     """
     Tách các vùng minh hoạ vừa phải, loại vùng nhỏ hoặc vùng là cả trang.
+    Giữ cả những hình nhỏ (như lớp học) lẫn hình lớn (hình chữ nhật).
     """
-    im = Image.open(BytesIO(image_bytes)).convert("RGB")
+    from PIL import Image
+    import numpy as np
+    from scipy.ndimage import label, find_objects
+    import io, base64
+
+    im = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     arr = np.array(im)
     h, w = arr.shape[:2]
     total_area = h * w
@@ -87,10 +93,10 @@ def extract_figures_from_image(image_bytes, min_area_ratio=0.05, max_area_ratio=
         width = x2 - x1
         height = y2 - y1
         aspect = width / height if height else 1
-        # Chỉ nhận vùng vừa phải (>=5% trang và <=40%), loại vùng cực nhỏ và cả trang
+        # Chỉ nhận vùng vừa phải (>=1.5% trang và <=50%), loại vùng cực nhỏ và cả trang
         if min_area_ratio <= ratio <= max_area_ratio and min_aspect <= aspect <= max_aspect:
             fig_crop = im.crop((x1, y1, x2, y2))
-            buf = BytesIO()
+            buf = io.BytesIO()
             fig_crop.save(buf, format="JPEG")
             b64 = base64.b64encode(buf.getvalue()).decode()
             figures.append({
@@ -100,14 +106,15 @@ def extract_figures_from_image(image_bytes, min_area_ratio=0.05, max_area_ratio=
             })
     # Nếu không tách được gì, trả về cả trang để tránh mất hình
     if not figures:
-        buf = BytesIO()
+        buf = io.BytesIO()
         im.save(buf, format="JPEG")
         figures.append({
             "base64": base64.b64encode(buf.getvalue()).decode(),
             "name": "img-0.jpeg",
             "rect": (0, 0, w, h)
         })
-    return sorted(figures, key=lambda x: x["rect"][1])  # sort theo y (trên xuống)
+    # Sắp xếp từ trên xuống (top-y)
+    return sorted(figures, key=lambda x: x["rect"][1])
 
 # === Hàm mapping chèn đúng vị trí (ưu tiên dòng có từ khoá hình) ===
 def insert_figures_to_markdown(text, figures):
