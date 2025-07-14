@@ -15,9 +15,9 @@ from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 from PyPDF2 import PdfReader
 
-# ==== GEMINI API KEYs ====
+# ====== Key Gemini ======
 GEMINI_API_KEYS = [
-  "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
+   "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
@@ -28,6 +28,7 @@ api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
     return next(api_key_cycle)
 
+# ==== PROMPT CHUẨN ====
 GEMINI_PROMPT = '''
 YÊU CẦU:
 1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh.
@@ -64,26 +65,31 @@ def gemini_generate_text(image_bytes, api_key):
 def remove_all_figure_markdown(text):
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
-# =============== CẮT MINH HOẠ SẠCH VIỀN ===============
+def insert_figures_to_markdown(text, figures):
+    lines = text.split('\n')
+    new_lines = []
+    fig_idx = 0
+    n_fig = len(figures)
+    for i, line in enumerate(lines):
+        new_lines.append(line)
+        if fig_idx < n_fig:
+            lower = line.lower()
+            if any(key in lower for key in ["xem hình", "hình vẽ", "hình dưới", "hình bên", "bảng dưới", "hình minh hoạ", "hình minh họa"]):
+                new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
+                fig_idx += 1
+    # Nếu vẫn còn hình, chèn sau dòng đầu tiên chứa "câu"
+    if fig_idx < n_fig:
+        for i, line in enumerate(new_lines):
+            if "câu" in line.lower():
+                new_lines.insert(i+1, f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
+                fig_idx += 1
+                break
+    while fig_idx < n_fig:
+        new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
+        fig_idx += 1
+    return '\n'.join(new_lines)
 
-def clean_bbox_no_text(arr, x1, y1, x2, y2, border=15):
-    """ Co nhỏ bbox lại vào trong nếu biên trên/dưới/trái/phải có dải màu tối (thường là chữ/đường kẻ). """
-    for _ in range(border):
-        # Trên
-        if np.mean(arr[y1, x1:x2]) < 160: y1 += 1
-        # Dưới
-        if np.mean(arr[y2-1, x1:x2]) < 160: y2 -= 1
-        # Trái
-        if np.mean(arr[y1:y2, x1]) < 160: x1 += 1
-        # Phải
-        if np.mean(arr[y1:y2, x2-1]) < 160: x2 -= 1
-    h, w = arr.shape[:2]
-    x1 = max(0, x1); x2 = min(w, x2)
-    y1 = max(0, y1); y2 = min(h, y2)
-    if x2 - x1 < 40 or y2 - y1 < 40:
-        return None
-    return (x1, y1, x2, y2)
-
+# ===== HÀM TÁCH HÌNH MINH HOẠ: KHÔNG BAO GIỜ CẮT NHỎ, KHÔNG DÍNH CHỮ =====
 def extract_figures_from_image(img_bytes, min_area_ratio=0.06, border=15, edge_thr=14):
     """
     Tách đúng duy nhất 1 hình minh hoạ lớn nhất (như lớp học, bảng biến thiên, hình học...)
@@ -134,40 +140,13 @@ def extract_figures_from_image(img_bytes, min_area_ratio=0.06, border=15, edge_t
     b64 = base64.b64encode(buf.getvalue()).decode()
     return [{"name": "img-1.jpeg", "base64": b64}]
 
-# ==== CHÈN ĐÚNG VỊ TRÍ ====
-def insert_figures_to_markdown(text, figures):
-    lines = text.split('\n')
-    new_lines = []
-    fig_idx = 0
-    n_fig = len(figures)
-    for i, line in enumerate(lines):
-        new_lines.append(line)
-        if fig_idx < n_fig:
-            lower = line.lower()
-            if any(key in lower for key in ["xem hình", "hình vẽ", "hình dưới", "hình bên", "bảng dưới", "hình minh hoạ", "hình minh họa"]):
-                new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
-                fig_idx += 1
-    # Nếu vẫn còn hình, chèn sau dòng đầu tiên chứa "câu"
-    if fig_idx < n_fig:
-        for i, line in enumerate(new_lines):
-            if "câu" in line.lower():
-                new_lines.insert(i+1, f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
-                fig_idx += 1
-                break
-    while fig_idx < n_fig:
-        new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
-        fig_idx += 1
-    return '\n'.join(new_lines)
-
-# ==== STREAMLIT UI ====
-
+# =============== UI STREAMLIT ===============
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
-st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & tách minh hoạ cực sạch ✨")
+st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & minh hoạ ✨")
 
-tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Minh hoạ"])
+tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Markdown + Minh hoạ"])
 
 # =========== TAB PDF ===========
-
 with tab_pdf:
     st.markdown("#### 📝 OCR PDF Toán, giữ công thức, ảnh minh hoạ")
     uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"], label_visibility="collapsed")
@@ -266,7 +245,7 @@ with tab_pdf:
 
 # =========== TAB ẢNH ===========
 with tab_img:
-    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, cực sạch viền, không chia nhỏ vụn) → Markdown/Text/Word")
+    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, mapping chuẩn, cho phép tải/copy) → Markdown/Text/Word")
     uploaded_images = st.file_uploader(
         "Chọn nhiều ảnh (mỗi ảnh là một trang):",
         type=["png", "jpg", "jpeg", "webp"],
@@ -287,7 +266,7 @@ with tab_img:
         all_figures = []
         for i, img_file in enumerate(uploaded_images):
             img_bytes = img_file.read()
-            figures = extract_figures_from_image(img_bytes)
+            figures = extract_figures_from_image(img_bytes)  # chỉ luôn ra đúng 1 hình lớn nhất, không tách dải
             all_figures.extend(figures)
             api_key = get_next_api_key()
             with st.spinner(f"Đang nhận diện trang {i+1}..."):
