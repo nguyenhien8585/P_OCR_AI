@@ -223,74 +223,65 @@ with tab_img:
         help="Mỗi ảnh là 1 trang, minh hoạ & bảng sẽ được tách tự động."
     )
     if uploaded_images:
+        # Cho phép xử lý từng ảnh riêng, chỉ xuất 1 file Word/người dùng
         for img_file in uploaded_images:
-            with st.expander("ℹ️ Thông tin file", expanded=True):
-                st.write(f"**🖼️ Tên file:** {img_file.name}")
-                st.write(f"**🟡 Loại file:** {img_file.type}")
-                st.write(f"**✏️ Kích thước:** {img_file.size/1024:.1f} KB")
-            if st.button("🚀 Xử lý OCR Image", key=f"ocr-{img_file.name}"):
-                img_bytes = img_file.read()
-                figures = extract_figures_and_tables(img_bytes)
-                api_key = get_next_api_key()
-                with st.spinner("Đang nhận diện..."):
-                    try:
-                        text = gemini_generate_text(img_bytes, api_key)
-                    except Exception as e:
-                        text = f"[Lỗi Gemini: {e}]"
-                text = remove_all_figure_markdown(text)
-                text = join_paragraphs_and_insert_figures_tables(text, figures)
-
-                # Đếm số hình/bảng cho thông báo (giống UI bạn muốn)
-                n_img = sum(1 for f in figures if not f["is_table"])
-                n_tbl = sum(1 for f in figures if f["is_table"])
-                if n_img > 0 or n_tbl > 0:
-                    st.markdown(
-                        f'<div style="margin-top:10px">'
-                        f'<img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f5bc.svg" width="20"/> '
-                        f'<b>Đã tìm thấy {n_img} hình ảnh'
-                        + (f', {n_tbl} bảng' if n_tbl > 0 else '') +
-                        ':</b></div>', unsafe_allow_html=True
-                    )
-
-                st.markdown("### 📋 Kết quả mapping nâng cao:")
-                st.code(text, language="markdown")
-                if figures:
-                    if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", key=f"word-{img_file.name}"):
+            st.markdown("---")
+            col_vb, col_img = st.tabs(["📄 Văn bản", "🖼️ Hình ảnh"])
+            with col_vb:
+                with st.expander("ℹ️ Thông tin file", expanded=True):
+                    st.write(f"**🖼️ Tên file:** {img_file.name}")
+                    st.write(f"**🟡 Loại file:** {img_file.type}")
+                    st.write(f"**✏️ Kích thước:** {img_file.size/1024:.1f} KB")
+                if st.button(f"🚀 Xử lý OCR Image ({img_file.name})", key=f"ocr-{img_file.name}"):
+                    img_bytes = img_file.read()
+                    figures = extract_figures_and_tables(img_bytes)
+                    api_key = get_next_api_key()
+                    with st.spinner("Đang nhận diện..."):
+                        try:
+                            text = gemini_generate_text(img_bytes, api_key)
+                        except Exception as e:
+                            text = f"[Lỗi Gemini: {e}]"
+                    text = remove_all_figure_markdown(text)
+                    text = join_paragraphs_and_insert_figures_tables(text, figures)
+                    st.markdown("#### 📋 Kết quả mapping nâng cao:")
+                    st.code(text, language="markdown")
+                    # Nút xuất Word đúng vị trí!
+                    if st.button(f"📝 Tạo và tải file Word ({img_file.name})", key=f"word-{img_file.name}"):
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                            insert_images_to_word_from_markdown(
-                                text,
-                                figures,
-                                tmp_word.name
-                            )
+                            insert_images_to_word_from_markdown(text, figures, tmp_word.name)
                         with open(tmp_word.name, "rb") as f:
                             word_data = f.read()
                         st.success("✅ Đã tạo file Word thành công!")
                         st.download_button(
                             "⬇️ Tải về file Word",
                             word_data,
-                            file_name="ket_qua_anh_toan.docx",
+                            file_name=f"ket_qua_{img_file.name}.docx",
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                             use_container_width=True
                         )
                         os.remove(tmp_word.name)
-                    st.markdown("### 🖼️ Hình & Bảng đã tách:")
-                    for idx, fig in enumerate(figures):
-                        img_bytes = base64.b64decode(fig["base64"])
-                        cap = f"{'Bảng' if fig['is_table'] else 'Hình'}: {fig['name']}"
-                        st.image(img_bytes, caption=cap, width=350)
-                        st.download_button(
-                            f"Tải {fig['name']}",
-                            img_bytes,
-                            file_name=fig["name"],
-                            mime="image/jpeg",
-                            use_container_width=True,
-                            key=f"anh-download-{fig['name']}-{idx}"
-                        )
-                else:
-                    st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh.")
+            with col_img:
+                if st.button(f"Hiển thị hình & bảng ({img_file.name})", key=f"show-img-{img_file.name}"):
+                    img_bytes = img_file.read()
+                    figures = extract_figures_and_tables(img_bytes)
+                    if not figures:
+                        st.warning("Không phát hiện hình hay bảng nào trong ảnh.")
+                    else:
+                        st.markdown(f"**Đã tìm thấy {len(figures)} hình/bảng:**")
+                        for idx, fig in enumerate(figures):
+                            imgb = base64.b64decode(fig["base64"])
+                            cap = f"{'Bảng' if fig['is_table'] else 'Hình'}: {fig['name']}"
+                            st.image(imgb, caption=cap, width=350)
+                            st.download_button(
+                                f"Tải {fig['name']}",
+                                imgb,
+                                file_name=fig["name"],
+                                mime="image/jpeg",
+                                use_container_width=True,
+                                key=f"anh-download-{fig['name']}-{idx}"
+                            )
     else:
         st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
-
 # =================== TAB PDF ===================
 with tab_pdf:
     st.markdown("#### 📝 OCR PDF Toán, giữ công thức, ảnh minh hoạ")
