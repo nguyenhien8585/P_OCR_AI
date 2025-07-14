@@ -25,60 +25,80 @@ def get_next_api_key():
     return next(api_key_cycle)
 
 # ----------- HÀM TÁCH ẢNH MINH HOẠ SÁT NHẤT -----------
-def extract_figures_from_image(img_bytes, min_area=2000, min_aspect=0.15, max_aspect=7, max_figures=5):
+import cv2
+import numpy as np
+import base64
+import io
+from PIL import Image
+
+def extract_figures_from_image(img_bytes, min_area=12000, max_figures=5):
     """
-    Trả về danh sách dict [{"name":..., "base64":...}]
-    Cắt sát viền, không lẫn chữ, giữ đúng minh hoạ lớn nhất trong ảnh.
-    Cải tiến: không loại vùng sát mép để không bỏ hình lớp học!
+    Cắt sát viền các hình minh hoạ trong ảnh đề toán, không bỏ hình lớn sát mép, không lẫn chữ!
+    Trả về: [{"name": ..., "base64": ...}]
     """
-    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    arr = np.array(img)
-    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
-    # Làm mờ nhẹ giúp các vùng sát nhau nối lại
-    blur = cv2.GaussianBlur(gray, (7, 7), 0)
-    # adaptive threshold mạnh tay hơn, loại vùng chữ nhỏ
-    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                   cv2.THRESH_BINARY_INV, 31, 13)
-    kernel = np.ones((5, 5), np.uint8)
-    # Nối các vùng gần nhau để không cắt dính chữ vào hình
-    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=3)
+    img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    img = np.array(img_pil)
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+
+    # Làm mờ nhẹ, giảm nhiễu chữ và ngắt nét vùng nền
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    # Tìm biên rõ bằng canny, dùng cả adaptive threshold cho ảnh màu nền
+    canny = cv2.Canny(blur, 70, 160)
+    thres = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 31, 12)
+    combined = cv2.bitwise_or(canny, thres)
+
+    # Dày nét hơn để không ngắt khối minh hoạ lớn
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
+    closed = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+    # Tìm contour ngoài cùng
     contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    h, w = gray.shape
+    h, w = img.shape[:2]
     rects = []
     for cnt in contours:
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
-        aspect = ww / (hh + 1e-5)
+        # Điều kiện loại: diện tích lớn, không quá dài/mỏng
+        aspect = ww / (hh + 1e-6)
         area_ratio = area / (h * w)
-        # Không loại vùng sát mép
-        if area > min_area and min_aspect < aspect < max_aspect and 0.03 < area_ratio < 0.75:
-            rects.append((y, x, ww, hh))
-    # Loại vùng con bị chứa hoàn toàn
+        # Để tránh dính khung, vẫn giữ hình sát biên
+        if area > min_area and 0.2 < aspect < 6 and 0.04 < area_ratio < 0.8:
+            rects.append((x, y, ww, hh, area))
+    # Loại vùng nằm trong vùng khác
+    rects = sorted(rects, key=lambda x: -x[4])
     final_rects = []
-    for r in sorted(rects, key=lambda x: -x[2]*x[3]):
-        y, x, ww, hh = r
-        overlap = False
-        for f in final_rects:
-            fy, fx, fww, fhh = f
-            if x >= fx and y >= fy and x + ww <= fx + fww and y + hh <= fy + fhh:
-                overlap = True
-                break
-        if not overlap:
-            final_rects.append(r)
-    final_rects = sorted(final_rects, key=lambda x: (x[0], x[1]))[:max_figures]
+    for x, y, ww, hh, area in rects:
+        contained = False
+        for fx, fy, fww, fhh, _ in final_rects:
+            if x > fx-5 and y > fy-5 and (x+ww) < (fx+fww+5) and (y+hh) < (fy+fhh+5):
+                contained = True
+        if not contained:
+            final_rects.append((x, y, ww, hh, area))
+        if len(final_rects) >= max_figures:
+            break
+    # Sắp theo từ trên xuống
+    final_rects = sorted(final_rects, key=lambda r: (r[1], r[0]))
+    # Cắt và mã hoá base64 trả về
     results = []
-    for idx, (y, x, ww, hh) in enumerate(final_rects):
-        crop = img.crop((x, y, x + ww, y + hh))
+    for idx, (x, y, ww, hh, _) in enumerate(final_rects):
+        # Mở rộng 3 pixel mỗi phía (nếu còn trong ảnh) cho sát biên
+        pad = 3
+        x1 = max(x - pad, 0)
+        y1 = max(y - pad, 0)
+        x2 = min(x + ww + pad, w)
+        y2 = min(y + hh + pad, h)
+        crop = img_pil.crop((x1, y1, x2, y2))
         buf = io.BytesIO()
         crop.save(buf, format='JPEG')
         b64 = base64.b64encode(buf.getvalue()).decode()
         results.append({"name": f"img-{idx+1}.jpeg", "base64": b64})
     if not results:
         buf = io.BytesIO()
-        img.save(buf, format='JPEG')
+        img_pil.save(buf, format='JPEG')
         b64 = base64.b64encode(buf.getvalue()).decode()
         results.append({"name": "img-1.jpeg", "base64": b64})
     return results
+
 # ----------- HÀM GỠ MARKDOWN ẢNH ----------
 def remove_all_figure_markdown(text):
     if not isinstance(text, str):
