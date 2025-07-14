@@ -3,6 +3,7 @@ import tempfile, os, base64, re, io, itertools
 from PIL import Image
 import numpy as np
 import cv2
+import requests
 from PyPDF2 import PdfReader
 
 from config import API_URL, API_KEY
