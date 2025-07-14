@@ -5,26 +5,25 @@ import tempfile
 import re
 import itertools
 import os
+import numpy as np
+from PIL import Image
+from scipy.ndimage import label, find_objects
 from config import API_URL, API_KEY
 from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 from PyPDF2 import PdfReader
-from extract_figures_from_image_pillow import extract_figures_from_image
 
 # =========== GEMINI KEY LIST ===========
 GEMINI_API_KEYS = [
-  "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
-  "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
-  "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
-  "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
-  "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
-  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
+    "AIzaSyAAA111111111111111111111111",
+    "AIzaSyBBB222222222222222222222222"
 ]
 api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
     return next(api_key_cycle)
 
+# ===== GEMINI PROMPT ==========
 GEMINI_PROMPT = '''
 YÊU CẦU:
 1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh.
@@ -32,16 +31,8 @@ YÊU CẦU:
 3. Với mỗi hình minh hoạ, hãy chèn markdown ngay sau dòng mô tả có từ “xem hình dưới”, “hình dưới đây”, “bảng biến thiên”, “hình vẽ”, “biểu đồ”, hoặc ngay sau dòng câu hỏi liên quan tới hình/bảng/biểu đồ đó.
 4. Giữ nguyên cấu trúc đoạn văn và xuống dòng.
 5. Công thức toán học: tất cả ở dạng ${...}$ (inline, hệ, ký hiệu ... như hướng dẫn chi tiết).
-6. CÔNG THỨC TOÁN HỌC
-- Giữ nguyên công thức dưới dạng LaTeX chuẩn:
-- Toán inline: `${...}$`
-- Toán độc lập hoặc hệ phương trình: `$begin{{cases}}...\end{{cases}}$`
-- Các chữ kí hiệu cho hình học và các số để dạng ${....}$.
-Ví dụ: ${Oxyz}$, ${A}$,${AB}$,${0,1%}$,${0.1%}$,....
-- KHÔNG dùng `\(...\)` hoặc `\[...\]`
-7. Bảng biểu: dùng markdown nếu có thể.
-8. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
-Lưu ý: không được bịa ra phải nhận dạng từ ảnh.
+6. Bảng biểu: dùng markdown nếu có thể.
+7. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
 '''
 
 def gemini_generate_text(image_bytes, api_key):
@@ -66,77 +57,71 @@ def gemini_generate_text(image_bytes, api_key):
     text = res["candidates"][0]["content"]["parts"][0]["text"]
     return text
 
-def gemini_caption_image(image_bytes, api_key):
-    api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-    b64_img = base64.b64encode(image_bytes).decode()
-    prompt = "Hãy mô tả ngắn gọn (dưới 10 từ, không giải thích) về nội dung hình này, ví dụ: 'bảng biến thiên', 'hình lăng trụ', 'hình chóp', 'đồ thị hàm số', 'hình học phẳng', 'sơ đồ cây',... Nếu biết, ghi rõ số câu nếu có trong đề."
-    payload = {
-        "contents": [{
-            "role": "user",
-            "parts": [
-                {"text": prompt},
-                {"inlineData": {
-                    "mimeType": "image/png",
-                    "data": b64_img
-                }}
-            ]
-        }]
-    }
-    headers = {"Content-Type": "application/json"}
-    r = requests.post(f"{api_url}?key={api_key}", json=payload, headers=headers, timeout=40)
-    try:
-        r.raise_for_status()
-    except requests.HTTPError as e:
-        st.error(f"Lỗi Gemini caption: {e}\nResponse: {r.text}")
-        raise e
-    res = r.json()
-    text = res["candidates"][0]["content"]["parts"][0]["text"]
-    return text.strip().lower()
-
-def insert_figures_no_duplicate(text, figures):
-    lines = text.split('\n')
-    n = len(figures)
-    fig_used = [False] * n
-    new_lines = []
-    positions = []
-    for idx, fig in enumerate(figures):
-        inserted = False
-        for i, line in enumerate(lines):
-            if not inserted and not any(p[0]==i for p in positions):
-                if 'bảng biến thiên' in fig['caption'] and 'bảng biến thiên' in line.lower():
-                    positions.append((i, idx))
-                    inserted = True
-                elif 'lăng trụ' in fig['caption'] and 'lăng trụ' in line.lower():
-                    positions.append((i, idx))
-                    inserted = True
-                elif 'chóp' in fig['caption'] and 'chóp' in line.lower():
-                    positions.append((i, idx))
-                    inserted = True
-                elif 'đồ thị' in fig['caption'] and 'đồ thị' in line.lower():
-                    positions.append((i, idx))
-                    inserted = True
-                elif 'hình' in fig['caption'] and 'hình' in line.lower():
-                    positions.append((i, idx))
-                    inserted = True
-    for i, line in enumerate(lines):
-        new_lines.append(line)
-        for pos, idx_fig in positions:
-            if pos == i and not fig_used[idx_fig]:
-                new_lines.append(f"![img-{idx_fig+1}.jpeg](img-{idx_fig+1}.jpeg)")
-                fig_used[idx_fig] = True
-    for idx, used in enumerate(fig_used):
-        if not used:
-            new_lines.append(f"![img-{idx+1}.jpeg](img-{idx+1}.jpeg)")
-            fig_used[idx] = True
-    return '\n'.join(new_lines)
-
 def remove_all_figure_markdown(text):
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
-st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
-st.title("✨ Chuyển PDF & Ảnh Toán sang word, giữ công thức & minh hoạ ✨")
+# === Hàm tách ảnh minh hoạ (tối ưu chỉ lấy ảnh lớn) ===
+def extract_figures_from_image(image_bytes, min_area=50000):
+    im = Image.open(BytesIO(image_bytes)).convert("L")
+    arr = np.array(im)
+    bw = (arr < 220).astype(np.uint8)
+    lbl, n = label(bw)
+    objs = find_objects(lbl)
+    figures = []
+    for i, slc in enumerate(objs):
+        y1, y2 = slc[0].start, slc[0].stop
+        x1, x2 = slc[1].start, slc[1].stop
+        area = (y2-y1) * (x2-x1)
+        if area < min_area:
+            continue
+        fig_crop = im.crop((x1, y1, x2, y2))
+        buf = BytesIO()
+        fig_crop.save(buf, format="JPEG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        figures.append({
+            "base64": b64,
+            "name": f"img-{i}.jpeg",
+            "rect": (x1, y1, x2, y2)
+        })
+    if not figures:
+        buf = BytesIO()
+        im.save(buf, format="JPEG")
+        figures.append({
+            "base64": base64.b64encode(buf.getvalue()).decode(),
+            "name": "img-0.jpeg",
+            "rect": (0,0,im.width,im.height)
+        })
+    return sorted(figures, key=lambda x: x["rect"][1])  # sort theo y (trên xuống)
 
-tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh Toán"])
+# === Hàm mapping chèn đúng vị trí (ưu tiên dòng có từ khoá hình) ===
+def insert_figures_to_markdown(text, figures):
+    lines = text.split('\n')
+    new_lines = []
+    fig_idx = 0
+    n_fig = len(figures)
+    for i, line in enumerate(lines):
+        new_lines.append(line)
+        if fig_idx < n_fig:
+            lower = line.lower()
+            if any(key in lower for key in ["xem hình", "hình vẽ", "hình dưới", "hình bên", "bảng dưới", "hình minh hoạ", "hình minh họa"]):
+                new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
+                fig_idx += 1
+    # Nếu vẫn còn hình, chèn sau dòng đầu tiên chứa "câu"
+    if fig_idx < n_fig:
+        for i, line in enumerate(new_lines):
+            if "câu" in line.lower():
+                new_lines.insert(i+1, f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
+                fig_idx += 1
+                break
+    while fig_idx < n_fig:
+        new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
+        fig_idx += 1
+    return '\n'.join(new_lines)
+
+st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
+st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & minh hoạ ✨")
+
+tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Markdown + Minh hoạ"])
 
 # =========== TAB PDF ===========
 with tab_pdf:
@@ -233,10 +218,11 @@ with tab_pdf:
             else:
                 st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
     st.markdown("---")
+    st.caption("🔖 OCR PDF hỗ trợ MathType, ảnh minh hoạ, xuất Word/TXT. Chuẩn Unicode.")
 
 # =========== TAB ẢNH ===========
 with tab_img:
-    st.markdown("#### 🖼️ Chuyển ảnh sang word")
+    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, mapping chuẩn, cho phép tải/copy) → Markdown/Text/Word")
     uploaded_images = st.file_uploader(
         "Chọn nhiều ảnh (mỗi ảnh là một trang):",
         type=["png", "jpg", "jpeg", "webp"],
@@ -244,7 +230,6 @@ with tab_img:
         help="Mỗi ảnh là 1 trang, minh hoạ sẽ được tách tự động, nhận diện caption và chèn đúng vị trí."
     )
 
-    # --- Hiện thông tin file ảnh ---
     if uploaded_images:
         with st.expander("ℹ️ Thông tin ảnh đã tải lên", expanded=True):
             for img_file in uploaded_images:
@@ -252,20 +237,13 @@ with tab_img:
                 st.write(f"**Loại file:** {img_file.type}")
                 st.write(f"**Kích thước:** {img_file.size / 1024:.1f} KB")
 
-    tab1, tab2 = st.tabs(["📋 Văn bản", "🖼️ Hình ảnh đã tách"])
+    tab1, tab2 = st.tabs(["📋 Văn bản (Markdown)", "🖼️ Hình ảnh đã tách"])
     if uploaded_images:
         latex_results = []
         all_figures = []
         for i, img_file in enumerate(uploaded_images):
             img_bytes = img_file.read()
-            figures = extract_figures_from_image(img_bytes)
-            figures_with_caption = []
-            for idx, fig in enumerate(figures):
-                api_key = get_next_api_key()
-                fig_bytes = base64.b64decode(fig["base64"])
-                fig_caption = gemini_caption_image(fig_bytes, api_key)
-                figures_with_caption.append({**fig, "caption": fig_caption})
-                fig["caption"] = fig_caption
+            figures = extract_figures_from_image(img_bytes, min_area=50000)
             all_figures.extend(figures)
             api_key = get_next_api_key()
             with st.spinner(f"Đang nhận diện trang {i+1}..."):
@@ -274,21 +252,20 @@ with tab_img:
                 except Exception as e:
                     text = f"[Lỗi Gemini: {e}]"
             text = remove_all_figure_markdown(text)
-            if figures_with_caption:
-                text = insert_figures_no_duplicate(text, figures_with_caption)
-            latex_results.append((img_file.name, text, figures_with_caption))
+            text = insert_figures_to_markdown(text, figures)
+            latex_results.append((img_file.name, text, figures))
 
         with tab1:
-            st.markdown("### 📋 Kết quả từng trang:")
+            st.markdown("### 📋 Kết quả từng trang (có markdown minh hoạ):")
             for idx, (img_name, latex, figures) in enumerate(latex_results):
                 st.markdown(f"#### Trang {idx+1}: {img_name}")
                 st.code(latex, language="markdown")
-            if st.button("📝 Tạo và tải file Word", use_container_width=True):
+            if st.button("📝 Tạo và tải file Word giữ minh hoạ đúng vị trí", use_container_width=True):
                 with st.spinner("Đang tạo file Word..."):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
                         insert_images_to_word_from_markdown(
-                            "\n\n".join([latex for _, latex, _ in latex_results]), 
-                            all_figures, 
+                            "\n\n".join([latex for _, latex, _ in latex_results]),
+                            all_figures,
                             tmp_word.name
                         )
                     with open(tmp_word.name, "rb") as f:
@@ -303,10 +280,10 @@ with tab_img:
                     )
                     os.remove(tmp_word.name)
         with tab2:
-            st.markdown("### 🖼️ Tất cả minh hoạ đã tách (kèm caption, cho tải ảnh):")
+            st.markdown("### 🖼️ Tất cả minh hoạ đã tách (cho tải ảnh):")
             for idx, fig in enumerate(all_figures):
                 img_bytes = base64.b64decode(fig["base64"])
-                st.image(img_bytes, caption=f"{fig['name']} - {fig['caption']}", width=250)
+                st.image(img_bytes, caption=fig["name"], width=250)
                 st.download_button(
                     f"Tải {fig['name']}",
                     img_bytes,
@@ -321,4 +298,4 @@ with tab_img:
         with tab2:
             st.info("Chưa có ảnh nào để xem.")
 
-st.caption("✨ PDF, ảnh sang word - NBH")
+st.caption("✨ Văn bản chuẩn Markdown, mapping ảnh không dư/lặp, cho phép copy/tải về. Tách minh hoạ từng ảnh tự động. Xuất Word minh hoạ đúng vị trí!")
