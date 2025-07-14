@@ -4,6 +4,7 @@ from PIL import Image
 import numpy as np
 import cv2
 import requests
+import re
 from PyPDF2 import PdfReader
 
 from config import API_URL, API_KEY
@@ -54,57 +55,60 @@ def remove_all_figure_markdown(text):
     if not isinstance(text, str): return ""
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
-def insert_figures_to_markdown(text, figures):
-    # Tách từng đoạn dựa trên "Câu n." (giả sử số thứ tự 1-2 chữ số)
-    # Thêm 2 xuống dòng giữa các câu
-    pattern = r'(Câu\s*\d+\.|--------\s*HẾT--------)'
-    segments = [s.strip() for s in re.split(pattern, text) if s.strip()]
-    # Gộp lại theo từng cặp: (title, content)
-    grouped = []
-    i = 0
-    while i < len(segments):
-        if segments[i].startswith('Câu') or segments[i].startswith('--------'):
-            if i+1 < len(segments):
-                grouped.append((segments[i], segments[i+1]))
-                i += 2
-            else:
-                grouped.append((segments[i], ""))
-                i += 1
-        else:
-            grouped.append(("", segments[i]))
-            i += 1
-
-    # Chèn từng ảnh vào từng câu theo thứ tự (nếu có từ khóa liên quan)
-    result = []
+def insert_figures_to_markdown_fix(text, figures):
+    lines = text.split('\n')
+    new_lines = []
     fig_idx = 0
     n_fig = len(figures)
-    for title, body in grouped:
-        lines = body.split('\n')
-        inserted = False
-        out = []
-        for line in lines:
-            out.append(line)
-            if fig_idx < n_fig:
-                # Chèn ngay sau dòng chứa từ khóa liên quan hình, nhưng chỉ 1 lần/câu
-                if not inserted and any(k in line.lower() for k in ["hình vẽ", "hình dưới", "xem hình", "bảng dưới", "minh hoạ", "minh họa"]):
-                    out.append(f'![{figures[fig_idx]["name"]}]({figures[fig_idx]["name"]})')
-                    inserted = True
-                    fig_idx += 1
-        # Nếu chưa chèn ảnh nào mà tiêu đề này là "Câu 5" v.v. thì có thể chèn ảnh tiếp theo vào đầu câu
-        if not inserted and fig_idx < n_fig and ("hình" in body.lower() or "bảng" in body.lower()):
-            out.insert(0, f'![{figures[fig_idx]["name"]}]({figures[fig_idx]["name"]})')
-            fig_idx += 1
-        # Gộp lại với tiêu đề
-        if title:
-            result.append(title)
-        result.append('\n'.join(out))
-    # Nếu còn ảnh chưa dùng, chèn xuống cuối
-    while fig_idx < n_fig:
-        result.append(f'![{figures[fig_idx]["name"]}]({figures[fig_idx]["name"]})')
-        fig_idx += 1
-    # Kết quả chuẩn markdown với 2 dòng trắng giữa các câu
-    return '\n\n'.join(result)
 
+    for i, line in enumerate(lines):
+        new_lines.append(line)
+        # Tìm câu hỏi, ví dụ "Câu 4", "Câu 5",...
+        m = re.match(r'^Câu\s*\d+', line.strip())
+        # Nếu gặp đầu 1 câu hỏi mới, chèn ảnh tiếp theo (nếu còn ảnh)
+        if m and fig_idx < n_fig:
+            # Kiểm tra 1 số từ khóa về hình vẽ trong câu này hoặc dòng kế tiếp
+            found = False
+            keywords = ["hình dưới", "hình bên", "xem hình", "hình vẽ", "bảng dưới", "biểu đồ", "minh hoạ", "minh họa"]
+            lcur = line.lower()
+            lnext = lines[i+1].lower() if i+1 < len(lines) else ""
+            for kw in keywords:
+                if kw in lcur or kw in lnext:
+                    found = True
+                    break
+            if found:
+                new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
+                fig_idx += 1
+
+    # Nếu vẫn còn hình, chèn lần lượt cuối văn bản
+    while fig_idx < n_fig:
+        new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
+        fig_idx += 1
+    return '\n'.join(new_lines)
+
+def join_lines(text):
+    lines = text.split('\n')
+    output = []
+    para = ""
+    for line in lines:
+        l = line.strip()
+        if not l:
+            if para:
+                output.append(para)
+                para = ""
+            continue
+        if para:
+            # Nếu dòng trước không kết thúc dấu câu, nối liền không xuống dòng
+            if not re.search(r'[.!?…:]$', para):
+                para += " " + l
+            else:
+                output.append(para)
+                para = l
+        else:
+            para = l
+    if para:
+        output.append(para)
+    return '\n'.join(output)
 
 # --- NHẬP GEMINI KEY Ở ĐÂY (có thể để trống nếu không dùng AI) ---
 GEMINI_API_KEYS = [
