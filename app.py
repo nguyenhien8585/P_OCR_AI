@@ -11,7 +11,7 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
-# --- TÁCH ẢNH MINH HOẠ (OpenCV) ---
+# ========== Hàm tách hình minh hoạ ==============
 def extract_figures_from_image(img_bytes, min_area_ratio=0.05, min_area_abs=1800, min_w=100, min_h=90, max_figures=4):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
@@ -50,58 +50,49 @@ def extract_figures_from_image(img_bytes, min_area_ratio=0.05, min_area_abs=1800
         results.append({"name": f"img-{idx+1}.jpeg", "base64": b64})
     return results
 
+# ========== Tiền xử lý văn bản ==============
 def remove_all_figure_markdown(text):
     if not isinstance(text, str): return ""
-    return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
+    text = re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)', '', text)
+    text = re.sub(r'\[HÌNH:.*?\]', '', text)
+    return text
 
-# --- Hàm mapping ảnh đúng vị trí câu hỏi ---
-def insert_figures_map_by_cau(text, figures):
-    cau_pos = [m.start() for m in re.finditer(r'(Câu\s*\d+\.)', text)]
-    parts = []
-    last = 0
-    for pos in cau_pos:
-        parts.append(text[last:pos])
-        last = pos
-    parts.append(text[last:])
-    result = []
-    img_idx = 0
-    for i, part in enumerate(parts):
-        s = part.strip()
-        if s:
-            result.append(s)
-        if i > 0 and img_idx < len(figures):
-            result.append(f'![{figures[img_idx]["name"]}]({figures[img_idx]["name"]})')
-            img_idx += 1
-    while img_idx < len(figures):
-        result.append(f'![{figures[img_idx]["name"]}]({figures[img_idx]["name"]})')
-        img_idx += 1
-    return '\n\n'.join(result)
+def insert_figures_to_markdown_clean(text, figures):
+    lines = text.split('\n')
+    out_lines = []
+    fig_idx = 0
+    n_fig = len(figures)
+    for i, line in enumerate(lines):
+        out_lines.append(line)
+        # Chèn ảnh sau dòng câu hỏi
+        if re.match(r'^Câu\s*\d+\.?', line.strip()) and fig_idx < n_fig:
+            out_lines.append(f"[HÌNH: {figures[fig_idx]['name']}]")
+            fig_idx += 1
+    # Nếu còn hình thì thêm ở cuối
+    while fig_idx < n_fig:
+        out_lines.append(f"[HÌNH: {figures[fig_idx]['name']}]")
+        fig_idx += 1
+    return '\n'.join(out_lines)
 
-# --- Fix lỗi xuống dòng giữa câu ---
 def join_lines(text):
-    """
-    Ghép các dòng rời rạc thành đoạn liền mạch. Dòng nào bắt đầu bằng 'Câu', 'HẾT', hoặc là ảnh markdown sẽ xuống dòng riêng.
-    """
     lines = text.split('\n')
     output = []
     buffer = ""
-    for i, line in enumerate(lines):
-        l = line.strip()
-        # Xuống dòng nếu là dòng bắt đầu bằng "Câu", "HẾT", "Trang", hoặc là markdown ảnh
+    for l in lines:
+        l = l.strip()
         if not l:
             if buffer:
                 output.append(buffer.strip())
                 buffer = ""
             continue
-        if (l.startswith("Câu") or l.startswith("HẾT") or l.startswith("Trang") 
-            or l.startswith('![')):
+        # Nếu là dòng đặc biệt
+        if (l.startswith("Câu") or l.startswith("HẾT") or l.startswith("Trang") or l.startswith("[HÌNH:")):
             if buffer:
                 output.append(buffer.strip())
                 buffer = ""
             output.append(l)
         else:
             if buffer:
-                # Nếu dòng trước KHÔNG kết thúc bằng dấu câu thì nối liền, ngược lại xuống dòng
                 if not re.search(r'[.!?…:]\s*$', buffer):
                     buffer += " " + l
                 else:
@@ -113,9 +104,9 @@ def join_lines(text):
         output.append(buffer.strip())
     return '\n'.join(output)
 
-# --- Gemini API Key (nhập vào nếu dùng AI) ---
+# ========== Gemini AI Key và Prompt =============
 GEMINI_API_KEYS = [
-    "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
+  "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
@@ -166,8 +157,8 @@ def gemini_generate_text(image_bytes, api_key):
     return text
 
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
-st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & minh hoạ ✨")
-tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Markdown + Minh hoạ"])
+st.title("✨ Chuyển PDF & Ảnh Toán sang Văn bản, giữ minh hoạ ✨")
+tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Văn bản + Minh hoạ"])
 
 # =================== TAB PDF ===================
 with tab_pdf:
@@ -191,7 +182,6 @@ with tab_pdf:
             st.write(f"**Loại file:** {mime_type}")
             st.write(f"**Kích thước:** {size_mb:.1f} MB")
             st.write(f"**Số trang:** {num_pages}")
-
     if uploaded_file:
         if st.button("🚀 Xử lý OCR PDF", type="primary", use_container_width=True):
             st.info("⏳ Đang xử lý OCR PDF... (vui lòng chờ)")
@@ -265,17 +255,17 @@ with tab_pdf:
                 st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
     st.markdown("---")
 
-# ================ TAB ẢNH ===================
+# =================== TAB ẢNH ===================
 with tab_img:
-    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, mapping CHUẨN từng câu, cho phép tải/copy/xuất Word)")
+    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, mapping chuẩn, xuất Word/TXT)")
     uploaded_images = st.file_uploader(
         "Chọn nhiều ảnh (mỗi ảnh là một trang):",
         type=["png", "jpg", "jpeg", "webp"],
         accept_multiple_files=True,
-        help="Mỗi ảnh là 1 trang, minh hoạ sẽ được tách tự động, mapping vào đúng CÂU hỏi."
+        help="Mỗi ảnh là 1 trang, minh hoạ sẽ được tách tự động, nhận diện caption và chèn đúng vị trí."
     )
 
-    tab1, tab2 = st.tabs(["📋 Văn bản (Markdown)", "🖼️ Hình ảnh đã tách"])
+    tab1, tab2 = st.tabs(["📋 Văn bản kết quả", "🖼️ Hình ảnh đã tách"])
     if uploaded_images:
         latex_results = []
         all_figures = []
@@ -290,16 +280,17 @@ with tab_img:
                 except Exception as e:
                     text = f"[Lỗi Gemini: {e}]"
             text = remove_all_figure_markdown(text)
-            text = insert_figures_map_by_cau(text, figures)
-            text = join_lines(text)  # <-- fix lỗi xuống dòng
+            text = insert_figures_to_markdown_clean(text, figures)
+            text = join_lines(text)
             latex_results.append((img_file.name, text, figures))
 
         with tab1:
-            st.markdown("### 📋 Kết quả từng trang (mapping ảnh đúng Câu):")
+            st.markdown("### 📋 Kết quả từng trang (chuẩn đề):")
             for idx, (img_name, latex, figures) in enumerate(latex_results):
                 st.markdown(f"#### Trang {idx+1}: {img_name}")
-                st.code(latex, language="markdown")
-            if st.button("📝 Tạo và tải file Word mapping đúng vị trí", use_container_width=True):
+                st.code(latex, language="text")
+            # Nút xuất Word đúng mapping
+            if st.button("📝 Tạo và tải file Word giữ minh hoạ đúng vị trí", use_container_width=True):
                 with st.spinner("Đang tạo file Word..."):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
                         insert_images_to_word_from_markdown(
@@ -337,4 +328,4 @@ with tab_img:
         with tab2:
             st.info("Chưa có ảnh nào để xem.")
 
-st.caption("✨ Văn bản chuẩn Markdown, mapping ảnh đúng từng câu hỏi, không bị lỗi xuống dòng giữa câu, cho phép copy/tải về/xuất Word.")
+st.caption("✨ Chuẩn văn bản, hình ảnh đúng sau câu hỏi, không chen giữa câu, tải Word hoặc TXT mapping hoàn hảo.")
