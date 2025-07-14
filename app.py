@@ -84,91 +84,55 @@ def clean_bbox_no_text(arr, x1, y1, x2, y2, border=15):
         return None
     return (x1, y1, x2, y2)
 
-def extract_figures_from_image(img_bytes, min_area_ratio=0.03, min_side=70, merge_close=True):
+def extract_figures_from_image(img_bytes, min_area_ratio=0.06, border=15, edge_thr=14):
     """
-    Tách tất cả minh hoạ (lớp học, bảng, hình học...) trong 1 ảnh đầu vào,
-    Đảm bảo không bị cắt dính chữ, crop sát viền hình.
+    Tách đúng duy nhất 1 hình minh hoạ lớn nhất (như lớp học, bảng biến thiên, hình học...)
+    KHÔNG bao giờ tách ra 2-3 dải nhỏ, không dính lề, không dính chữ!
     """
     im = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     arr = np.array(im)
     h, w = arr.shape[:2]
-    total_area = h * w
-
-    # 1. Mask các vùng KHÔNG phải nền (nền trắng/xám nhạt/vàng nhạt)
-    bg_mask = (
-        (arr[:,:,0] > 180) & (arr[:,:,1] > 180) & (arr[:,:,2] > 150)
-    ) | (
-        # vàng nhạt
-        (arr[:,:,0] > 200) & (arr[:,:,1] > 180) & (arr[:,:,2] > 100)
-    )
-    fg_mask = ~bg_mask
-
-    # 2. Mask thêm các vùng có biên nổi bật (cho bảng biến thiên, hình học, đồ thị)
     gray = np.mean(arr, axis=2).astype(np.uint8)
+
+    # 1. Lọc biên, chỉ giữ vùng có biến động lớn (biên hình vẽ)
     gray_blur = np.array(Image.fromarray(gray).filter(ImageFilter.GaussianBlur(2)))
     edge = np.abs(gray.astype(np.int16) - gray_blur.astype(np.int16))
-    edge_mask = (edge > 18)
-    fg_mask = fg_mask | edge_mask
+    edge_mask = (edge > edge_thr)
 
-    # 3. Dilation để nối liền các vùng gần nhau (tránh chia vụn)
-    fg_mask = binary_dilation(fg_mask, iterations=6)
-    lbl, n = label(fg_mask)
+    # 2. Dilation để liền khối
+    edge_mask = binary_dilation(edge_mask, iterations=6)
+
+    # 3. Lấy box lớn nhất trong tất cả các vùng (không lấy dải nhỏ)
+    lbl, n = label(edge_mask)
     objs = find_objects(lbl)
-
-    # 4. Lọc các vùng đủ lớn, hình chữ nhật, không dính lề
-    boxes = []
+    best_area = 0
+    best_box = None
     for slc in objs:
         if slc is None: continue
         y1, y2 = slc[0].start, slc[0].stop
         x1, x2 = slc[1].start, slc[1].stop
-        box_w, box_h = x2-x1, y2-y1
-        area = box_w * box_h
-        if (
-            area > min_area_ratio*total_area
-            and box_w >= min_side and box_h >= min_side
-            and x1 > 0.01*w and x2 < 0.99*w and y1 > 0.01*h and y2 < 0.99*h
-        ):
-            boxes.append([x1, y1, x2, y2])
+        area = (x2-x1)*(y2-y1)
+        aspect = (x2-x1)/(y2-y1+1e-5)
+        # Chỉ lấy box lớn hình chữ nhật, không quá mỏng, không dính biên
+        if (area > min_area_ratio*h*w and 0.6 < aspect < 1.8 and
+            x1 > border and x2 < w-border and y1 > border and y2 < h-border):
+            if area > best_area:
+                best_area = area
+                best_box = (x1, y1, x2, y2)
+    if best_box is not None:
+        # Cắt sát vào trong một chút cho sạch mép
+        x1, y1, x2, y2 = best_box
+        x1 = max(x1+4, 0); y1 = max(y1+4, 0)
+        x2 = min(x2-4, w); y2 = min(y2-4, h)
+        crop = im.crop((x1, y1, x2, y2))
+    else:
+        # Không tìm được minh hoạ thì trả về nguyên ảnh
+        crop = im
 
-    # 5. Nếu nhiều box nhỏ dính gần nhau, gộp bounding box lại
-    try:
-        from shapely.geometry import box as sh_box
-        import shapely.ops
-        if merge_close and len(boxes) >= 2:
-            polys = [sh_box(*b) for b in boxes]
-            merged = shapely.ops.unary_union(polys)
-            if merged.geom_type == 'Polygon':
-                merged_boxes = [merged.bounds]
-            else:
-                merged_boxes = [g.bounds for g in merged.geoms]
-            boxes = [[int(x1), int(y1), int(x2), int(y2)] for (x1,y1,x2,y2) in merged_boxes]
-    except Exception:
-        pass
-
-    # 6. Cắt và loại bỏ viền chữ/đen/xám ở biên
-    results = []
-    for idx, (x1, y1, x2, y2) in enumerate(sorted(boxes, key=lambda b: b[1])):
-        clean_box = clean_bbox_no_text(gray, x1, y1, x2, y2, border=15)
-        if clean_box is None: continue
-        x1c, y1c, x2c, y2c = clean_box
-        crop = im.crop((x1c, y1c, x2c, y2c))
-        buf = io.BytesIO()
-        crop.save(buf, format="JPEG")
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        results.append({
-            "name": f"img-{idx+1}.jpeg",
-            "base64": b64,
-            "rect": (x1c, y1c, x2c, y2c)
-        })
-    if not results:
-        buf = io.BytesIO()
-        im.save(buf, format="JPEG")
-        results.append({
-            "name": "img-1.jpeg",
-            "base64": base64.b64encode(buf.getvalue()).decode(),
-            "rect": (0,0,w,h)
-        })
-    return results
+    buf = io.BytesIO()
+    crop.save(buf, format="JPEG")
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    return [{"name": "img-1.jpeg", "base64": b64}]
 
 # ==== CHÈN ĐÚNG VỊ TRÍ ====
 def insert_figures_to_markdown(text, figures):
