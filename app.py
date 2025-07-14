@@ -79,30 +79,40 @@ def insert_figures_map_by_cau(text, figures):
 
 # --- Fix lỗi xuống dòng giữa câu ---
 def join_lines(text):
+    """
+    Ghép các dòng rời rạc thành đoạn liền mạch. Dòng nào bắt đầu bằng 'Câu', 'HẾT', hoặc là ảnh markdown sẽ xuống dòng riêng.
+    """
     lines = text.split('\n')
     output = []
     buffer = ""
     for i, line in enumerate(lines):
         l = line.strip()
+        # Xuống dòng nếu là dòng bắt đầu bằng "Câu", "HẾT", "Trang", hoặc là markdown ảnh
         if not l:
             if buffer:
                 output.append(buffer.strip())
                 buffer = ""
             continue
-        # Nếu dòng là ảnh hoặc là tiêu đề câu hỏi thì đóng đoạn trước
-        if l.startswith('![') or re.match(r'^Câu\s*\d+\.|^HẾT\b', l):
+        if (l.startswith("Câu") or l.startswith("HẾT") or l.startswith("Trang") 
+            or l.startswith('![')):
             if buffer:
                 output.append(buffer.strip())
                 buffer = ""
             output.append(l)
         else:
             if buffer:
-                buffer += " " + l
+                # Nếu dòng trước KHÔNG kết thúc bằng dấu câu thì nối liền, ngược lại xuống dòng
+                if not re.search(r'[.!?…:]\s*$', buffer):
+                    buffer += " " + l
+                else:
+                    output.append(buffer.strip())
+                    buffer = l
             else:
                 buffer = l
     if buffer:
         output.append(buffer.strip())
     return '\n'.join(output)
+
 # --- Gemini API Key (nhập vào nếu dùng AI) ---
 GEMINI_API_KEYS = [
     "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
