@@ -66,9 +66,9 @@ def remove_all_figure_markdown(text):
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
 # === Hàm tách ảnh minh hoạ (lọc vùng hợp lý, giữ nguyên màu) ===
-def extract_figures_from_image(image_bytes, min_area_ratio=0.015, max_area_ratio=0.6, min_aspect=0.25, max_aspect=4.0):
+def extract_figures_from_image(image_bytes, min_area_ratio=0.08, max_area_ratio=0.7, pad_ratio=0.06):
     """
-    Tách từng vùng minh hoạ riêng biệt, không union, chỉ lấy từng vùng lớn, lọc aspect và diện tích.
+    Tách 1 hình minh hoạ lớn nhất (chiếm >=8% diện tích trang), và mở rộng biên lên xuống để bao trọn hình bị thiếu đầu/cuối.
     """
     from PIL import Image
     import numpy as np
@@ -83,37 +83,44 @@ def extract_figures_from_image(image_bytes, min_area_ratio=0.015, max_area_ratio
     bw = (arr_gray < 220).astype(np.uint8)
     lbl, n = label(bw)
     objs = find_objects(lbl)
-    figures = []
-    for i, slc in enumerate(objs):
+    best = None
+    max_area = 0
+    for slc in objs:
         y1, y2 = slc[0].start, slc[0].stop
         x1, x2 = slc[1].start, slc[1].stop
         area = (y2-y1) * (x2-x1)
         ratio = area / total_area
-        width = x2 - x1
-        height = y2 - y1
-        aspect = width / height if height else 1
-        # Nhận từng vùng lớn riêng biệt (>=1.5% trang, <=60%, tỉ lệ hợp lý)
-        if min_area_ratio <= ratio <= max_area_ratio and min_aspect <= aspect <= max_aspect:
-            fig_crop = im.crop((x1, y1, x2, y2))
-            buf = io.BytesIO()
-            fig_crop.save(buf, format="JPEG")
-            b64 = base64.b64encode(buf.getvalue()).decode()
-            figures.append({
-                "base64": b64,
-                "name": f"img-{i}.jpeg",
-                "rect": (x1, y1, x2, y2)
-            })
-    # Nếu không tách được gì, trả về cả trang để tránh mất hình
-    if not figures:
+        if min_area_ratio <= ratio <= max_area_ratio and area > max_area:
+            best = (x1, y1, x2, y2)
+            max_area = area
+    if best:
+        # Padding lên/xuống/trái/phải cho đầy đủ hình
+        x1, y1, x2, y2 = best
+        dx = int((x2 - x1) * pad_ratio)
+        dy = int((y2 - y1) * pad_ratio)
+        x1 = max(x1 - dx, 0)
+        x2 = min(x2 + dx, w)
+        y1 = max(y1 - dy, 0)
+        y2 = min(y2 + dy, h)
+        fig_crop = im.crop((x1, y1, x2, y2))
+        buf = io.BytesIO()
+        fig_crop.save(buf, format="JPEG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        return [{
+            "base64": b64,
+            "name": "img-0.jpeg",
+            "rect": (x1, y1, x2, y2)
+        }]
+    else:
+        # Không có vùng lớn nào, trả về cả trang
         buf = io.BytesIO()
         im.save(buf, format="JPEG")
-        figures.append({
+        return [{
             "base64": base64.b64encode(buf.getvalue()).decode(),
             "name": "img-0.jpeg",
             "rect": (0, 0, w, h)
-        })
-    # Sắp xếp theo vị trí top-y
-    return sorted(figures, key=lambda x: x["rect"][1])
+        }]
+
 # === Hàm mapping chèn đúng vị trí (ưu tiên dòng có từ khoá hình) ===
 def insert_figures_to_markdown(text, figures):
     lines = text.split('\n')
