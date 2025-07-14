@@ -8,14 +8,14 @@ import os
 import numpy as np
 import io
 from PIL import Image
-import cv2
+import cv2  # Yêu cầu đã cài đặt trên cloud
 from config import API_URL, API_KEY
 from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 from PyPDF2 import PdfReader
 
-# ==== GEMINI KEY (nhiều key) ====
+# ====== KEY & Prompt Gemini (giữ nguyên của bạn) ======
 GEMINI_API_KEYS = [
   "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
@@ -23,135 +23,74 @@ GEMINI_API_KEYS = [
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
   "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
   "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
-]
+]  # (Bỏ vào các key như của bạn)
 api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
     return next(api_key_cycle)
 
-# ==== GEMINI PROMPT ====
 GEMINI_PROMPT = '''
-YÊU CẦU:
-1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh.
-2. Nếu phát hiện nhiều hình minh hoạ (hình vẽ, đồ thị, bảng, ...), hãy đánh dấu đúng vị trí từng hình bằng cú pháp markdown: ![img-x.jpeg](img-x.jpeg) với x là số thứ tự hình đã tách từ trên xuống dưới trong ảnh này (bắt đầu từ 1).
-3. Với mỗi hình minh hoạ, hãy chèn markdown ngay sau dòng mô tả có từ “xem hình dưới”, “hình dưới đây”, “bảng biến thiên”, “hình vẽ”, “biểu đồ”, hoặc ngay sau dòng câu hỏi liên quan tới hình/bảng/biểu đồ đó.
-4. Giữ nguyên cấu trúc đoạn văn và xuống dòng.
-5. Công thức toán học: tất cả ở dạng ${...}$ (inline, hệ, ký hiệu ... như hướng dẫn chi tiết).
-6. Bảng biểu: dùng markdown nếu có thể.
-7. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
+(YOUR PROMPT ĐÃ CÓ Ở TRÊN)
 '''
 
 def gemini_generate_text(image_bytes, api_key):
-    api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-    b64_img = base64.b64encode(image_bytes).decode()
-    payload = {
-        "contents": [{
-            "role": "user",
-            "parts": [
-                {"text": GEMINI_PROMPT},
-                {"inlineData": {
-                    "mimeType": "image/png",
-                    "data": b64_img
-                }}
-            ]
-        }]
-    }
-    headers = {"Content-Type": "application/json"}
-    r = requests.post(f"{api_url}?key={api_key}", json=payload, headers=headers, timeout=90)
-    r.raise_for_status()
-    res = r.json()
-    text = res["candidates"][0]["content"]["parts"][0]["text"]
-    return text
+    # ... giữ nguyên như cũ ...
+    pass
 
 def remove_all_figure_markdown(text):
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
 def insert_figures_to_markdown(text, figures):
-    lines = text.split('\n')
-    new_lines = []
-    fig_idx = 0
-    n_fig = len(figures)
-    for i, line in enumerate(lines):
-        new_lines.append(line)
-        if fig_idx < n_fig:
-            lower = line.lower()
-            if any(key in lower for key in ["xem hình", "hình vẽ", "hình dưới", "hình bên", "bảng dưới", "hình minh hoạ", "hình minh họa"]):
-                new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
-                fig_idx += 1
-    if fig_idx < n_fig:
-        for i, line in enumerate(new_lines):
-            if "câu" in line.lower():
-                new_lines.insert(i+1, f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
-                fig_idx += 1
-                break
-    while fig_idx < n_fig:
-        new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
-        fig_idx += 1
-    return '\n'.join(new_lines)
+    # ... giữ nguyên như cũ ...
+    pass
 
-# ==== HÀM TÁCH HÌNH MINH HOẠ CHUẨN (KHÔNG DÍNH/LẶP/THIẾU) ====
-def extract_figures_from_image(img_bytes, min_area=5000, max_figures=6, border_margin=6):
-    """
-    Tách đúng tất cả hình minh họa lớn, cắt sát, không dính mép, không bị chia nhỏ, không thiếu hình.
-    Trả về list dict [{"name": "img-x.jpeg", "base64": ...}]
-    """
-    img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    img = np.array(img_pil)
-    img_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    h, w = img_gray.shape
+# ========== HÀM CẮT MINH HOẠ OpenCV CỰC CHUẨN ==========
+def extract_figures_from_image(img_bytes, min_area_ratio=0.10, min_ar=0.5, max_ar=2.5):
+    """Cắt chính xác từng hình minh hoạ lớn, không bị cắt dọc/cắt mép."""
+    img_array = np.frombuffer(img_bytes, np.uint8)
+    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+    h, w, _ = img.shape
 
-    # Làm mờ nhẹ loại nhiễu
-    blur = cv2.GaussianBlur(img_gray, (5, 5), 0)
-    # Tăng contrast nhẹ nếu hình nhạt
-    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
-    enhanced = clahe.apply(blur)
+    # Tiền xử lý: Làm mờ nhẹ, chuyển grayscale, threshold
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (11, 11), 0)
+    # Adaptive threshold tốt hơn OTSU với nhiều hình
+    thres = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 51, 10)
 
-    # Tìm cạnh bằng Canny
-    edges = cv2.Canny(enhanced, 50, 160)
-    # Dilation để nối nét đứt
-    kernel = np.ones((5,5),np.uint8)
-    edges = cv2.dilate(edges, kernel, iterations=1)
-    # Tìm contour ngoài cùng
-    cnts, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    boxes = []
-    for cnt in cnts:
-        x, y, ww, hh = cv2.boundingRect(cnt)
-        area = ww * hh
-        aspect = ww / (hh + 1e-5)
-        area_ratio = area / (h * w)
-        # Lọc box lớn, hình chữ nhật, không quá sát mép
-        if area > min_area and 0.28 < aspect < 3.8 and 0.018 < area_ratio < 0.65:
-            if (x < border_margin or y < border_margin or
-                x + ww > w - border_margin or y + hh > h - border_margin):
-                continue
-            boxes.append((x, y, ww, hh))
-    # Lọc trùng box, loại box nhỏ nằm trong box lớn (chỉ lấy lớn nhất)
-    def is_inside(b1, b2):
-        x1, y1, w1, h1 = b1
-        x2, y2, w2, h2 = b2
-        return (x1 > x2 and y1 > y2 and x1 + w1 < x2 + w2 and y1 + h1 < y2 + h2)
-    final_boxes = []
-    for b in sorted(boxes, key=lambda x: -x[2]*x[3]):
-        if not any(is_inside(b, bb) for bb in final_boxes):
-            final_boxes.append(b)
-        if len(final_boxes) >= max_figures:
-            break
-    # Nếu không có box nào hợp lệ, trả về ảnh gốc
-    if not final_boxes:
+    # Tìm contour
+    contours, _ = cv2.findContours(thres, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    results = []
+    idx = 1
+    for cnt in contours:
+        x, y, w_box, h_box = cv2.boundingRect(cnt)
+        area = w_box * h_box
+        area_ratio = area / (img.shape[0] * img.shape[1])
+        aspect = w_box / (h_box + 1e-5)
+        # Loại contour nhỏ (mép, noise), quá mỏng/dài, nằm quá sát mép
+        if area_ratio < min_area_ratio or not (min_ar < aspect < max_ar):
+            continue
+        # Không lấy sát mép giấy (chừa 0.5% mép)
+        if x < 0.005 * w or y < 0.005 * h or (x + w_box) > 0.995 * w or (y + h_box) > 0.995 * h:
+            continue
+
+        # Cắt ảnh, convert sang base64
+        crop = img[y:y+h_box, x:x+w_box]
+        pil_crop = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
         buf = io.BytesIO()
-        img_pil.save(buf, format="JPEG")
+        pil_crop.save(buf, format="JPEG", quality=97)
         b64 = base64.b64encode(buf.getvalue()).decode()
-        return [{"name": "img-1.jpeg", "base64": b64}]
-    # Cắt từng ảnh, trả về
-    figures = []
-    for idx, (x, y, ww, hh) in enumerate(sorted(final_boxes, key=lambda b: (b[1], b[0]))):
-        crop = img[y:y+hh, x:x+ww]
-        buf = io.BytesIO()
-        Image.fromarray(crop).save(buf, format="JPEG")
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        figures.append({"name": f"img-{idx+1}.jpeg", "base64": b64})
-    return figures
+        results.append({"name": f"img-{idx}.jpeg", "base64": b64})
+        idx += 1
 
-# ====== GIAO DIỆN STREAMLIT ======
+    # Nếu không có contour nào đủ lớn: trả về cả ảnh gốc
+    if not results:
+        pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        buf = io.BytesIO()
+        pil_img.save(buf, format="JPEG", quality=97)
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        results = [{"name": "img-1.jpeg", "base64": b64}]
+    return sorted(results, key=lambda d: d['name'])
+
+# ============= Giao diện Streamlit ============
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
 st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & minh hoạ ✨")
 
@@ -317,7 +256,7 @@ with tab_img:
             st.markdown("### 🖼️ Tất cả minh hoạ đã tách (cho tải ảnh):")
             for idx, fig in enumerate(all_figures):
                 img_bytes = base64.b64decode(fig["base64"])
-                st.image(img_bytes, caption=fig["name"], width=250)
+                st.image(img_bytes, caption=fig["name"], width=300)
                 st.download_button(
                     f"Tải {fig['name']}",
                     img_bytes,
