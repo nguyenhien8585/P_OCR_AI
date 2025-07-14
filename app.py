@@ -11,7 +11,7 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
-# --- TÁCH ẢNH MINH HOẠ ---
+# --- TÁCH ẢNH MINH HOẠ (OpenCV) ---
 def extract_figures_from_image(img_bytes, min_area_ratio=0.05, min_area_abs=1800, min_w=100, min_h=90, max_figures=4):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
@@ -50,12 +50,7 @@ def extract_figures_from_image(img_bytes, min_area_ratio=0.05, min_area_abs=1800
         results.append({"name": f"img-{idx+1}.jpeg", "base64": b64})
     return results
 
-# --- HÀM LOẠI MARKDOWN ẢNH DƯ ---
-def remove_all_figure_markdown(text):
-    if not isinstance(text, str): return ""
-    return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
-
-# --- HÀM NỐI DÒNG TỰ ĐỘNG (không xuống dòng giữa câu) ---
+# --- NỐI DÒNG LIỀN MẠCH (không xuống dòng giữa câu) ---
 def join_lines(text):
     lines = text.split('\n')
     out = []
@@ -73,34 +68,26 @@ def join_lines(text):
     if cur: out.append(cur)
     return '\n'.join(out)
 
-# --- HÀM MAPPING ẢNH ĐÚNG VỊ TRÍ "Câu N." ---
-def insert_figures_by_cau_number(text, figures):
-    # Chia đoạn theo "Câu N."
-    parts = re.split(r'(Câu\s*\d+\.)', text)
+# --- XÓA TOÀN BỘ MARKDOWN ẢNH CŨ ---
+def remove_all_figure_markdown(text):
+    if not isinstance(text, str): return ""
+    return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
+
+# --- CHÈN ẢNH SAU DÒNG "Câu N." (KHÔNG CHÈN GIỮA ĐOẠN VĂN) ---
+def insert_figures_by_cau_number_exact(text, figures):
+    lines = text.split('\n')
     result = []
     fig_idx = 0
-    i = 0
-    while i < len(parts):
-        if re.match(r'Câu\s*\d+\.', parts[i]):
-            # Tiêu đề câu hỏi
-            result.append(parts[i])
-            # Gán ảnh tiếp theo vào ngay sau tiêu đề nếu còn ảnh
-            if fig_idx < len(figures):
-                result.append(f"\n![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})\n")
-                fig_idx += 1
-            # Thêm nội dung câu hỏi
-            if i+1 < len(parts):
-                result.append(parts[i+1])
-                i += 2
-            else:
-                i += 1
-        else:
-            result.append(parts[i])
-            i += 1
+    cau_pattern = re.compile(r'^Câu\s*\d+\.')
+    for i, line in enumerate(lines):
+        result.append(line)
+        if cau_pattern.match(line.strip()) and fig_idx < len(figures):
+            result.append(f'![{figures[fig_idx]["name"]}]({figures[fig_idx]["name"]})')
+            fig_idx += 1
     while fig_idx < len(figures):
-        result.append(f"\n![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})\n")
+        result.append(f'![{figures[fig_idx]["name"]}]({figures[fig_idx]["name"]})')
         fig_idx += 1
-    return ''.join(result)
+    return '\n'.join(result)
 
 # --- GEMINI ---
 GEMINI_API_KEYS = [
@@ -249,7 +236,7 @@ with tab_pdf:
 
 # =========== TAB ẢNH ===========
 with tab_img:
-    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, mapping CHUẨN CÂU, cho phép tải/copy) → Markdown/Text/Word")
+    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, mapping ngay sau 'Câu N.', cho phép tải/copy) → Markdown/Text/Word")
     uploaded_images = st.file_uploader(
         "Chọn nhiều ảnh (mỗi ảnh là một trang):",
         type=["png", "jpg", "jpeg", "webp"],
@@ -273,7 +260,7 @@ with tab_img:
                     text = f"[Lỗi Gemini: {e}]"
             text = join_lines(text)
             text = remove_all_figure_markdown(text)
-            text = insert_figures_by_cau_number(text, figures)
+            text = insert_figures_by_cau_number_exact(text, figures)
             latex_results.append((img_file.name, text, figures))
 
         with tab1:
@@ -319,4 +306,4 @@ with tab_img:
         with tab2:
             st.info("Chưa có ảnh nào để xem.")
 
-st.caption("✨ Văn bản chuẩn Markdown, mapping ảnh đúng vị trí từng câu, không dư/lặp, cho phép copy/tải về. Tách minh hoạ từng ảnh tự động. Xuất Word đúng mapping!")
+st.caption("✨ Markdown/Word mapping minh hoạ ngay sau dòng 'Câu N.', không chen giữa nội dung! Không xuống dòng dư, chuẩn xuất Word.")
