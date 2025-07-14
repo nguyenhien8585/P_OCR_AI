@@ -9,15 +9,13 @@ import numpy as np
 import io
 from PIL import Image, ImageFilter
 from scipy.ndimage import label, find_objects, binary_dilation
-from shapely.geometry import box as sh_box
-import shapely.ops
 from config import API_URL, API_KEY
 from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 from PyPDF2 import PdfReader
 
-# ========= GEMINI ==========
+# ==== GEMINI API KEYs ====
 GEMINI_API_KEYS = [
   "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
@@ -66,11 +64,30 @@ def gemini_generate_text(image_bytes, api_key):
 def remove_all_figure_markdown(text):
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
-# ==== HÀM TÁCH ẢNH MINH HOẠ NHIỀU HÌNH, ĐÃ FIX .astype() ====
+# =============== CẮT MINH HOẠ SẠCH VIỀN ===============
+
+def clean_bbox_no_text(arr, x1, y1, x2, y2, border=15):
+    """ Co nhỏ bbox lại vào trong nếu biên trên/dưới/trái/phải có dải màu tối (thường là chữ/đường kẻ). """
+    for _ in range(border):
+        # Trên
+        if np.mean(arr[y1, x1:x2]) < 160: y1 += 1
+        # Dưới
+        if np.mean(arr[y2-1, x1:x2]) < 160: y2 -= 1
+        # Trái
+        if np.mean(arr[y1:y2, x1]) < 160: x1 += 1
+        # Phải
+        if np.mean(arr[y1:y2, x2-1]) < 160: x2 -= 1
+    h, w = arr.shape[:2]
+    x1 = max(0, x1); x2 = min(w, x2)
+    y1 = max(0, y1); y2 = min(h, y2)
+    if x2 - x1 < 40 or y2 - y1 < 40:
+        return None
+    return (x1, y1, x2, y2)
+
 def extract_figures_from_image(img_bytes, min_area_ratio=0.03, min_side=70, merge_close=True):
     """
-    Tách tất cả minh hoạ (lớp học, bảng, đồ thị, hình học...) trong 1 ảnh đầu vào,
-    Không bao giờ chia nhỏ thành dải vụn, có thể tách ra nhiều hình khác nhau, độ chính xác cao.
+    Tách tất cả minh hoạ (lớp học, bảng, hình học...) trong 1 ảnh đầu vào,
+    Đảm bảo không bị cắt dính chữ, crop sát viền hình.
     """
     im = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     arr = np.array(im)
@@ -98,7 +115,7 @@ def extract_figures_from_image(img_bytes, min_area_ratio=0.03, min_side=70, merg
     lbl, n = label(fg_mask)
     objs = find_objects(lbl)
 
-    # 4. Lọc các vùng đủ lớn, đủ hình chữ nhật, không dính lề
+    # 4. Lọc các vùng đủ lớn, hình chữ nhật, không dính lề
     boxes = []
     for slc in objs:
         if slc is None: continue
@@ -114,29 +131,36 @@ def extract_figures_from_image(img_bytes, min_area_ratio=0.03, min_side=70, merg
             boxes.append([x1, y1, x2, y2])
 
     # 5. Nếu nhiều box nhỏ dính gần nhau, gộp bounding box lại
-    if merge_close and len(boxes) >= 2:
-        polys = [sh_box(*b) for b in boxes]
-        merged = shapely.ops.unary_union(polys)
-        if merged.geom_type == 'Polygon':
-            merged_boxes = [merged.bounds]
-        else:
-            merged_boxes = [g.bounds for g in merged.geoms]
-        boxes = [[int(x1), int(y1), int(x2), int(y2)] for (x1,y1,x2,y2) in merged_boxes]
+    try:
+        from shapely.geometry import box as sh_box
+        import shapely.ops
+        if merge_close and len(boxes) >= 2:
+            polys = [sh_box(*b) for b in boxes]
+            merged = shapely.ops.unary_union(polys)
+            if merged.geom_type == 'Polygon':
+                merged_boxes = [merged.bounds]
+            else:
+                merged_boxes = [g.bounds for g in merged.geoms]
+            boxes = [[int(x1), int(y1), int(x2), int(y2)] for (x1,y1,x2,y2) in merged_boxes]
+    except Exception:
+        pass
 
-    # 6. Crop và trả về các minh hoạ
+    # 6. Cắt và loại bỏ viền chữ/đen/xám ở biên
     results = []
     for idx, (x1, y1, x2, y2) in enumerate(sorted(boxes, key=lambda b: b[1])):
-        crop = im.crop((x1, y1, x2, y2))
+        clean_box = clean_bbox_no_text(gray, x1, y1, x2, y2, border=15)
+        if clean_box is None: continue
+        x1c, y1c, x2c, y2c = clean_box
+        crop = im.crop((x1c, y1c, x2c, y2c))
         buf = io.BytesIO()
         crop.save(buf, format="JPEG")
         b64 = base64.b64encode(buf.getvalue()).decode()
         results.append({
             "name": f"img-{idx+1}.jpeg",
             "base64": b64,
-            "rect": (x1, y1, x2, y2)
+            "rect": (x1c, y1c, x2c, y2c)
         })
     if not results:
-        # fallback: không tìm thấy minh hoạ nào, trả về cả ảnh gốc
         buf = io.BytesIO()
         im.save(buf, format="JPEG")
         results.append({
@@ -146,6 +170,7 @@ def extract_figures_from_image(img_bytes, min_area_ratio=0.03, min_side=70, merg
         })
     return results
 
+# ==== CHÈN ĐÚNG VỊ TRÍ ====
 def insert_figures_to_markdown(text, figures):
     lines = text.split('\n')
     new_lines = []
@@ -170,8 +195,10 @@ def insert_figures_to_markdown(text, figures):
         fig_idx += 1
     return '\n'.join(new_lines)
 
+# ==== STREAMLIT UI ====
+
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
-st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & tách nhiều minh hoạ ✨")
+st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & tách minh hoạ cực sạch ✨")
 
 tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Minh hoạ"])
 
@@ -275,7 +302,7 @@ with tab_pdf:
 
 # =========== TAB ẢNH ===========
 with tab_img:
-    st.markdown("#### 🖼️ Ảnh (tách nhiều minh hoạ tự động, không bị chia vụn) → Markdown/Text/Word")
+    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, cực sạch viền, không chia nhỏ vụn) → Markdown/Text/Word")
     uploaded_images = st.file_uploader(
         "Chọn nhiều ảnh (mỗi ảnh là một trang):",
         type=["png", "jpg", "jpeg", "webp"],
@@ -351,4 +378,4 @@ with tab_img:
         with tab2:
             st.info("Chưa có ảnh nào để xem.")
 
-st.caption("✨ Văn bản chuẩn Markdown, mapping ảnh không dư/lặp, cho phép copy/tải về. Tách nhiều minh hoạ từng ảnh tự động. Xuất Word minh hoạ đúng vị trí!")
+st.caption("✨ Văn bản chuẩn Markdown, mapping ảnh không dư/lặp, cho phép copy/tải về. Tách minh hoạ từng ảnh tự động. Xuất Word minh hoạ đúng vị trí!")
