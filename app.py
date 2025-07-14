@@ -11,7 +11,7 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
-# =========== TÁCH ẢNH MINH HỌA =============
+# --- HÀM TÁCH ẢNH MINH HOẠ (OpenCV, chuẩn Toán) ---
 def extract_figures_from_image(img_bytes, min_area_ratio=0.05, min_area_abs=1800, min_w=100, min_h=90, max_figures=4):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
@@ -54,37 +54,30 @@ def remove_all_figure_markdown(text):
     if not isinstance(text, str): return ""
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
-# ====== HÀM mapping ảnh: chỉ chèn hình SAU MỖI CÂU HỎI ======
-def insert_figures_by_cau_only_after_question(text, figures):
-    """
-    Chèn ảnh sau khi kết thúc đoạn của mỗi 'Câu N.'
-    (không chen vào giữa đoạn, chỉ sau hết đoạn mỗi câu hỏi),
-    nếu còn ảnh dư sẽ chèn xuống cuối văn bản.
-    """
-    cau_pattern = re.compile(r'^Câu\s*\d+\.')
-    lines = text.split('\n')
-    output = []
-    fig_idx = 0
-    buffer = []
-    for i, line in enumerate(lines + ['']):
-        if cau_pattern.match(line.strip()) or i == len(lines):
-            if buffer:
-                output.extend(buffer)
-                buffer = []
-                if fig_idx < len(figures):
-                    output.append(f'![{figures[fig_idx]["name"]}]({figures[fig_idx]["name"]})')
-                    fig_idx += 1
-            if i < len(lines):
-                buffer = [line]
-        else:
-            buffer.append(line)
-    while fig_idx < len(figures):
-        output.append(f'![{figures[fig_idx]["name"]}]({figures[fig_idx]["name"]})')
-        fig_idx += 1
-    output = [l for l in output if l.strip() != '']
-    return '\n'.join(output)
+# === Hàm mapping ảnh theo đúng CÂU SỐ ===
+def insert_figures_map_by_cau(text, figures):
+    cau_pos = [m.start() for m in re.finditer(r'(Câu\s*\d+\.)', text)]
+    parts = []
+    last = 0
+    for pos in cau_pos:
+        parts.append(text[last:pos])
+        last = pos
+    parts.append(text[last:])
+    result = []
+    img_idx = 0
+    for i, part in enumerate(parts):
+        s = part.strip()
+        if s:
+            result.append(s)
+        if i > 0 and img_idx < len(figures):
+            result.append(f'![{figures[img_idx]["name"]}]({figures[img_idx]["name"]})')
+            img_idx += 1
+    while img_idx < len(figures):
+        result.append(f'![{figures[img_idx]["name"]}]({figures[img_idx]["name"]})')
+        img_idx += 1
+    return '\n\n'.join(result)
 
-# =========== PROMPT GEMINI ==========
+# --- Gemini API Key (nhập của bạn vào đây) ---
 GEMINI_API_KEYS = [
   "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
@@ -107,7 +100,6 @@ YÊU CẦU:
 6. Bảng biểu: dùng markdown nếu có thể.
 7. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
 '''
-
 def gemini_generate_text(image_bytes, api_key):
     api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     b64_img = base64.b64encode(image_bytes).decode()
@@ -130,7 +122,6 @@ def gemini_generate_text(image_bytes, api_key):
     text = res["candidates"][0]["content"]["parts"][0]["text"]
     return text
 
-# ============== APP STREAMLIT ==================
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
 st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & minh hoạ ✨")
 tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Markdown + Minh hoạ"])
@@ -231,14 +222,14 @@ with tab_pdf:
                 st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
     st.markdown("---")
 
-# =================== TAB ẢNH ===================
+# ================ TAB ẢNH ===================
 with tab_img:
-    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, mapping chuẩn, cho phép tải/copy) → Markdown/Text/Word")
+    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, mapping CHUẨN từng câu, cho phép tải/copy/xuất Word)")
     uploaded_images = st.file_uploader(
         "Chọn nhiều ảnh (mỗi ảnh là một trang):",
         type=["png", "jpg", "jpeg", "webp"],
         accept_multiple_files=True,
-        help="Mỗi ảnh là 1 trang, minh hoạ sẽ được tách tự động, nhận diện caption và chèn đúng vị trí."
+        help="Mỗi ảnh là 1 trang, minh hoạ sẽ được tách tự động, mapping vào đúng CÂU hỏi."
     )
 
     tab1, tab2 = st.tabs(["📋 Văn bản (Markdown)", "🖼️ Hình ảnh đã tách"])
@@ -256,17 +247,17 @@ with tab_img:
                 except Exception as e:
                     text = f"[Lỗi Gemini: {e}]"
             text = remove_all_figure_markdown(text)
-            # ==== mapping đúng: chỉ chèn ảnh SAU MỖI CÂU ====
-            text = insert_figures_by_cau_only_after_question(text, figures)
+            # --- mapping ảnh CHUẨN theo từng câu hỏi ---
+            text = insert_figures_map_by_cau(text, figures)
             latex_results.append((img_file.name, text, figures))
 
         with tab1:
-            st.markdown("### 📋 Kết quả từng trang (có markdown minh hoạ):")
+            st.markdown("### 📋 Kết quả từng trang (mapping ảnh đúng Câu):")
             for idx, (img_name, latex, figures) in enumerate(latex_results):
-                st.markdown(f"### Trang {idx+1}: {img_name}")
+                st.markdown(f"#### Trang {idx+1}: {img_name}")
                 st.code(latex, language="markdown")
-            # Nút xuất Word đúng mapping
-            if st.button("📝 Tạo và tải file Word giữ minh hoạ đúng vị trí", use_container_width=True):
+            # Nút xuất Word mapping chuẩn
+            if st.button("📝 Tạo và tải file Word mapping đúng vị trí", use_container_width=True):
                 with st.spinner("Đang tạo file Word..."):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
                         insert_images_to_word_from_markdown(
@@ -304,4 +295,4 @@ with tab_img:
         with tab2:
             st.info("Chưa có ảnh nào để xem.")
 
-st.caption("✨ Văn bản chuẩn Markdown, mapping ảnh luôn sau mỗi CÂU, không dư/lặp, copy/tải về, xuất Word chuẩn!")
+st.caption("✨ Văn bản chuẩn Markdown, mapping ảnh đúng từng câu hỏi, cho phép copy/tải về/xuất Word. Tách minh hoạ từng ảnh tự động, không chen vào đầu đề hoặc giữa chừng!")
