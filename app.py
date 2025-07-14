@@ -31,7 +31,8 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.04, min_area_abs=1500
         area = ww * hh
         area_ratio = area / (w * h)
         aspect = ww / (hh + 1e-6)
-        is_table = (ww > 0.22*w and hh > 0.05*h and aspect > 2.3 and aspect < 13.0)
+        # Nhận dạng bảng: chiều rộng lớn, nhiều cột
+        is_table = (ww > 0.22*w and hh > 0.05*h and aspect > 2.2 and aspect < 13.0)
         if (area > min_area_abs and area_ratio > min_area_ratio and
             ww > min_w and hh > min_h and 0.15 < aspect < 13):
             if x < 0.01*w or y < 0.01*h or (x+ww) > 0.99*w or (y+hh) > 0.99*h:
@@ -62,6 +63,7 @@ def remove_all_figure_markdown(text):
     text = re.sub(r'\[BẢNG:.*?\]', '', text)
     return text
 
+# --------- Mapping nâng cao (không chen giữa câu, đúng đoạn, bảng tách riêng) -----
 def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, table_kw=None):
     if keywords is None:
         keywords = [
@@ -219,7 +221,7 @@ def gemini_generate_text(image_bytes, api_key):
     text = res["candidates"][0]["content"]["parts"][0]["text"]
     return text
 
-# =================== Giao diện ===================
+# ========== Giao diện ==========
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
 st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & bảng ✨")
 tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Markdown + Minh hoạ"])
@@ -241,77 +243,51 @@ with tab_img:
             if st.button("🚀 Xử lý OCR Image", key=f"ocr-{img_file.name}"):
                 img_bytes = img_file.read()
                 figures = extract_figures_and_tables(img_bytes)
-                # Đếm loại ảnh
-                count_fig = sum(1 for fig in figures if not fig["is_table"])
-                count_tbl = sum(1 for fig in figures if fig["is_table"])
-                # Có thể phân biệt tần số / giá trị nếu cần
-                # Ví dụ: Bảng biến thiên thường nhận diện bằng chiều rộng lớn, nhiều dòng/cột...
-                # Ở đây minh hoạ, phân loại = bảng hoặc hình
-
-                # --- Tab hiển thị ---
-                tabs = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
-                with tabs[0]:
-                    api_key = get_next_api_key()
-                    with st.spinner("Đang nhận diện..."):
-                        try:
-                            text = gemini_generate_text(img_bytes, api_key)
-                        except Exception as e:
-                            text = f"[Lỗi Gemini: {e}]"
-                    text = remove_all_figure_markdown(text)
-                    text = join_paragraphs_and_insert_figures_tables(text, figures)
-                    st.markdown("### 📋 Kết quả mapping nâng cao:")
-                    st.code(text, language="markdown")
-
-                    if figures:
-                        if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", key=f"word-{img_file.name}"):
-                            with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                                insert_images_to_word_from_markdown(
-                                    text,
-                                    figures,
-                                    tmp_word.name
-                                )
-                            with open(tmp_word.name, "rb") as f:
-                                word_data = f.read()
-                            st.success("✅ Đã tạo file Word thành công!")
-                            st.download_button(
-                                "⬇️ Tải về file Word",
-                                word_data,
-                                file_name="ket_qua_anh_toan.docx",
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                use_container_width=True
+                api_key = get_next_api_key()
+                with st.spinner("Đang nhận diện..."):
+                    try:
+                        text = gemini_generate_text(img_bytes, api_key)
+                    except Exception as e:
+                        text = f"[Lỗi Gemini: {e}]"
+                text = remove_all_figure_markdown(text)
+                text = join_paragraphs_and_insert_figures_tables(text, figures)
+                st.markdown("### 📋 Kết quả mapping nâng cao:")
+                st.code(text, language="markdown")
+                # Không đếm số lượng
+                if figures:
+                    if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", key=f"word-{img_file.name}"):
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
+                            insert_images_to_word_from_markdown(
+                                text,
+                                figures,
+                                tmp_word.name
                             )
-                            os.remove(tmp_word.name)
-                    else:
-                        st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh.")
-
-                with tabs[1]:
-                    # Tổng kết loại hình đã tách
-                    st.markdown(f"""
-                    <b>Đã tách được:</b>
-                    <ul>
-                    <li><b>{count_fig}</b> hình minh hoạ</li>
-                    <li><b>{count_tbl}</b> bảng giá trị/bảng tần số/bảng biến thiên</li>
-                    </ul>
-                    """, unsafe_allow_html=True)
-
-                    if not figures:
-                        st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh này.")
-                    else:
-                        for idx, fig in enumerate(figures):
-                            img_bytes_fig = base64.b64decode(fig["base64"])
-                            if fig["is_table"]:
-                                cap = f"🟩 Bảng: {fig['name']}"
-                            else:
-                                cap = f"🖼️ Hình: {fig['name']}"
-                            st.image(img_bytes_fig, caption=cap, width=350)
-                            st.download_button(
-                                f"Tải {fig['name']}",
-                                img_bytes_fig,
-                                file_name=fig["name"],
-                                mime="image/jpeg",
-                                use_container_width=True,
-                                key=f"anh-download-{fig['name']}-{idx}"
-                            )
+                        with open(tmp_word.name, "rb") as f:
+                            word_data = f.read()
+                        st.success("✅ Đã tạo file Word thành công!")
+                        st.download_button(
+                            "⬇️ Tải về file Word",
+                            word_data,
+                            file_name="ket_qua_anh_toan.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            use_container_width=True
+                        )
+                        os.remove(tmp_word.name)
+                    st.markdown("### 🖼️ Tất cả minh hoạ đã tách:")
+                    for idx, fig in enumerate(figures):
+                        img_bytes = base64.b64decode(fig["base64"])
+                        cap = f"{'Bảng' if fig['is_table'] else 'Hình'}: {fig['name']}"
+                        st.image(img_bytes, caption=cap, width=250)
+                        st.download_button(
+                            f"Tải {fig['name']}",
+                            img_bytes,
+                            file_name=fig["name"],
+                            mime="image/jpeg",
+                            use_container_width=True,
+                            key=f"anh-download-{fig['name']}-{idx}"
+                        )
+                else:
+                    st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh.")
     else:
         st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
 
