@@ -65,17 +65,12 @@ def gemini_generate_text(image_bytes, api_key):
 def remove_all_figure_markdown(text):
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
-# === Hàm tách ảnh minh hoạ (lọc vùng hợp lý, giữ nguyên màu) ===
-def extract_figures_from_image(image_bytes, min_area_ratio=0.08, max_area_ratio=0.7, pad_ratio=0.06):
+# ==== HÀM TÁCH ẢNH MINH HOẠ HOÀN CHỈNH ====
+def extract_figures_from_image(image_bytes, min_area_ratio=0.008, max_area_ratio=0.7, min_aspect=0.18, max_aspect=6.5):
     """
-    Tách 1 hình minh hoạ lớn nhất (chiếm >=8% diện tích trang), và mở rộng biên lên xuống để bao trọn hình bị thiếu đầu/cuối.
+    Tách từng vùng connected lớn, lọc aspect rộng/dẹt hợp lý. Không union thành full page.
     """
-    from PIL import Image
-    import numpy as np
-    from scipy.ndimage import label, find_objects
-    import io, base64
-
-    im = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    im = Image.open(BytesIO(image_bytes)).convert("RGB")
     arr = np.array(im)
     h, w = arr.shape[:2]
     total_area = h * w
@@ -83,43 +78,36 @@ def extract_figures_from_image(image_bytes, min_area_ratio=0.08, max_area_ratio=
     bw = (arr_gray < 220).astype(np.uint8)
     lbl, n = label(bw)
     objs = find_objects(lbl)
-    best = None
-    max_area = 0
-    for slc in objs:
+    figures = []
+    for i, slc in enumerate(objs):
         y1, y2 = slc[0].start, slc[0].stop
         x1, x2 = slc[1].start, slc[1].stop
         area = (y2-y1) * (x2-x1)
         ratio = area / total_area
-        if min_area_ratio <= ratio <= max_area_ratio and area > max_area:
-            best = (x1, y1, x2, y2)
-            max_area = area
-    if best:
-        # Padding lên/xuống/trái/phải cho đầy đủ hình
-        x1, y1, x2, y2 = best
-        dx = int((x2 - x1) * pad_ratio)
-        dy = int((y2 - y1) * pad_ratio)
-        x1 = max(x1 - dx, 0)
-        x2 = min(x2 + dx, w)
-        y1 = max(y1 - dy, 0)
-        y2 = min(y2 + dy, h)
-        fig_crop = im.crop((x1, y1, x2, y2))
-        buf = io.BytesIO()
-        fig_crop.save(buf, format="JPEG")
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        return [{
-            "base64": b64,
-            "name": "img-0.jpeg",
-            "rect": (x1, y1, x2, y2)
-        }]
-    else:
-        # Không có vùng lớn nào, trả về cả trang
-        buf = io.BytesIO()
+        width = x2 - x1
+        height = y2 - y1
+        aspect = width / height if height else 1
+        # Lọc các vùng vừa phải
+        if min_area_ratio <= ratio <= max_area_ratio and min_aspect <= aspect <= max_aspect:
+            fig_crop = im.crop((x1, y1, x2, y2))
+            buf = BytesIO()
+            fig_crop.save(buf, format="JPEG")
+            b64 = base64.b64encode(buf.getvalue()).decode()
+            figures.append({
+                "base64": b64,
+                "name": f"img-{i}.jpeg",
+                "rect": (x1, y1, x2, y2)
+            })
+    # Nếu không có vùng nào phù hợp, trả về cả trang
+    if not figures:
+        buf = BytesIO()
         im.save(buf, format="JPEG")
-        return [{
+        figures.append({
             "base64": base64.b64encode(buf.getvalue()).decode(),
             "name": "img-0.jpeg",
             "rect": (0, 0, w, h)
-        }]
+        })
+    return sorted(figures, key=lambda x: x["rect"][1])  # sort theo y (top down)
 
 # === Hàm mapping chèn đúng vị trí (ưu tiên dòng có từ khoá hình) ===
 def insert_figures_to_markdown(text, figures):
