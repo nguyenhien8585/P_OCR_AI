@@ -89,38 +89,42 @@ def insert_figures_to_markdown(text, figures):
     return '\n'.join(new_lines)
 
 # ==== HÀM TÁCH HÌNH MINH HOẠ CHUẨN (KHÔNG DÍNH/LẶP/THIẾU) ====
-def extract_figures_from_image(img_bytes, min_area=7000, max_figures=4, border_margin=7):
+def extract_figures_from_image(img_bytes, min_area=5000, max_figures=6, border_margin=6):
     """
-    Cắt sát các minh hoạ lớn trong ảnh, không bị thiếu, không dính mép giấy, không dư bàn ghế, không dính chữ!
-    - Trả về tối đa max_figures ảnh minh hoạ (mặc định 4)
-    - Nếu không tìm thấy gì, trả về ảnh gốc
+    Tách đúng tất cả hình minh họa lớn, cắt sát, không dính mép, không bị chia nhỏ, không thiếu hình.
+    Trả về list dict [{"name": "img-x.jpeg", "base64": ...}]
     """
-    # Đọc ảnh
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
     img_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     h, w = img_gray.shape
 
-    # Làm mờ nhẹ để bỏ noise, tăng biên
+    # Làm mờ nhẹ loại nhiễu
     blur = cv2.GaussianBlur(img_gray, (5, 5), 0)
-    # Tìm biên mạnh bằng Canny
-    edges = cv2.Canny(blur, threshold1=60, threshold2=150)
-    # Tìm các contour khép kín
+    # Tăng contrast nhẹ nếu hình nhạt
+    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+    enhanced = clahe.apply(blur)
+
+    # Tìm cạnh bằng Canny
+    edges = cv2.Canny(enhanced, 50, 160)
+    # Dilation để nối nét đứt
+    kernel = np.ones((5,5),np.uint8)
+    edges = cv2.dilate(edges, kernel, iterations=1)
+    # Tìm contour ngoài cùng
     cnts, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    figures = []
     boxes = []
     for cnt in cnts:
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
         aspect = ww / (hh + 1e-5)
         area_ratio = area / (h * w)
-        # Lọc các box lớn, tỉ lệ ảnh hợp lý, không sát mép
-        if area > min_area and 0.32 < aspect < 3.5 and 0.03 < area_ratio < 0.8:
+        # Lọc box lớn, hình chữ nhật, không quá sát mép
+        if area > min_area and 0.28 < aspect < 3.8 and 0.018 < area_ratio < 0.65:
             if (x < border_margin or y < border_margin or
                 x + ww > w - border_margin or y + hh > h - border_margin):
                 continue
             boxes.append((x, y, ww, hh))
-    # Lọc trùng/lồng box, lấy vùng lớn nhất không bị lồng vào nhau
+    # Lọc trùng box, loại box nhỏ nằm trong box lớn (chỉ lấy lớn nhất)
     def is_inside(b1, b2):
         x1, y1, w1, h1 = b1
         x2, y2, w2, h2 = b2
@@ -131,13 +135,14 @@ def extract_figures_from_image(img_bytes, min_area=7000, max_figures=4, border_m
             final_boxes.append(b)
         if len(final_boxes) >= max_figures:
             break
+    # Nếu không có box nào hợp lệ, trả về ảnh gốc
     if not final_boxes:
-        # fallback: trả về ảnh gốc
         buf = io.BytesIO()
         img_pil.save(buf, format="JPEG")
         b64 = base64.b64encode(buf.getvalue()).decode()
         return [{"name": "img-1.jpeg", "base64": b64}]
-    # Cắt sát viền, lưu từng ảnh
+    # Cắt từng ảnh, trả về
+    figures = []
     for idx, (x, y, ww, hh) in enumerate(sorted(final_boxes, key=lambda b: (b[1], b[0]))):
         crop = img[y:y+hh, x:x+ww]
         buf = io.BytesIO()
