@@ -8,16 +8,16 @@ import os
 import numpy as np
 from PIL import Image
 from scipy.ndimage import label, find_objects
+from io import BytesIO
 from config import API_URL, API_KEY
 from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 from PyPDF2 import PdfReader
-from io import BytesIO
 
 # =========== GEMINI KEY LIST ===========
 GEMINI_API_KEYS = [
- "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
+  "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
@@ -65,11 +65,18 @@ def gemini_generate_text(image_bytes, api_key):
 def remove_all_figure_markdown(text):
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
-# === Hàm tách ảnh minh hoạ (tối ưu chỉ lấy ảnh lớn) ===
-def extract_figures_from_image(image_bytes, min_area=50000):
-    im = Image.open(BytesIO(image_bytes)).convert("L")
+# === Hàm tách ảnh minh hoạ (chỉ lấy vùng lớn, giữ nguyên màu) ===
+def extract_figures_from_image(image_bytes, min_area_ratio=0.25):
+    """
+    Chỉ cắt vùng lớn nhất và giữ nguyên màu, tránh cắt nhầm bàn ghế/bảng.
+    Nếu không tìm được vùng lớn nổi bật thì trả về ảnh gốc.
+    """
+    im = Image.open(BytesIO(image_bytes)).convert("RGB")
     arr = np.array(im)
-    bw = (arr < 220).astype(np.uint8)
+    h, w = arr.shape[:2]
+    min_area = int(h * w * min_area_ratio)
+    arr_gray = np.mean(arr, axis=2).astype(np.uint8)
+    bw = (arr_gray < 220).astype(np.uint8)
     lbl, n = label(bw)
     objs = find_objects(lbl)
     figures = []
@@ -94,9 +101,19 @@ def extract_figures_from_image(image_bytes, min_area=50000):
         figures.append({
             "base64": base64.b64encode(buf.getvalue()).decode(),
             "name": "img-0.jpeg",
-            "rect": (0,0,im.width,im.height)
+            "rect": (0, 0, w, h)
         })
-    return sorted(figures, key=lambda x: x["rect"][1])  # sort theo y (trên xuống)
+    # Chỉ lấy 2 vùng lớn nhất nếu diện tích lớn hơn min_area
+    figures = sorted(figures, key=lambda x: (x["rect"][3]-x["rect"][1]) * (x["rect"][2]-x["rect"][0]), reverse=True)
+    results = []
+    for f in figures:
+        x1, y1, x2, y2 = f["rect"]
+        area = (y2-y1) * (x2-x1)
+        if area > min_area:
+            results.append(f)
+    if not results:
+        results = [figures[0]]
+    return results[:2]
 
 # === Hàm mapping chèn đúng vị trí (ưu tiên dòng có từ khoá hình) ===
 def insert_figures_to_markdown(text, figures):
@@ -248,7 +265,7 @@ with tab_img:
         all_figures = []
         for i, img_file in enumerate(uploaded_images):
             img_bytes = img_file.read()
-            figures = extract_figures_from_image(img_bytes, min_area=50000)
+            figures = extract_figures_from_image(img_bytes, min_area_ratio=0.25)
             all_figures.extend(figures)
             api_key = get_next_api_key()
             with st.spinner(f"Đang nhận diện trang {i+1}..."):
