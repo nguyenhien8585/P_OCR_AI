@@ -6,6 +6,7 @@ import re
 import itertools
 import os
 import numpy as np
+import io
 from PIL import Image
 from scipy.ndimage import label, find_objects
 from io import BytesIO
