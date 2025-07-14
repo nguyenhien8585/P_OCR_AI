@@ -68,69 +68,59 @@ def remove_all_figure_markdown(text):
 # ==== HÀM TÁCH ẢNH MINH HOẠ CHỐNG CẮT VỤN ====
 def extract_figures_from_image(
     image_bytes,
-    min_area_ratio=0.008, max_area_ratio=0.8,
-    min_aspect=0.18, max_aspect=8,
-    always_group_if_many=True
+    min_content_area_ratio=0.13,  # Ảnh lớn hơn 13% diện tích là đủ (để loại lề)
 ):
     """
-    Tách các vùng lớn, nếu có từ 2 vùng connected trở lên và tổng union >18% ảnh,
-    hoặc số box <8, gộp thành 1 bounding box (chống tách rời hình lớp học).
+    LUÔN tách ra 1 bounding box lớn nhất chứa phần "minh hoạ" màu khác nền.
+    Không bao giờ chia thành 2–3 ảnh dọc.
     """
-    im = Image.open(BytesIO(image_bytes)).convert("RGB")
+    import numpy as np
+    from PIL import Image
+    import io, base64
+
+    im = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     arr = np.array(im)
     h, w = arr.shape[:2]
     total_area = h * w
-    arr_gray = np.mean(arr, axis=2).astype(np.uint8)
-    bw = (arr_gray < 220).astype(np.uint8)
-    lbl, n = label(bw)
-    objs = find_objects(lbl)
-    boxes = []
-    for slc in objs:
-        y1, y2 = slc[0].start, slc[0].stop
-        x1, x2 = slc[1].start, slc[1].stop
-        area = (y2-y1) * (x2-x1)
-        ratio = area / total_area
-        width = x2 - x1
-        height = y2 - y1
-        aspect = width / height if height else 1
-        if min_area_ratio <= ratio <= max_area_ratio and min_aspect <= aspect <= max_aspect:
-            boxes.append((x1, y1, x2, y2))
-    # Nếu có nhiều box, gộp thành 1 ảnh duy nhất nếu union lớn hơn 18% tổng diện tích hoặc số box <= 8
-    if always_group_if_many and len(boxes) >= 2:
-        xs1, ys1, xs2, ys2 = zip(*boxes)
-        x1, y1, x2, y2 = min(xs1), min(ys1), max(xs2), max(ys2)
-        union_area = (x2-x1)*(y2-y1)
-        if union_area/total_area > 0.18 and len(boxes) <= 8:
-            fig_crop = im.crop((x1, y1, x2, y2))
-            buf = BytesIO()
-            fig_crop.save(buf, format="JPEG")
-            b64 = base64.b64encode(buf.getvalue()).decode()
-            return [{
-                "base64": b64,
-                "name": "img-0.jpeg",
-                "rect": (x1, y1, x2, y2)
-            }]
-    # Nếu chỉ 1 vùng hoặc không gộp được, trả về từng vùng riêng
-    figures = []
-    for i, (x1, y1, x2, y2) in enumerate(boxes):
-        fig_crop = im.crop((x1, y1, x2, y2))
-        buf = BytesIO()
-        fig_crop.save(buf, format="JPEG")
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        figures.append({
-            "base64": b64,
-            "name": f"img-{i}.jpeg",
-            "rect": (x1, y1, x2, y2)
-        })
-    if not figures:
-        buf = BytesIO()
+
+    # Tìm màu nền (background): pixel chiếm nhiều nhất
+    arr_flat = arr.reshape(-1, 3)
+    bg_color = tuple(np.round(np.median(arr_flat, axis=0)).astype(int))
+    diff = np.abs(arr - bg_color).sum(axis=2)
+    # Ngưỡng: càng thấp càng "ôm sát" vùng bàn ghế, tăng nếu nền hơi xám vàng
+    mask = diff > 30
+
+    # Tìm bounding box lớn nhất chứa nhiều pixel khác nền nhất
+    coords = np.column_stack(np.where(mask))
+    if coords.size == 0:
+        # Toàn bộ là nền, trả về cả trang
+        buf = io.BytesIO()
         im.save(buf, format="JPEG")
-        figures.append({
+        return [{
             "base64": base64.b64encode(buf.getvalue()).decode(),
             "name": "img-0.jpeg",
             "rect": (0, 0, w, h)
-        })
-    return sorted(figures, key=lambda x: x["rect"][1])
+        }]
+    y1, x1 = coords.min(axis=0)
+    y2, x2 = coords.max(axis=0) + 1
+    area = (y2-y1)*(x2-x1)
+    if area/total_area < min_content_area_ratio:
+        # Không có hình minh hoạ lớn nào, trả về cả trang
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG")
+        return [{
+            "base64": base64.b64encode(buf.getvalue()).decode(),
+            "name": "img-0.jpeg",
+            "rect": (0, 0, w, h)
+        }]
+    fig_crop = im.crop((x1, y1, x2, y2))
+    buf = io.BytesIO()
+    fig_crop.save(buf, format="JPEG")
+    return [{
+        "base64": base64.b64encode(buf.getvalue()).decode(),
+        "name": "img-0.jpeg",
+        "rect": (x1, y1, x2, y2)
+    }]
 
 # === Hàm mapping chèn đúng vị trí (ưu tiên dòng có từ khoá hình) ===
 def insert_figures_to_markdown(text, figures):
