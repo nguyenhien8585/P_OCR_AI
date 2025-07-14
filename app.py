@@ -8,14 +8,16 @@ import os
 import numpy as np
 import io
 from PIL import Image, ImageFilter
-from scipy.ndimage import label, find_objects
+from scipy.ndimage import label, find_objects, binary_dilation
+from shapely.geometry import box as sh_box
+import shapely.ops
 from config import API_URL, API_KEY
 from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 from PyPDF2 import PdfReader
 
-# GEMINI KEY (bạn tự điền các key hợp lệ)
+# ========= GEMINI ==========
 GEMINI_API_KEYS = [
   "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
@@ -64,47 +66,84 @@ def gemini_generate_text(image_bytes, api_key):
 def remove_all_figure_markdown(text):
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
-# --- HÀM TÁCH ẢNH KHÔNG BAO GIỜ CẮT NHỎ ---
-def extract_figures_from_image(img_bytes, min_area=3000, blur_radius=2):
+# ==== HÀM TÁCH ẢNH MINH HOẠ KHÔNG BAO GIỜ BỊ VỤN, TÁCH ĐƯỢC NHIỀU ẢNH ====
+def extract_figures_from_image(img_bytes, min_area_ratio=0.03, min_side=70, merge_close=True):
     """
-    Cắt ra đúng 1 hình minh hoạ lớn nhất trong ảnh.
-    Không bao giờ cắt ra 2-3 dải nhỏ như bàn ghế lớp học.
-    Nếu không có minh hoạ nào lớn, trả về nguyên ảnh.
+    Tách tất cả minh hoạ (lớp học, bảng, đồ thị, hình học...) trong 1 ảnh đầu vào,
+    Không bao giờ chia nhỏ thành dải vụn, có thể tách ra nhiều hình khác nhau, độ chính xác cao.
     """
-    img = Image.open(io.BytesIO(img_bytes)).convert("L")
-    arr = np.array(img)
-    h, w = arr.shape
-    img_blur = img.filter(ImageFilter.GaussianBlur(blur_radius))
-    arr_blur = np.array(img_blur)
-    edge = np.abs(arr.astype(np.int16) - arr_blur.astype(np.int16))
-    edge = (edge > 12).astype(np.uint8)
-    labeled, num = label(edge)
-    objects = find_objects(labeled)
-    color_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    candidates = []
-    for obj in objects:
-        if obj is None: continue
-        y0, y1 = obj[0].start, obj[0].stop
-        x0, x1 = obj[1].start, obj[1].stop
-        area = (x1-x0)*(y1-y0)
-        aspect = (x1-x0)/(y1-y0+1e-5)
-        area_ratio = area/(h*w)
-        # Lọc vùng lớn, tỉ lệ gần hình chữ nhật, nằm trong trung tâm ảnh
-        if area > min_area and 0.25 < aspect < 4.0 and 0.08 < area_ratio < 0.8:
-            candidates.append((area, x0, y0, x1, y1))
-    # Nếu có vùng, chọn vùng lớn nhất, trả về 1 hình duy nhất
-    if candidates:
-        area, x0, y0, x1, y1 = max(candidates, key=lambda x: x[0])
-        crop = color_img.crop((x0, y0, x1, y1))
+    im = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    arr = np.array(im)
+    h, w = arr.shape[:2]
+    total_area = h * w
+
+    # 1. Mask các vùng KHÔNG phải nền (nền trắng/xám nhạt/vàng nhạt)
+    bg_mask = (
+        (arr[:,:,0] > 180) & (arr[:,:,1] > 180) & (arr[:,:,2] > 150)
+    ) | (
+        # vàng nhạt
+        (arr[:,:,0] > 200) & (arr[:,:,1] > 180) & (arr[:,:,2] > 100)
+    )
+    fg_mask = ~bg_mask
+
+    # 2. Mask thêm các vùng có biên nổi bật (cho bảng biến thiên, hình học, đồ thị)
+    gray = np.mean(arr, axis=2).astype(np.uint8)
+    edge = np.abs(gray.astype(np.int16) - Image.fromarray(gray).filter(ImageFilter.GaussianBlur(2)).astype(np.int16))
+    edge_mask = (edge > 18)
+    fg_mask = fg_mask | edge_mask
+
+    # 3. Dilation để nối liền các vùng gần nhau (tránh chia vụn)
+    fg_mask = binary_dilation(fg_mask, iterations=6)
+    lbl, n = label(fg_mask)
+    objs = find_objects(lbl)
+
+    # 4. Lọc các vùng đủ lớn, đủ hình chữ nhật, không dính lề
+    boxes = []
+    for slc in objs:
+        if slc is None: continue
+        y1, y2 = slc[0].start, slc[0].stop
+        x1, x2 = slc[1].start, slc[1].stop
+        box_w, box_h = x2-x1, y2-y1
+        area = box_w * box_h
+        if (
+            area > min_area_ratio*total_area
+            and box_w >= min_side and box_h >= min_side
+            and x1 > 0.01*w and x2 < 0.99*w and y1 > 0.01*h and y2 < 0.99*h
+        ):
+            boxes.append([x1, y1, x2, y2])
+
+    # 5. Nếu nhiều box nhỏ dính gần nhau, gộp bounding box lại
+    if merge_close and len(boxes) >= 2:
+        polys = [sh_box(*b) for b in boxes]
+        merged = shapely.ops.unary_union(polys)
+        if merged.geom_type == 'Polygon':
+            merged_boxes = [merged.bounds]
+        else:
+            merged_boxes = [g.bounds for g in merged.geoms]
+        boxes = [[int(x1), int(y1), int(x2), int(y2)] for (x1,y1,x2,y2) in merged_boxes]
+
+    # 6. Crop và trả về các minh hoạ
+    results = []
+    for idx, (x1, y1, x2, y2) in enumerate(sorted(boxes, key=lambda b: b[1])):
+        crop = im.crop((x1, y1, x2, y2))
         buf = io.BytesIO()
         crop.save(buf, format="JPEG")
         b64 = base64.b64encode(buf.getvalue()).decode()
-        return [{"name": "img-1.jpeg", "base64": b64}]
-    # Không có vùng phù hợp, trả về cả ảnh gốc
-    buf = io.BytesIO()
-    color_img.save(buf, format="JPEG")
-    b64 = base64.b64encode(buf.getvalue()).decode()
-    return [{"name": "img-1.jpeg", "base64": b64}]
+        results.append({
+            "name": f"img-{idx+1}.jpeg",
+            "base64": b64,
+            "rect": (x1, y1, x2, y2)
+        })
+    if not results:
+        # fallback: không tìm thấy minh hoạ nào, trả về cả ảnh gốc
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG")
+        results.append({
+            "name": "img-1.jpeg",
+            "base64": base64.b64encode(buf.getvalue()).decode(),
+            "rect": (0,0,w,h)
+        })
+    return results
 
 def insert_figures_to_markdown(text, figures):
     lines = text.split('\n')
@@ -131,11 +170,12 @@ def insert_figures_to_markdown(text, figures):
     return '\n'.join(new_lines)
 
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
-st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & minh hoạ ✨")
+st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & tách nhiều minh hoạ ✨")
 
-tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Markdown + Minh hoạ"])
+tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Minh hoạ"])
 
 # =========== TAB PDF ===========
+
 with tab_pdf:
     st.markdown("#### 📝 OCR PDF Toán, giữ công thức, ảnh minh hoạ")
     uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"], label_visibility="collapsed")
@@ -234,7 +274,7 @@ with tab_pdf:
 
 # =========== TAB ẢNH ===========
 with tab_img:
-    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, mapping chuẩn, cho phép tải/copy) → Markdown/Text/Word")
+    st.markdown("#### 🖼️ Ảnh (tách nhiều minh hoạ tự động, không bị chia vụn) → Markdown/Text/Word")
     uploaded_images = st.file_uploader(
         "Chọn nhiều ảnh (mỗi ảnh là một trang):",
         type=["png", "jpg", "jpeg", "webp"],
@@ -310,4 +350,4 @@ with tab_img:
         with tab2:
             st.info("Chưa có ảnh nào để xem.")
 
-st.caption("✨ Văn bản chuẩn Markdown, mapping ảnh không dư/lặp, cho phép copy/tải về. Tách minh hoạ từng ảnh tự động. Xuất Word minh hoạ đúng vị trí!")
+st.caption("✨ Văn bản chuẩn Markdown, mapping ảnh không dư/lặp, cho phép copy/tải về. Tách nhiều minh hoạ từng ảnh tự động. Xuất Word minh hoạ đúng vị trí!")
