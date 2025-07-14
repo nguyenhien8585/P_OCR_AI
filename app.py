@@ -55,22 +55,28 @@ def remove_all_figure_markdown(text):
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
 def insert_figures_to_markdown(text, figures):
+    # Xoá toàn bộ markdown cũ Gemini trả về
+    text = re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
     lines = text.split('\n')
     new_lines = []
     fig_idx = 0
     n_fig = len(figures)
+
     for i, line in enumerate(lines):
         new_lines.append(line)
-        lower = line.lower()
-        if fig_idx < n_fig and any(key in lower for key in [
-            "xem hình", "hình vẽ", "hình dưới", "hình bên", "bảng dưới", "hình minh hoạ", "hình minh họa"
-        ]):
-            new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
-            fig_idx += 1
+        # Sau mỗi câu hỏi, chèn ảnh vào nếu còn ảnh
+        if fig_idx < n_fig:
+            # Nhận diện dòng bắt đầu bằng "Câu X." (có thể có khoảng trắng, in đậm...)
+            if re.match(r'^\s*Câu\s*\d+', line):
+                new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
+                fig_idx += 1
+
+    # Nếu vẫn còn hình (hiếm khi), chèn vào cuối
     while fig_idx < n_fig:
         new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
         fig_idx += 1
     return '\n'.join(new_lines)
+
 
 # --- NHẬP GEMINI KEY Ở ĐÂY (có thể để trống nếu không dùng AI) ---
 GEMINI_API_KEYS = [
