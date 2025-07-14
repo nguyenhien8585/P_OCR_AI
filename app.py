@@ -295,6 +295,22 @@ with tab_img:
         help="Mỗi ảnh là 1 trang, minh hoạ sẽ được tách tự động, nhận diện caption và mapping đúng vị trí."
     )
 
+    # ---------- Thêm 2 chức năng phụ ở đây ----------
+    if uploaded_images:
+        for img in uploaded_images:
+            with st.expander("ℹ️ Thông tin file", expanded=True):
+                st.write(f"**<img src='https://cdn-icons-png.flaticon.com/512/337/337946.png' width=22 style='margin-bottom:-4px'/> Tên file:** {img.name}", unsafe_allow_html=True)
+                st.write(f"**<img src='https://cdn-icons-png.flaticon.com/512/138/138281.png' width=22 style='margin-bottom:-4px'/> Loại file:** {img.type}", unsafe_allow_html=True)
+                size_kb = round(len(img.getvalue())/1024, 1)
+                st.write(f"**<img src='https://cdn-icons-png.flaticon.com/512/450/450634.png' width=22 style='margin-bottom:-4px'/> Kích thước:** {size_kb} KB", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='margin:20px 0'>"
+            "<button style='background:#eaf4fd;color:#2176ae;padding:12px 28px;font-size:18px;"
+            "border-radius:7px;border:none;cursor:pointer;box-shadow:0 1px 8px #d0e8ff;font-weight:bold'>"
+            "🚀 Xử lý OCR Image</button></div>", unsafe_allow_html=True
+        )
+    # --------- Kết thúc bổ sung, code xử lý mapping nâng cao phía dưới giữ nguyên ---------
+
     tab1, tab2 = st.tabs(["📋 Văn bản (Mapping nâng cao)", "🖼️ Hình ảnh đã tách"])
     if uploaded_images:
         latex_results = []
