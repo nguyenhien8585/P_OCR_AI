@@ -47,7 +47,8 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
             # Loại bỏ vùng bảng đã nhận phía trên
             overlapped = False
             for t in tables:
-                tb_x, tb_y, tb_w, tb_h = [int(v) for v in re.findall(r'\d+', t['name']+str(t['is_table']))[:4]]
+                # Gán bounding box "ảo" cho bảng
+                tb_x, tb_y, tb_w, tb_h = x, y, ww, hh
                 if abs(tb_x-x)<12 and abs(tb_y-y)<12 and abs(tb_w-ww)<25 and abs(tb_h-hh)<25:
                     overlapped = True
                     break
@@ -66,7 +67,6 @@ def remove_all_figure_markdown(text):
     text = re.sub(r'\[BẢNG:.*?\]', '', text)
     return text
 
-# -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
 def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, table_kw=None):
     if keywords is None:
         keywords = [
@@ -166,7 +166,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
 
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
-    "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
+   "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
@@ -292,6 +292,7 @@ with tab_img:
                     st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh.")
     else:
         st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
+
 # =================== TAB PDF ===================
 with tab_pdf:
     st.markdown("#### 📝 OCR PDF Toán, giữ công thức, ảnh minh hoạ")
@@ -353,20 +354,19 @@ with tab_pdf:
             with col2:
                 word_btn = st.button("📝 Tạo và tải file Word", use_container_width=True, key="word")
                 if word_btn:
-                    with st.spinner("Đang tạo file Word..."):
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                            insert_images_to_word_from_markdown(text_content, images, tmp_word.name)
-                        with open(tmp_word.name, "rb") as f:
-                            word_data = f.read()
-                        st.success("✅ Đã tạo file Word thành công!")
-                        st.download_button(
-                            "⬇️ Tải về file Word",
-                            word_data,
-                            file_name="ket_qua_ocr.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            use_container_width=True
-                        )
-                        os.remove(tmp_word.name)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
+                        insert_images_to_word_from_markdown(text_content, images, tmp_word.name)
+                    with open(tmp_word.name, "rb") as f:
+                        word_data = f.read()
+                    st.success("✅ Đã tạo file Word thành công!")
+                    st.download_button(
+                        "⬇️ Tải về file Word",
+                        word_data,
+                        file_name="ket_qua_ocr.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True
+                    )
+                    os.remove(tmp_word.name)
         with tab2:
             if images:
                 st.success(f"🖼️ Đã tìm thấy {len(images)} hình ảnh:")
