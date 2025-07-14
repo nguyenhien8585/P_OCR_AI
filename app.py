@@ -84,10 +84,13 @@ def insert_figures_by_cau_number_exact(text, figures):
         if cau_pattern.match(line.strip()) and fig_idx < len(figures):
             result.append(f'![{figures[fig_idx]["name"]}]({figures[fig_idx]["name"]})')
             fig_idx += 1
-    while fig_idx < len(figures):
-        result.append(f'![{figures[fig_idx]["name"]}]({figures[fig_idx]["name"]})')
-        fig_idx += 1
+    # Nếu còn hình dư, chèn cuối!
+    if fig_idx < len(figures):
+        result.append("")  # dòng trống
+        for j in range(fig_idx, len(figures)):
+            result.append(f'![{figures[j]["name"]}]({figures[j]["name"]})')
     return '\n'.join(result)
+
 
 # --- GEMINI ---
 GEMINI_API_KEYS = [
