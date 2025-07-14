@@ -11,7 +11,7 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
-# --- HÀM TÁCH ẢNH MINH HOẠ (OpenCV, chuẩn Toán) ---
+# =============== TÁCH ẢNH MINH HOẠ (CHUẨN, KHÔNG DÍNH CHỮ) ===============
 def extract_figures_from_image(img_bytes, min_area_ratio=0.05, min_area_abs=1800, min_w=100, min_h=90, max_figures=4):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
@@ -50,47 +50,69 @@ def extract_figures_from_image(img_bytes, min_area_ratio=0.05, min_area_abs=1800
         results.append({"name": f"img-{idx+1}.jpeg", "base64": b64})
     return results
 
-# --- LOẠI MARKDOWN ẢNH DƯ ---
+# =============== HÀM NỐI DÒNG TỰ ĐỘNG (không xuống dòng giữa câu) ===============
+def join_lines(text):
+    lines = text.split('\n')
+    out = []
+    cur = ""
+    for l in lines:
+        l = l.strip()
+        if not l:
+            if cur: out.append(cur); cur = ""
+            continue
+        if cur and not re.search(r'[.!?…]$', cur):
+            cur += " " + l
+        else:
+            if cur: out.append(cur)
+            cur = l
+    if cur: out.append(cur)
+    return '\n'.join(out)
+
+# =============== HÀM LOẠI MARKDOWN ẢNH DƯ ===============
 def remove_all_figure_markdown(text):
     if not isinstance(text, str): return ""
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
-# --- GỘP DÒNG LIỀN MẠCH ---
-def fix_newlines(text):
+# =============== HÀM CHÈN ẢNH MINH HOẠ ĐÚNG VỊ TRÍ (KHÔNG CHÈN GIỮA CÂU) ===============
+def insert_figures_to_markdown_fixed(text, figures):
     lines = text.split('\n')
     new_lines = []
-    for i, line in enumerate(lines):
-        if i == 0:
-            new_lines.append(line.strip())
-            continue
-        prev = new_lines[-1]
-        if not re.search(r'[\.\?!:…]$', prev.strip()) and not line.strip().startswith('!['):
-            new_lines[-1] += ' ' + line.strip()
-        else:
-            new_lines.append(line.strip())
+    fig_idx = 0
+    n_fig = len(figures)
+    keywords = [
+        "xem hình", "hình vẽ", "hình dưới", "hình bên",
+        "bảng dưới", "hình minh hoạ", "hình minh họa", "biểu đồ"
+    ]
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        new_lines.append(line)
+        lcur = line.lower()
+        found = any(kw in lcur for kw in keywords)
+        # Nếu là dòng tiêu đề chứa từ khóa hình ảnh, hoặc dòng kết thúc câu chứa từ khóa
+        if (found and fig_idx < n_fig):
+            # Nếu dòng này chưa kết thúc câu, tìm đến dòng tiếp theo hoặc đến khi hết câu mới chèn
+            if not re.search(r'[.!?…]$', line.strip()):
+                # Tìm dòng kết thúc câu tiếp theo
+                j = i+1
+                while j < len(lines):
+                    new_lines.append(lines[j])
+                    if re.search(r'[.!?…]$', lines[j].strip()):
+                        i = j  # bỏ qua các dòng đã nối
+                        break
+                    j += 1
+            # Sau khi đã qua hết câu, mới chèn ảnh
+            new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
+            fig_idx += 1
+        i += 1
+    while fig_idx < n_fig:
+        new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
+        fig_idx += 1
     return '\n'.join(new_lines)
 
-# --- CHÈN ẢNH ĐÚNG VỊ TRÍ "Câu x." ---
-def insert_figures_to_markdown_by_cau(text, figures):
-    lines = text.split('\n')
-    out_lines = []
-    fig_idx = 0
-    for line in lines:
-        out_lines.append(line)
-        # Nếu là dòng bắt đầu câu hỏi (ví dụ "Câu 4."), gắn ảnh tương ứng theo thứ tự
-        match = re.match(r'^Câu\s*\d+\.', line.strip())
-        if match and fig_idx < len(figures):
-            out_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
-            fig_idx += 1
-    # Nếu còn ảnh dư, gắn vào cuối
-    while fig_idx < len(figures):
-        out_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
-        fig_idx += 1
-    return '\n'.join(out_lines)
-
-# --- GEMINI ---
+# =============== GEMINI API ===============
 GEMINI_API_KEYS = [
-  "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
+    "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
@@ -133,11 +155,12 @@ def gemini_generate_text(image_bytes, api_key):
     text = res["candidates"][0]["content"]["parts"][0]["text"]
     return text
 
+# =============== GIAO DIỆN STREAMLIT ===============
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
 st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & minh hoạ ✨")
 tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Markdown + Minh hoạ"])
 
-# ========== TAB PDF ==========
+# =================== TAB PDF ===================
 with tab_pdf:
     st.markdown("#### 📝 OCR PDF Toán, giữ công thức, ảnh minh hoạ")
     uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"], label_visibility="collapsed")
@@ -233,7 +256,7 @@ with tab_pdf:
                 st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
     st.markdown("---")
 
-# =========== TAB ẢNH ===========
+# ================= TAB ẢNH ===================
 with tab_img:
     st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, mapping chuẩn, cho phép tải/copy) → Markdown/Text/Word")
     uploaded_images = st.file_uploader(
@@ -257,9 +280,9 @@ with tab_img:
                     text = gemini_generate_text(img_bytes, api_key)
                 except Exception as e:
                     text = f"[Lỗi Gemini: {e}]"
+            text = join_lines(text)
             text = remove_all_figure_markdown(text)
-            text = fix_newlines(text)
-            text = insert_figures_to_markdown_by_cau(text, figures)
+            text = insert_figures_to_markdown_fixed(text, figures)
             latex_results.append((img_file.name, text, figures))
 
         with tab1:
@@ -305,4 +328,4 @@ with tab_img:
         with tab2:
             st.info("Chưa có ảnh nào để xem.")
 
-st.caption("✨ Văn bản chuẩn Markdown, mapping ảnh đúng vị trí 'Câu x.', không xuống dòng dư. Nếu vẫn lỗi mapping gửi lại text mẫu thực tế!")
+st.caption("✨ Văn bản chuẩn Markdown, mapping ảnh không dư/lặp, cho phép copy/tải về. Tách minh hoạ từng ảnh tự động. Xuất Word minh hoạ đúng vị trí!")
