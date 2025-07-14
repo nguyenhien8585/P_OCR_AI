@@ -66,7 +66,7 @@ def gemini_generate_text(image_bytes, api_key):
 def remove_all_figure_markdown(text):
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
-# ==== HÀM TÁCH ẢNH MINH HOẠ KHÔNG BAO GIỜ BỊ VỤN, TÁCH ĐƯỢC NHIỀU ẢNH ====
+# ==== HÀM TÁCH ẢNH MINH HOẠ NHIỀU HÌNH, ĐÃ FIX .astype() ====
 def extract_figures_from_image(img_bytes, min_area_ratio=0.03, min_side=70, merge_close=True):
     """
     Tách tất cả minh hoạ (lớp học, bảng, đồ thị, hình học...) trong 1 ảnh đầu vào,
@@ -88,7 +88,8 @@ def extract_figures_from_image(img_bytes, min_area_ratio=0.03, min_side=70, merg
 
     # 2. Mask thêm các vùng có biên nổi bật (cho bảng biến thiên, hình học, đồ thị)
     gray = np.mean(arr, axis=2).astype(np.uint8)
-    edge = np.abs(gray.astype(np.int16) - Image.fromarray(gray).filter(ImageFilter.GaussianBlur(2)).astype(np.int16))
+    gray_blur = np.array(Image.fromarray(gray).filter(ImageFilter.GaussianBlur(2)))
+    edge = np.abs(gray.astype(np.int16) - gray_blur.astype(np.int16))
     edge_mask = (edge > 18)
     fg_mask = fg_mask | edge_mask
 
