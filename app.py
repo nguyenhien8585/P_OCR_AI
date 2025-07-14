@@ -36,11 +36,6 @@ def extract_figures_from_image(img_bytes, min_area_ratio=0.04, min_area_abs=1500
                 continue
             candidates.append((area, x, y, x+ww, y+hh))
     candidates = sorted(candidates, key=lambda box: (box[2], box[1]))
-    if not candidates:
-        buf = io.BytesIO()
-        img_pil.save(buf, format="JPEG")
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        return [{"name": "img-1.jpeg", "base64": b64}]
     results = []
     for idx, (_, x0, y0, x1, y1) in enumerate(candidates[:max_figures]):
         crop = img[y0:y1, x0:x1]
@@ -134,7 +129,7 @@ def join_paragraphs_and_insert_figures(text, figures, keywords=None):
 
 # --- Key Gemini ---
 GEMINI_API_KEYS = [
-  "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
+   "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
@@ -295,29 +290,19 @@ with tab_img:
         help="Mỗi ảnh là 1 trang, minh hoạ sẽ được tách tự động, nhận diện caption và mapping đúng vị trí."
     )
 
-    # Hiển thị luôn thông tin file và nút ở trên cùng (khi có file)
-    if uploaded_images:
-        # Có thể hiển thị cho từng ảnh hoặc chỉ ảnh đầu, dưới đây là cho từng ảnh
-        for img in uploaded_images:
-            with st.expander("ℹ️ Thông tin file", expanded=True):
-                st.write(f"**<img src='https://cdn-icons-png.flaticon.com/512/337/337946.png' width=22 style='margin-bottom:-4px'/> Tên file:** {img.name}", unsafe_allow_html=True)
-                st.write(f"**<img src='https://cdn-icons-png.flaticon.com/512/138/138281.png' width=22 style='margin-bottom:-4px'/> Loại file:** {img.type}", unsafe_allow_html=True)
-                size_kb = round(len(img.getvalue())/1024, 1)
-                st.write(f"**<img src='https://cdn-icons-png.flaticon.com/512/450/450634.png' width=22 style='margin-bottom:-4px'/> Kích thước:** {size_kb} KB", unsafe_allow_html=True)
-        # Nút xử lý (dưới info file, trên kết quả)
-        ocr_btn = st.button(
-            "🚀 Xử lý OCR Image", use_container_width=True,
-            help="Chỉ khi bấm nút này mới tiến hành OCR, mapping và tách minh hoạ."
-        )
-
-    # Tabs kết quả ở phía dưới (chỉ hiện khi bấm nút)
     tab1, tab2 = st.tabs(["📋 Văn bản (Mapping nâng cao)", "🖼️ Hình ảnh đã tách"])
+    ocr_btn = st.button("🚀 Xử lý OCR Image", use_container_width=True)
     if uploaded_images and ocr_btn:
         latex_results = []
         all_figures = []
         for i, img_file in enumerate(uploaded_images):
             img_bytes = img_file.read()
             figures = extract_figures_from_image(img_bytes)
+            # Nếu KHÔNG có hình minh hoạ: trả rỗng!
+            if not figures:
+                st.warning(f"Ảnh {img_file.name} không phát hiện minh hoạ!")
+                latex_results.append((img_file.name, "", []))
+                continue
             all_figures.extend(figures)
             api_key = get_next_api_key()
             with st.spinner(f"Đang nhận diện trang {i+1}..."):
@@ -328,33 +313,49 @@ with tab_img:
             text = remove_all_figure_markdown(text)
             text = join_paragraphs_and_insert_figures(text, figures)
             latex_results.append((img_file.name, text, figures))
+        st.session_state["latex_results_img"] = latex_results
+        st.session_state["all_figures_img"] = all_figures
 
-        with tab1:
-            st.markdown("### 📋 Kết quả từng trang (mapping nâng cao, không chen hình vào giữa đoạn):")
+    # Hiển thị KẾT QUẢ
+    latex_results = st.session_state.get("latex_results_img", [])
+    all_figures = st.session_state.get("all_figures_img", [])
+    with tab1:
+        st.markdown("### 📋 Kết quả từng trang (mapping nâng cao, không chen hình vào giữa đoạn):")
+        if latex_results:
             for idx, (img_name, latex, figures) in enumerate(latex_results):
                 st.markdown(f"#### Trang {idx+1}: {img_name}")
-                st.code(latex, language="markdown")
+                if latex.strip():
+                    st.code(latex, language="markdown")
+                else:
+                    st.info(f"⛔ Không phát hiện minh hoạ hoặc không có nội dung.")
+            # Nút xuất Word chỉ hiện khi có dữ liệu!
             if st.button("📝 Tạo và tải file Word giữ minh hoạ đúng vị trí", use_container_width=True):
-                with st.spinner("Đang tạo file Word..."):
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                        insert_images_to_word_from_markdown(
-                            "\n\n".join([latex for _, latex, _ in latex_results]),
-                            all_figures,
-                            tmp_word.name
+                if latex_results and all_figures:
+                    with st.spinner("Đang tạo file Word..."):
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
+                            insert_images_to_word_from_markdown(
+                                "\n\n".join([latex for _, latex, _ in latex_results]),
+                                all_figures,
+                                tmp_word.name
+                            )
+                        with open(tmp_word.name, "rb") as f:
+                            word_data = f.read()
+                        st.success("✅ Đã tạo file Word thành công!")
+                        st.download_button(
+                            "⬇️ Tải về file Word",
+                            word_data,
+                            file_name="ket_qua_anh_toan.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            use_container_width=True
                         )
-                    with open(tmp_word.name, "rb") as f:
-                        word_data = f.read()
-                    st.success("✅ Đã tạo file Word thành công!")
-                    st.download_button(
-                        "⬇️ Tải về file Word",
-                        word_data,
-                        file_name="ket_qua_anh_toan.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        use_container_width=True
-                    )
-                    os.remove(tmp_word.name)
-        with tab2:
-            st.markdown("### 🖼️ Tất cả minh hoạ đã tách (cho tải ảnh):")
+                        os.remove(tmp_word.name)
+                else:
+                    st.warning("Không có dữ liệu để xuất file Word (cần có minh hoạ và nội dung).")
+        else:
+            st.info("Vui lòng tải lên ảnh và bấm Xử lý OCR Image để xem kết quả.")
+    with tab2:
+        st.markdown("### 🖼️ Tất cả minh hoạ đã tách (cho tải ảnh):")
+        if all_figures:
             for idx, fig in enumerate(all_figures):
                 img_bytes = base64.b64decode(fig["base64"])
                 st.image(img_bytes, caption=fig["name"], width=250)
@@ -366,11 +367,6 @@ with tab_img:
                     use_container_width=True,
                     key=f"anh-download-{fig['name']}-{idx}"
                 )
-    else:
-        with tab1:
-            st.info("Bấm nút **Xử lý OCR Image** để bắt đầu nhận diện, mapping và tách ảnh minh hoạ.")
-        with tab2:
-            st.info("Chưa có ảnh nào để xem.")
-
+        else:
+            st.info("Không phát hiện minh hoạ nào trong ảnh.")
 st.caption("✨ Mapping hình nâng cao, đúng đoạn, không chen giữa câu, không dư hình. Word đúng vị trí minh hoạ.")
-
