@@ -11,9 +11,9 @@ from PIL import Image
 import cv2
 from PyPDF2 import PdfReader
 
-# ----------- GEMINI KEY (tự điền key hợp lệ) ------------
+# ---- NHẬP GEMINI KEY CỦA BẠN VÀO ĐÂY ----
 GEMINI_API_KEYS = [
-    "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
+"AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
@@ -24,7 +24,7 @@ api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
     return next(api_key_cycle)
 
-# ----------- HÀM TÁCH ẢNH MINH HOẠ SÁT NHẤT -----------
+# --- HÀM TÁCH ẢNH MINH HOẠ CỰC CHUẨN, KHÔNG DÍNH CHỮ ---
 def extract_figures_from_image(img_bytes, min_area_ratio=0.05, min_area_abs=1800, min_w=100, min_h=90, max_figures=4):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
@@ -47,21 +47,17 @@ def extract_figures_from_image(img_bytes, min_area_ratio=0.05, min_area_abs=1800
         area = ww * hh
         area_ratio = area / (w * h)
         aspect = ww / (hh + 1e-6)
-        # Các điều kiện lọc hình minh hoạ
         if area > min_area_abs and area_ratio > min_area_ratio and ww > min_w and hh > min_h and 0.18 < aspect < 6.5:
-            # Không lấy sát mép giấy
             if x < 0.008 * w or y < 0.008 * h or (x+ww) > 0.992*w or (y+hh) > 0.992*h:
                 continue
             candidates.append((area, x, y, x+ww, y+hh))
     # Sắp xếp từ trên xuống dưới, trái sang phải
     candidates = sorted(candidates, key=lambda box: (box[2], box[1]))
-    # Nếu vẫn không có hình, trả về ảnh gốc
     if not candidates:
         buf = io.BytesIO()
         img_pil.save(buf, format="JPEG")
         b64 = base64.b64encode(buf.getvalue()).decode()
         return [{"name": "img-1.jpeg", "base64": b64}]
-    # Giới hạn số lượng hình tách ra (tránh lặp/dư)
     results = []
     for idx, (_, x0, y0, x1, y1) in enumerate(candidates[:max_figures]):
         crop = img[y0:y1, x0:x1]
@@ -70,13 +66,14 @@ def extract_figures_from_image(img_bytes, min_area_ratio=0.05, min_area_abs=1800
         b64 = base64.b64encode(buf.getvalue()).decode()
         results.append({"name": f"img-{idx+1}.jpeg", "base64": b64})
     return results
-# ----------- HÀM GỠ MARKDOWN ẢNH ----------
+
+# --- Hàm loại markdown ảnh dư ---
 def remove_all_figure_markdown(text):
     if not isinstance(text, str):
         return ""
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
-# ----------- HÀM CHÈN ẢNH VÀO MARKDOWN ----------
+# --- Hàm chèn ảnh minh hoạ vào markdown ---
 def insert_figures_to_markdown(text, figures):
     lines = text.split('\n')
     new_lines = []
@@ -95,7 +92,7 @@ def insert_figures_to_markdown(text, figures):
         fig_idx += 1
     return '\n'.join(new_lines)
 
-# ----------- PROMPT GEMINI ---------
+# --- Prompt Gemini chuẩn toán ---
 GEMINI_PROMPT = '''
 YÊU CẦU:
 1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh.
@@ -129,12 +126,12 @@ def gemini_generate_text(image_bytes, api_key):
     text = res["candidates"][0]["content"]["parts"][0]["text"]
     return text
 
-# ----------- GIAO DIỆN STREAMLIT -----------
+# ----------------- Giao diện Streamlit -----------------
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
 st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & minh hoạ ✨")
 tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Markdown + Minh hoạ"])
 
-# =========== TAB PDF =============
+# ================= Tab PDF ==================
 with tab_pdf:
     st.markdown("#### 📝 OCR PDF Toán, giữ công thức, ảnh minh hoạ")
     uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"], label_visibility="collapsed")
@@ -157,7 +154,7 @@ with tab_pdf:
             st.write(f"**Số trang:** {num_pages}")
         st.info("🚀 Tính năng PDF demo, chưa OCR tự động, chỉ trích xuất trang (tự thêm API OCR tùy bạn).")
 
-# =========== TAB ẢNH =============
+# ================= Tab Ảnh ==================
 with tab_img:
     st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, mapping chuẩn, cho phép tải/copy) → Markdown/Text/Word")
     uploaded_images = st.file_uploader(
