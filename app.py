@@ -136,7 +136,7 @@ YÊU CẦU:
 - Toán inline: `${...}$`
 - Toán độc lập hoặc hệ phương trình: `$begin{{cases}}...\end{{cases}}$`
 - Các chữ kí hiệu cho hình học và các số để dạng ${....}$.
-Ví dụ: ${Oxyz}$, ${A}$,${AB}$,${0,1%}$,${0.1%}$,....
+Ví dụ: ${Oxyz}$, ${A}$,${AB}$,${0,1%}$,${0.1%}$, ${2m}$, ${a=4}$,...
 7. Bảng biểu: dùng markdown nếu có thể.
 8. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
 9. Tên người, nhân vật không để trong ngoặc.
