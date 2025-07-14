@@ -25,19 +25,23 @@ def get_next_api_key():
     return next(api_key_cycle)
 
 # ----------- HÀM TÁCH ẢNH MINH HOẠ SÁT NHẤT -----------
-def extract_figures_from_image(img_bytes, min_area=2000, min_aspect=0.2, max_aspect=6, max_figures=5):
-    '''
+def extract_figures_from_image(img_bytes, min_area=2000, min_aspect=0.15, max_aspect=7, max_figures=5):
+    """
     Trả về danh sách dict [{"name":..., "base64":...}]
     Cắt sát viền, không lẫn chữ, giữ đúng minh hoạ lớn nhất trong ảnh.
-    '''
+    Cải tiến: không loại vùng sát mép để không bỏ hình lớp học!
+    """
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     arr = np.array(img)
     gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, 
-                                   cv2.THRESH_BINARY_INV, 25, 15)
-    kernel = np.ones((3, 3), np.uint8)
-    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+    # Làm mờ nhẹ giúp các vùng sát nhau nối lại
+    blur = cv2.GaussianBlur(gray, (7, 7), 0)
+    # adaptive threshold mạnh tay hơn, loại vùng chữ nhỏ
+    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                   cv2.THRESH_BINARY_INV, 31, 13)
+    kernel = np.ones((5, 5), np.uint8)
+    # Nối các vùng gần nhau để không cắt dính chữ vào hình
+    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=3)
     contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     h, w = gray.shape
     rects = []
@@ -46,37 +50,35 @@ def extract_figures_from_image(img_bytes, min_area=2000, min_aspect=0.2, max_asp
         area = ww * hh
         aspect = ww / (hh + 1e-5)
         area_ratio = area / (h * w)
-        if area > min_area and min_aspect < aspect < max_aspect and 0.03 < area_ratio < 0.7:
-            if x < 0.01 * w or y < 0.01 * h or (x + ww) > 0.99 * w or (y + hh) > 0.99 * h:
-                continue
+        # Không loại vùng sát mép
+        if area > min_area and min_aspect < aspect < max_aspect and 0.03 < area_ratio < 0.75:
             rects.append((y, x, ww, hh))
-    rects = sorted(rects, key=lambda x: (x[0], x[1]))
-    results = []
-    if not rects:
-        buf = io.BytesIO()
-        img.save(buf, format='JPEG')
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        results.append({"name": "img-1.jpeg", "base64": b64})
-        return results
+    # Loại vùng con bị chứa hoàn toàn
     final_rects = []
-    for r in rects:
+    for r in sorted(rects, key=lambda x: -x[2]*x[3]):
         y, x, ww, hh = r
-        ok = True
+        overlap = False
         for f in final_rects:
             fy, fx, fww, fhh = f
             if x >= fx and y >= fy and x + ww <= fx + fww and y + hh <= fy + fhh:
-                ok = False
+                overlap = True
                 break
-        if ok:
+        if not overlap:
             final_rects.append(r)
-    for idx, (y, x, ww, hh) in enumerate(final_rects[:max_figures]):
+    final_rects = sorted(final_rects, key=lambda x: (x[0], x[1]))[:max_figures]
+    results = []
+    for idx, (y, x, ww, hh) in enumerate(final_rects):
         crop = img.crop((x, y, x + ww, y + hh))
         buf = io.BytesIO()
         crop.save(buf, format='JPEG')
         b64 = base64.b64encode(buf.getvalue()).decode()
         results.append({"name": f"img-{idx+1}.jpeg", "base64": b64})
+    if not results:
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG')
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        results.append({"name": "img-1.jpeg", "base64": b64})
     return results
-
 # ----------- HÀM GỠ MARKDOWN ẢNH ----------
 def remove_all_figure_markdown(text):
     if not isinstance(text, str):
