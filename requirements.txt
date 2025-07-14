@@ -8,3 +8,4 @@ img2pdf
 scipy
 numpy
 shapely 
+opencv-python-headless
