@@ -36,7 +36,7 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
             buf = io.BytesIO()
             Image.fromarray(crop).save(buf, format="JPEG")
             b64 = base64.b64encode(buf.getvalue()).decode()
-            tables.append({"name": f"table-{idx}.jpeg", "base64": b64, "is_table": True})   # <-- X bắt đầu từ 0
+            tables.append({"name": f"table-{idx+1}.jpeg", "base64": b64, "is_table": True})   # <-- Bắt đầu từ 1
     # Tách hình minh hoạ (contour không phải bảng)
     contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     figures = []
@@ -50,7 +50,7 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
             buf = io.BytesIO()
             Image.fromarray(crop).save(buf, format="JPEG")
             b64 = base64.b64encode(buf.getvalue()).decode()
-            figures.append({"name": f"img-{img_idx}.jpeg", "base64": b64, "is_table": False})
+            figures.append({"name": f"img-{img_idx+1}.jpeg", "base64": b64, "is_table": False})  # <-- Bắt đầu từ 1
             img_idx += 1
     return tables + figures
 
@@ -59,7 +59,6 @@ def remove_all_figure_markdown(text):
     text = re.sub(r'\[HÌNH: img-\d+\.jpeg\]', '', text)
     text = re.sub(r'\[BẢNG: table-\d+\.jpeg\]', '', text)
     return text
-
 # -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
 def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, table_kw=None):
     if keywords is None:
