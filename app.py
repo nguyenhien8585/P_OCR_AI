@@ -13,6 +13,7 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 from PyPDF2 import PdfReader
+from io import BytesIO
 
 # =========== GEMINI KEY LIST ===========
 GEMINI_API_KEYS = [
