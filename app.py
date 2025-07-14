@@ -227,6 +227,7 @@ with tab_img:
         help="Mỗi ảnh là 1 trang, minh hoạ sẽ được tách tự động, nhận diện caption và chèn đúng vị trí."
     )
 
+    tab1, tab2 = st.tabs(["📋 Văn bản (Markdown)", "🖼️ Hình ảnh đã tách"])
     if uploaded_images:
         latex_results = []
         all_figures = []
@@ -237,19 +238,62 @@ with tab_img:
             api_key = get_next_api_key()
             with st.spinner(f"Đang nhận diện trang {i+1}..."):
                 try:
-                    text = gemini_generate_text(img_bytes, api_key) if GEMINI_API_KEYS else "[Chưa nhập API KEY Gemini]"
+                    text = gemini_generate_text(img_bytes, api_key)
                 except Exception as e:
                     text = f"[Lỗi Gemini: {e}]"
             text = remove_all_figure_markdown(text)
+            # HÀM mapping ảnh VỊ TRÍ CHUẨN:
+            def insert_figures_to_markdown(text, figures):
+                lines = text.split('\n')
+                new_lines = []
+                fig_idx = 0
+                n_fig = len(figures)
+                for line in lines:
+                    new_lines.append(line)
+                    lower = line.lower()
+                    # Chèn đúng vị trí các từ khóa
+                    if (fig_idx < n_fig and any(
+                        key in lower for key in [
+                            "xem hình", "hình vẽ", "hình dưới", "hình bên",
+                            "bảng dưới", "hình minh hoạ", "hình minh họa", "biểu đồ"
+                        ]
+                    )):
+                        new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
+                        fig_idx += 1
+                # Nếu còn hình, thêm cuối
+                while fig_idx < n_fig:
+                    new_lines.append(f"![{figures[fig_idx]['name']}]({figures[fig_idx]['name']})")
+                    fig_idx += 1
+                return '\n'.join(new_lines)
             text = insert_figures_to_markdown(text, figures)
             latex_results.append((img_file.name, text, figures))
 
-        tab1, tab2 = st.tabs(["📋 Văn bản (Markdown)", "🖼️ Hình ảnh đã tách"])
         with tab1:
             st.markdown("### 📋 Kết quả từng trang (có markdown minh hoạ):")
             for idx, (img_name, latex, figures) in enumerate(latex_results):
                 st.markdown(f"#### Trang {idx+1}: {img_name}")
                 st.code(latex, language="markdown")
+            # Nút xuất Word đúng mapping
+            if st.button("📝 Tạo và tải file Word giữ minh hoạ đúng vị trí", use_container_width=True):
+                with st.spinner("Đang tạo file Word..."):
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
+                        # Đảm bảo bạn đã có hàm insert_images_to_word_from_markdown
+                        insert_images_to_word_from_markdown(
+                            "\n\n".join([latex for _, latex, _ in latex_results]),
+                            all_figures,
+                            tmp_word.name
+                        )
+                    with open(tmp_word.name, "rb") as f:
+                        word_data = f.read()
+                    st.success("✅ Đã tạo file Word thành công!")
+                    st.download_button(
+                        "⬇️ Tải về file Word",
+                        word_data,
+                        file_name="ket_qua_anh_toan.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True
+                    )
+                    os.remove(tmp_word.name)
         with tab2:
             st.markdown("### 🖼️ Tất cả minh hoạ đã tách (cho tải ảnh):")
             for idx, fig in enumerate(all_figures):
@@ -264,6 +308,9 @@ with tab_img:
                     key=f"anh-download-{fig['name']}-{idx}"
                 )
     else:
-        st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
+        with tab1:
+            st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
+        with tab2:
+            st.info("Chưa có ảnh nào để xem.")
 
 st.caption("✨ Văn bản chuẩn Markdown, mapping ảnh không dư/lặp, cho phép copy/tải về. Tách minh hoạ từng ảnh tự động. Xuất Word minh hoạ đúng vị trí!")
