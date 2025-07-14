@@ -1,5 +1,3 @@
-[media pointer="file-service://file-K35w9TSpQirwWujMxMZu9p"]
-[media pointer="file-service://file-VmJT8QB2d5Kr3NqjLb2oKy"]
 import streamlit as st
 import tempfile, os, base64, re, io, itertools
 from PIL import Image
