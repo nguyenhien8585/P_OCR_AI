@@ -25,60 +25,45 @@ def get_next_api_key():
     return next(api_key_cycle)
 
 # ----------- HÀM TÁCH ẢNH MINH HOẠ SÁT NHẤT -----------
-def extract_figures_from_image(img_bytes, min_area=4000, margin=10, max_figures=3):
-    """
-    Cắt sát hình minh họa khỏi ảnh (dùng OpenCV), loại caption/văn bản ngoài hình.
-    Trả về tối đa max_figures hình, mỗi hình là dict {'name', 'base64'}
-    """
-    nparr = np.frombuffer(img_bytes, np.uint8)
-    img_cv = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (3,3), 0)
+def extract_figures_from_image(img_bytes, min_area=5000, margin=6, max_figures=3):
+    img_arr = np.frombuffer(img_bytes, np.uint8)
+    img = cv2.imdecode(img_arr, cv2.IMREAD_COLOR)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # Tìm cạnh
-    edges = cv2.Canny(blur, 40, 120)
-    # Làm dày cạnh cho dễ bắt contour
-    kernel = np.ones((5,5), np.uint8)
-    dilated = cv2.dilate(edges, kernel, iterations=2)
+    # Làm mịn, tăng tương phản
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    _, thres = cv2.threshold(blur, 230, 255, cv2.THRESH_BINARY_INV)
 
-    # Tìm contour
-    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Tìm contours
+    contours, _ = cv2.findContours(thres, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     h, w = gray.shape
-    boxes = []
+    figures = []
     for cnt in contours:
-        x, y, bw, bh = cv2.boundingRect(cnt)
-        area = bw * bh
-        # Lọc: vùng lớn, không nằm sát mép, không quá dẹt
-        if area > min_area and 0.1 < bw/bh < 6.5:
-            # Không lấy sát mép
-            if x < 0.03*w or x+bw > 0.97*w or y < 0.03*h or y+bh > 0.97*h:
-                continue
-            # Lọc caption dính phía trên/dưới (caption thường mỏng, rộng, sát cạnh hình)
-            if bh < 0.13*h:
-                continue
-            boxes.append((area, x, y, x+bw, y+bh))
-    # Sắp xếp theo diện tích lớn, ưu tiên giữa trang
-    boxes = sorted(
-        boxes,
-        key=lambda x: (
-            -x[0],
-            abs((x[1]+x[3])/2 - w/2) + abs((x[2]+x[4])/2 - h/2)
-        )
-    )
-    results = []
-    for idx, (_, x1, y1, x2, y2) in enumerate(boxes[:max_figures]):
-        # Thêm margin (crop sát nhưng không cắt vào hình)
-        x1 = max(x1-margin, 0)
-        y1 = max(y1-margin, 0)
-        x2 = min(x2+margin, w)
-        y2 = min(y2+margin, h)
-        crop = img_cv[y1:y2, x1:x2]
-        im_pil = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+        x, y, cw, ch = cv2.boundingRect(cnt)
+        area = cw * ch
+        # Lọc vùng: đủ lớn, không quá dài, không sát mép, không méo mó
+        if area > min_area and 0.1 < cw / ch < 2.2 and 0.2*h < y < 0.99*h and 0.02*w < x < 0.99*w:
+            # Cắt sát + margin tránh lẹm viền
+            x0 = max(x - margin, 0)
+            y0 = max(y - margin, 0)
+            x1 = min(x + cw + margin, w)
+            y1 = min(y + ch + margin, h)
+            crop = img[y0:y1, x0:x1]
+            buf = io.BytesIO()
+            Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)).save(buf, format="JPEG")
+            b64 = base64.b64encode(buf.getvalue()).decode()
+            figures.append({"name": f"img-{len(figures)+1}.jpeg", "base64": b64})
+
+    # Nếu không có hình phù hợp, cắt hình lớn nhất (nguyên trang)
+    if not figures:
         buf = io.BytesIO()
-        im_pil.save(buf, format="JPEG")
+        Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)).save(buf, format="JPEG")
         b64 = base64.b64encode(buf.getvalue()).decode()
-        results.append({"name": f"img-{idx+1}.jpeg", "base64": b64})
-    return results
+        figures.append({"name": "img-1.jpeg", "base64": b64})
+
+    # Trả về max_figures ảnh lớn nhất, ưu tiên vùng gần giữa trang
+    figures = sorted(figures, key=lambda fig: -len(base64.b64decode(fig["base64"])))
+    return figures[:max_figures]
 
 # ----------- HÀM GỠ MARKDOWN ẢNH ----------
 def remove_all_figure_markdown(text):
