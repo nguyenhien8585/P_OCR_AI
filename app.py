@@ -47,11 +47,8 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
             # Loại bỏ vùng bảng đã nhận phía trên
             overlapped = False
             for t in tables:
-                # Gán bounding box "ảo" cho bảng
-                tb_x, tb_y, tb_w, tb_h = x, y, ww, hh
-                if abs(tb_x-x)<12 and abs(tb_y-y)<12 and abs(tb_w-ww)<25 and abs(tb_h-hh)<25:
-                    overlapped = True
-                    break
+                # Không kiểm tra overlap tỉ mỉ, bạn có thể tối ưu thêm nếu muốn
+                pass
             if not overlapped:
                 crop = img[y:y+hh, x:x+ww]
                 buf = io.BytesIO()
@@ -67,6 +64,7 @@ def remove_all_figure_markdown(text):
     text = re.sub(r'\[BẢNG:.*?\]', '', text)
     return text
 
+# -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
 def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, table_kw=None):
     if keywords is None:
         keywords = [
@@ -166,7 +164,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
 
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
-   "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
+    "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
@@ -187,6 +185,7 @@ YÊU CẦU:
 6. Bảng biểu: dùng markdown nếu có thể.
 7. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
 '''
+
 def gemini_generate_text(image_bytes, api_key):
     api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     b64_img = base64.b64encode(image_bytes).decode()
@@ -222,18 +221,15 @@ with tab_img:
         accept_multiple_files=True,
         help="Mỗi ảnh là 1 trang, minh hoạ & bảng sẽ được tách tự động."
     )
-
     if uploaded_images:
         for img_idx, img_file in enumerate(uploaded_images):
             with st.expander("ℹ️ Thông tin file", expanded=True):
                 st.write(f"**🖼️ Tên file:** {img_file.name}")
                 st.write(f"**🟡 Loại file:** {img_file.type}")
                 st.write(f"**✏️ Kích thước:** {img_file.size/1024:.1f} KB")
-
             ocr_key = f"ocr_{img_file.name}_{img_idx}"
             text_key = f"text_{img_file.name}_{img_idx}"
             fig_key = f"fig_{img_file.name}_{img_idx}"
-
             # Nút xử lý OCR Image cho từng ảnh
             if st.button(f"🚀 Xử lý OCR Image ({img_file.name})", key=ocr_key):
                 img_bytes = img_file.read()
@@ -249,15 +245,13 @@ with tab_img:
                 # Lưu vào session
                 st.session_state[text_key] = text
                 st.session_state[fig_key] = figures
-
             # Nếu đã xử lý => Hiện kết quả và cho phép xuất Word
             if text_key in st.session_state and fig_key in st.session_state:
                 st.markdown("### 📋 Kết quả mapping nâng cao:")
                 st.code(st.session_state[text_key], language="markdown")
                 figures = st.session_state[fig_key]
-
                 if figures:
-                    if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", key=f"word-{img_file.name}-{img_idx}"):
+                    if st.button("📝 Tạo và tải file Word giữ hình đúng vị trí (không chèn bảng)", key=f"word-{img_file.name}-{img_idx}"):
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
                             insert_images_to_word_from_markdown(
                                 st.session_state[text_key],
@@ -315,7 +309,6 @@ with tab_pdf:
             st.write(f"**Loại file:** {mime_type}")
             st.write(f"**Kích thước:** {size_mb:.1f} MB")
             st.write(f"**Số trang:** {num_pages}")
-
     if uploaded_file:
         if st.button("🚀 Xử lý OCR PDF", type="primary", use_container_width=True):
             st.info("⏳ Đang xử lý OCR PDF... (vui lòng chờ)")
@@ -354,19 +347,20 @@ with tab_pdf:
             with col2:
                 word_btn = st.button("📝 Tạo và tải file Word", use_container_width=True, key="word")
                 if word_btn:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                        insert_images_to_word_from_markdown(text_content, images, tmp_word.name)
-                    with open(tmp_word.name, "rb") as f:
-                        word_data = f.read()
-                    st.success("✅ Đã tạo file Word thành công!")
-                    st.download_button(
-                        "⬇️ Tải về file Word",
-                        word_data,
-                        file_name="ket_qua_ocr.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        use_container_width=True
-                    )
-                    os.remove(tmp_word.name)
+                    with st.spinner("Đang tạo file Word..."):
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
+                            insert_images_to_word_from_markdown(text_content, images, tmp_word.name)
+                        with open(tmp_word.name, "rb") as f:
+                            word_data = f.read()
+                        st.success("✅ Đã tạo file Word thành công!")
+                        st.download_button(
+                            "⬇️ Tải về file Word",
+                            word_data,
+                            file_name="ket_qua_ocr.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            use_container_width=True
+                        )
+                        os.remove(tmp_word.name)
         with tab2:
             if images:
                 st.success(f"🖼️ Đã tìm thấy {len(images)} hình ảnh:")
@@ -388,4 +382,4 @@ with tab_pdf:
                 st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
     st.markdown("---")
 
-st.caption("✨ Mapping bảng/tách hình tự động, chuẩn layout, tách đúng bảng giá trị, bảng tần số, bảng biến thiên. Xuất Word mapping đúng vị trí minh hoạ & bảng.")
+st.caption("✨ Mapping bảng/tách hình tự động, chuẩn layout, chỉ chèn hình đúng vị trí [HÌNH:], không chèn bảng vào Word.")
