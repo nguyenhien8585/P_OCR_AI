@@ -22,7 +22,7 @@ GEMINI_API_KEYS = [
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
   "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
-  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
+  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I",
 ]
 api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
@@ -65,15 +65,16 @@ def gemini_generate_text(image_bytes, api_key):
 def remove_all_figure_markdown(text):
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
-# ==== HÀM TÁCH ẢNH MINH HOẠ (GỘP NẾU NHIỀU VÙNG RỜI) ====
+# ==== HÀM TÁCH ẢNH MINH HOẠ CHỐNG CẮT VỤN ====
 def extract_figures_from_image(
     image_bytes,
-    min_area_ratio=0.008, max_area_ratio=0.7,
-    min_aspect=0.18, max_aspect=6.5,
-    merge_if_many=True
+    min_area_ratio=0.008, max_area_ratio=0.8,
+    min_aspect=0.18, max_aspect=8,
+    always_group_if_many=True
 ):
     """
-    Tách các vùng lớn, nếu có nhiều vùng (như dãy bàn), tự động gộp thành 1 bounding box chung.
+    Tách các vùng lớn, nếu có từ 2 vùng connected trở lên và tổng union >18% ảnh,
+    hoặc số box <8, gộp thành 1 bounding box (chống tách rời hình lớp học).
     """
     im = Image.open(BytesIO(image_bytes)).convert("RGB")
     arr = np.array(im)
@@ -83,9 +84,8 @@ def extract_figures_from_image(
     bw = (arr_gray < 220).astype(np.uint8)
     lbl, n = label(bw)
     objs = find_objects(lbl)
-    figures = []
     boxes = []
-    for i, slc in enumerate(objs):
+    for slc in objs:
         y1, y2 = slc[0].start, slc[0].stop
         x1, x2 = slc[1].start, slc[1].stop
         area = (y2-y1) * (x2-x1)
@@ -95,12 +95,12 @@ def extract_figures_from_image(
         aspect = width / height if height else 1
         if min_area_ratio <= ratio <= max_area_ratio and min_aspect <= aspect <= max_aspect:
             boxes.append((x1, y1, x2, y2))
-    # Nếu có nhiều box (>=2) và diện tích union nhỏ hơn 65% ảnh, gộp lại
-    if merge_if_many and len(boxes) >= 2:
+    # Nếu có nhiều box, gộp thành 1 ảnh duy nhất nếu union lớn hơn 18% tổng diện tích hoặc số box <= 8
+    if always_group_if_many and len(boxes) >= 2:
         xs1, ys1, xs2, ys2 = zip(*boxes)
         x1, y1, x2, y2 = min(xs1), min(ys1), max(xs2), max(ys2)
         union_area = (x2-x1)*(y2-y1)
-        if union_area/total_area < 0.65:
+        if union_area/total_area > 0.18 and len(boxes) <= 8:
             fig_crop = im.crop((x1, y1, x2, y2))
             buf = BytesIO()
             fig_crop.save(buf, format="JPEG")
@@ -111,6 +111,7 @@ def extract_figures_from_image(
                 "rect": (x1, y1, x2, y2)
             }]
     # Nếu chỉ 1 vùng hoặc không gộp được, trả về từng vùng riêng
+    figures = []
     for i, (x1, y1, x2, y2) in enumerate(boxes):
         fig_crop = im.crop((x1, y1, x2, y2))
         buf = BytesIO()
