@@ -66,61 +66,47 @@ def remove_all_figure_markdown(text):
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
 # ==== HÀM TÁCH ẢNH MINH HOẠ CHỐNG CẮT VỤN ====
-def extract_figures_from_image(
-    image_bytes,
-    min_content_area_ratio=0.13,  # Ảnh lớn hơn 13% diện tích là đủ (để loại lề)
-):
+def extract_figures_from_image(img_bytes, min_area=3000, blur_radius=2, max_figures=4):
     """
-    LUÔN tách ra 1 bounding box lớn nhất chứa phần "minh hoạ" màu khác nền.
-    Không bao giờ chia thành 2–3 ảnh dọc.
+    Tách các vùng hình minh hoạ thực sự, loại đường viền/mép giấy/cạnh nhỏ.
+    - Chỉ lấy vùng lớn, tỉ lệ khung hình hợp lý, không quá sát mép
+    - max_figures: số hình tối đa trả về (mặc định 2-4)
     """
-    import numpy as np
-    from PIL import Image
-    import io, base64
-
-    im = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    arr = np.array(im)
-    h, w = arr.shape[:2]
-    total_area = h * w
-
-    # Tìm màu nền (background): pixel chiếm nhiều nhất
-    arr_flat = arr.reshape(-1, 3)
-    bg_color = tuple(np.round(np.median(arr_flat, axis=0)).astype(int))
-    diff = np.abs(arr - bg_color).sum(axis=2)
-    # Ngưỡng: càng thấp càng "ôm sát" vùng bàn ghế, tăng nếu nền hơi xám vàng
-    mask = diff > 30
-
-    # Tìm bounding box lớn nhất chứa nhiều pixel khác nền nhất
-    coords = np.column_stack(np.where(mask))
-    if coords.size == 0:
-        # Toàn bộ là nền, trả về cả trang
+    img = Image.open(io.BytesIO(img_bytes)).convert("L")
+    arr = np.array(img)
+    h, w = arr.shape
+    img_blur = img.filter(ImageFilter.GaussianBlur(blur_radius))
+    arr_blur = np.array(img_blur)
+    edge = np.abs(arr.astype(np.int16) - arr_blur.astype(np.int16))
+    edge = (edge > 12).astype(np.uint8)
+    labeled, num = label(edge)
+    objects = find_objects(labeled)
+    color_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    results = []
+    candidates = []
+    for obj in objects:
+        if obj is None: continue
+        y0, y1 = obj[0].start, obj[0].stop
+        x0, x1 = obj[1].start, obj[1].stop
+        area = (x1-x0)*(y1-y0)
+        # Lọc vùng lớn, không quá mỏng, tỉ lệ ảnh ~ hình chữ nhật
+        aspect = (x1-x0)/(y1-y0+1e-5)
+        area_ratio = area/(h*w)
+        # Loại vùng nhỏ hoặc cực dài/mỏng
+        if area > min_area and 0.25 < aspect < 4.0 and 0.015 < area_ratio < 0.5:
+            # Không lấy vùng sát mép giấy (chừa 2% mép)
+            if x0 < 0.02*w or x1 > 0.98*w or y0 < 0.02*h or y1 > 0.98*h:
+                continue
+            candidates.append((area, x0, y0, x1, y1))
+    # Chỉ lấy các vùng lớn nhất
+    candidates = sorted(candidates, key=lambda x: -x[0])[:max_figures]
+    for idx, (area, x0, y0, x1, y1) in enumerate(candidates):
+        crop = color_img.crop((x0, y0, x1, y1))
         buf = io.BytesIO()
-        im.save(buf, format="JPEG")
-        return [{
-            "base64": base64.b64encode(buf.getvalue()).decode(),
-            "name": "img-0.jpeg",
-            "rect": (0, 0, w, h)
-        }]
-    y1, x1 = coords.min(axis=0)
-    y2, x2 = coords.max(axis=0) + 1
-    area = (y2-y1)*(x2-x1)
-    if area/total_area < min_content_area_ratio:
-        # Không có hình minh hoạ lớn nào, trả về cả trang
-        buf = io.BytesIO()
-        im.save(buf, format="JPEG")
-        return [{
-            "base64": base64.b64encode(buf.getvalue()).decode(),
-            "name": "img-0.jpeg",
-            "rect": (0, 0, w, h)
-        }]
-    fig_crop = im.crop((x1, y1, x2, y2))
-    buf = io.BytesIO()
-    fig_crop.save(buf, format="JPEG")
-    return [{
-        "base64": base64.b64encode(buf.getvalue()).decode(),
-        "name": "img-0.jpeg",
-        "rect": (x1, y1, x2, y2)
-    }]
+        crop.save(buf, format="JPEG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        results.append({"name": f"img-{idx+1}.jpeg", "base64": b64})
+    return results
 
 # === Hàm mapping chèn đúng vị trí (ưu tiên dòng có từ khoá hình) ===
 def insert_figures_to_markdown(text, figures):
