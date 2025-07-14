@@ -89,61 +89,62 @@ def insert_figures_to_markdown(text, figures):
     return '\n'.join(new_lines)
 
 # ==== HÀM TÁCH HÌNH MINH HOẠ CHUẨN (KHÔNG DÍNH/LẶP/THIẾU) ====
-def extract_figures_from_image(img_bytes, min_area_ratio=0.025, pad=6, min_height=60):
+def extract_figures_from_image(img_bytes, min_area=7000, max_figures=4, border_margin=7):
     """
-    Tách từng hình minh hoạ, không dính, không sót, cắt sát biên đen.
+    Cắt sát các minh hoạ lớn trong ảnh, không bị thiếu, không dính mép giấy, không dư bàn ghế, không dính chữ!
+    - Trả về tối đa max_figures ảnh minh hoạ (mặc định 4)
+    - Nếu không tìm thấy gì, trả về ảnh gốc
     """
-    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    arr = np.array(img)
-    h, w = arr.shape[:2]
-    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
-    blur = cv2.GaussianBlur(gray, (3,3), 0)
-    edges = cv2.Canny(blur, 60, 170)
-    kernel = np.ones((7, 7), np.uint8)
-    closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
-    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    bboxes = []
-    for cnt in contours:
+    # Đọc ảnh
+    img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    img = np.array(img_pil)
+    img_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    h, w = img_gray.shape
+
+    # Làm mờ nhẹ để bỏ noise, tăng biên
+    blur = cv2.GaussianBlur(img_gray, (5, 5), 0)
+    # Tìm biên mạnh bằng Canny
+    edges = cv2.Canny(blur, threshold1=60, threshold2=150)
+    # Tìm các contour khép kín
+    cnts, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    figures = []
+    boxes = []
+    for cnt in cnts:
         x, y, ww, hh = cv2.boundingRect(cnt)
-        area = ww*hh
-        if area > min_area_ratio*h*w and hh > min_height:
-            bboxes.append([x,y,x+ww,y+hh])
-    kept = []
-    for box in sorted(bboxes, key=lambda b: (b[1],b[0])):
-        ok = True
-        for k in kept:
-            xA = max(box[0], k[0])
-            yA = max(box[1], k[1])
-            xB = min(box[2], k[2])
-            yB = min(box[3], k[3])
-            interArea = max(0, xB - xA) * max(0, yB - yA)
-            boxArea = (box[2] - box[0]) * (box[3] - box[1])
-            kArea = (k[2] - k[0]) * (k[3] - k[1])
-            iou = interArea / float(boxArea + kArea - interArea + 1e-5)
-            if iou > 0.18:
-                ok = False
-                break
-        if ok:
-            kept.append(box)
-    if not kept:
-        crop = img
+        area = ww * hh
+        aspect = ww / (hh + 1e-5)
+        area_ratio = area / (h * w)
+        # Lọc các box lớn, tỉ lệ ảnh hợp lý, không sát mép
+        if area > min_area and 0.32 < aspect < 3.5 and 0.03 < area_ratio < 0.8:
+            if (x < border_margin or y < border_margin or
+                x + ww > w - border_margin or y + hh > h - border_margin):
+                continue
+            boxes.append((x, y, ww, hh))
+    # Lọc trùng/lồng box, lấy vùng lớn nhất không bị lồng vào nhau
+    def is_inside(b1, b2):
+        x1, y1, w1, h1 = b1
+        x2, y2, w2, h2 = b2
+        return (x1 > x2 and y1 > y2 and x1 + w1 < x2 + w2 and y1 + h1 < y2 + h2)
+    final_boxes = []
+    for b in sorted(boxes, key=lambda x: -x[2]*x[3]):
+        if not any(is_inside(b, bb) for bb in final_boxes):
+            final_boxes.append(b)
+        if len(final_boxes) >= max_figures:
+            break
+    if not final_boxes:
+        # fallback: trả về ảnh gốc
         buf = io.BytesIO()
-        crop.save(buf, format="JPEG")
+        img_pil.save(buf, format="JPEG")
         b64 = base64.b64encode(buf.getvalue()).decode()
         return [{"name": "img-1.jpeg", "base64": b64}]
-    kept = sorted(kept, key=lambda b: (b[1],b[0]))
-    results = []
-    for idx, (x1, y1, x2, y2) in enumerate(kept):
-        x1 = max(x1 - pad, 0)
-        y1 = max(y1 - pad, 0)
-        x2 = min(x2 + pad, w)
-        y2 = min(y2 + pad, h)
-        crop = img.crop((x1, y1, x2, y2))
+    # Cắt sát viền, lưu từng ảnh
+    for idx, (x, y, ww, hh) in enumerate(sorted(final_boxes, key=lambda b: (b[1], b[0]))):
+        crop = img[y:y+hh, x:x+ww]
         buf = io.BytesIO()
-        crop.save(buf, format="JPEG")
+        Image.fromarray(crop).save(buf, format="JPEG")
         b64 = base64.b64encode(buf.getvalue()).decode()
-        results.append({"name": f"img-{idx+1}.jpeg", "base64": b64})
-    return results
+        figures.append({"name": f"img-{idx+1}.jpeg", "base64": b64})
+    return figures
 
 # ====== GIAO DIỆN STREAMLIT ======
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
