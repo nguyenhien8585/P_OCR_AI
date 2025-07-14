@@ -90,55 +90,82 @@ def insert_figures_to_markdown(text, figures):
     return '\n'.join(new_lines)
 
 # ===== HÀM TÁCH HÌNH MINH HOẠ: KHÔNG BAO GIỜ CẮT NHỎ, KHÔNG DÍNH CHỮ =====
-def extract_figures_from_image(img_bytes, min_area_ratio=0.06, border=15, edge_thr=14):
+def extract_figures_from_image(img_bytes, min_area_ratio=0.04, border=8, edge_thr=13, merge_gap=30):
     """
-    Tách đúng duy nhất 1 hình minh hoạ lớn nhất (như lớp học, bảng biến thiên, hình học...)
-    KHÔNG bao giờ tách ra 2-3 dải nhỏ, không dính lề, không dính chữ!
+    Tách nhiều hình minh hoạ: không cắt nhỏ, không dính lề, không thiếu cạnh.
+    Nếu hình có nhiều box liền kề thì merge lại thành một box lớn.
     """
     im = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     arr = np.array(im)
     h, w = arr.shape[:2]
     gray = np.mean(arr, axis=2).astype(np.uint8)
 
-    # 1. Lọc biên, chỉ giữ vùng có biến động lớn (biên hình vẽ)
     gray_blur = np.array(Image.fromarray(gray).filter(ImageFilter.GaussianBlur(2)))
     edge = np.abs(gray.astype(np.int16) - gray_blur.astype(np.int16))
     edge_mask = (edge > edge_thr)
+    edge_mask = binary_dilation(edge_mask, iterations=5)
 
-    # 2. Dilation để liền khối
-    edge_mask = binary_dilation(edge_mask, iterations=6)
-
-    # 3. Lấy box lớn nhất trong tất cả các vùng (không lấy dải nhỏ)
     lbl, n = label(edge_mask)
     objs = find_objects(lbl)
-    best_area = 0
-    best_box = None
+    bboxes = []
     for slc in objs:
         if slc is None: continue
         y1, y2 = slc[0].start, slc[0].stop
         x1, x2 = slc[1].start, slc[1].stop
         area = (x2-x1)*(y2-y1)
         aspect = (x2-x1)/(y2-y1+1e-5)
-        # Chỉ lấy box lớn hình chữ nhật, không quá mỏng, không dính biên
-        if (area > min_area_ratio*h*w and 0.6 < aspect < 1.8 and
+        if (area > min_area_ratio*h*w and 0.35 < aspect < 2.5 and
             x1 > border and x2 < w-border and y1 > border and y2 < h-border):
-            if area > best_area:
-                best_area = area
-                best_box = (x1, y1, x2, y2)
-    if best_box is not None:
-        # Cắt sát vào trong một chút cho sạch mép
-        x1, y1, x2, y2 = best_box
-        x1 = max(x1+4, 0); y1 = max(y1+4, 0)
-        x2 = min(x2-4, w); y2 = min(y2-4, h)
-        crop = im.crop((x1, y1, x2, y2))
-    else:
-        # Không tìm được minh hoạ thì trả về nguyên ảnh
-        crop = im
+            bboxes.append([x1,y1,x2,y2])
 
-    buf = io.BytesIO()
-    crop.save(buf, format="JPEG")
-    b64 = base64.b64encode(buf.getvalue()).decode()
-    return [{"name": "img-1.jpeg", "base64": b64}]
+    # === Merge các box nằm gần nhau thành 1 box lớn nếu bị chia nhỏ ===
+    merged = []
+    used = [False]*len(bboxes)
+    for i in range(len(bboxes)):
+        if used[i]: continue
+        x1, y1, x2, y2 = bboxes[i]
+        group = [bboxes[i]]
+        used[i] = True
+        for j in range(i+1, len(bboxes)):
+            if used[j]: continue
+            xx1, yy1, xx2, yy2 = bboxes[j]
+            # Nếu overlap hoặc sát nhau (< merge_gap pixels)
+            if (max(x1,xx1) - min(x2,xx2) < merge_gap and
+                max(y1,yy1) - min(y2,yy2) < merge_gap):
+                group.append(bboxes[j])
+                used[j] = True
+        # Gộp thành box lớn nhất
+        gx1 = min(g[0] for g in group)
+        gy1 = min(g[1] for g in group)
+        gx2 = max(g[2] for g in group)
+        gy2 = max(g[3] for g in group)
+        merged.append((gx1,gy1,gx2,gy2))
+
+    # Nếu không có vùng nào thỏa mãn, trả về nguyên ảnh
+    if not merged:
+        crop = im
+        buf = io.BytesIO()
+        crop.save(buf, format="JPEG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        return [{"name": "img-1.jpeg", "base64": b64}]
+
+    # Trả về tất cả các hình đã merge, SẮP XẾP TỪ TRÊN XUỐNG
+    merged = sorted(merged, key=lambda b: b[1])
+    results = []
+    for idx, (x1, y1, x2, y2) in enumerate(merged):
+        # Mở rộng box để tránh cắt sát hình/chữ (tối đa ra ngoài viền)
+        pad = 6
+        x1 = max(x1 - pad, 0)
+        y1 = max(y1 - pad, 0)
+        x2 = min(x2 + pad, w)
+        y2 = min(y2 + pad, h)
+        crop = im.crop((x1, y1, x2, y2))
+        buf = io.BytesIO()
+        crop.save(buf, format="JPEG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        results.append({"name": f"img-{idx+1}.jpeg", "base64": b64})
+    return results
+
 
 # =============== UI STREAMLIT ===============
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
