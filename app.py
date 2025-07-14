@@ -4,7 +4,6 @@ from PIL import Image
 import numpy as np
 import cv2
 import requests
-import re
 from PyPDF2 import PdfReader
 
 from config import API_URL, API_KEY
