@@ -62,7 +62,6 @@ def remove_all_figure_markdown(text):
     text = re.sub(r'\[BẢNG:.*?\]', '', text)
     return text
 
-# --------- Mapping nâng cao (không chen giữa câu, đúng đoạn, bảng tách riêng) -----
 def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, table_kw=None):
     if keywords is None:
         keywords = [
@@ -170,7 +169,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
 
 # ------------- Key Gemini -------------
 GEMINI_API_KEYS = [
-  "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
+    "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
@@ -220,7 +219,7 @@ def gemini_generate_text(image_bytes, api_key):
     text = res["candidates"][0]["content"]["parts"][0]["text"]
     return text
 
-# ========== Giao diện ==========
+# =================== Giao diện ===================
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
 st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & bảng ✨")
 tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Markdown + Minh hoạ"])
