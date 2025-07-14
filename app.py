@@ -11,8 +11,7 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
-# --------- Hàm tách minh hoạ + bảng biến thiên ----------
-
+# ---- Hàm tách ảnh minh hoạ + bảng (bảng biến thiên, bảng giá trị) ---
 def extract_figures_and_tables(img_bytes, min_area_ratio=0.04, min_area_abs=1500, min_w=70, min_h=60, max_figures=8):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
@@ -42,11 +41,6 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.04, min_area_abs=1500
                 "is_table": is_table
             })
     candidates = sorted(candidates, key=lambda box: (box["y0"], box["x0"]))
-    if not candidates:
-        buf = io.BytesIO()
-        img_pil.save(buf, format="JPEG")
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        return []
     results = []
     for idx, box in enumerate(candidates[:max_figures]):
         crop = img[box["y0"]:box["y1"], box["x0"]:box["x1"]]
@@ -68,7 +62,7 @@ def remove_all_figure_markdown(text):
     text = re.sub(r'\[BẢNG:.*?\]', '', text)
     return text
 
-# ----------- Mapping nâng cao (giữ bảng riêng biệt) -----------
+# --------- Mapping nâng cao (không chen giữa câu, đúng đoạn, bảng tách riêng) -----
 def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, table_kw=None):
     if keywords is None:
         keywords = [
@@ -174,9 +168,9 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
         fig_idx += 1
     return '\n'.join([l for l in new_lines if l.strip()])
 
-# ---------- Key Gemini (bạn điền key nếu dùng API Gemini) ----------
+# ------------- Key Gemini -------------
 GEMINI_API_KEYS = [
-    "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
+  "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
@@ -228,16 +222,16 @@ def gemini_generate_text(image_bytes, api_key):
 
 # ========== Giao diện ==========
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
-st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức, bảng biến thiên & minh hoạ ✨")
+st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & bảng ✨")
 tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Markdown + Minh hoạ"])
 
-# ================ TAB ẢNH ===================
+# =================== TAB ẢNH ===================
 with tab_img:
     uploaded_images = st.file_uploader(
         "Chọn nhiều ảnh (mỗi ảnh là một trang):",
         type=["png", "jpg", "jpeg", "webp"],
         accept_multiple_files=True,
-        help="Mỗi ảnh là 1 trang, minh hoạ sẽ được tách tự động, bảng biến thiên cắt riêng."
+        help="Mỗi ảnh là 1 trang, minh hoạ & bảng sẽ được tách tự động."
     )
     if uploaded_images:
         for img_file in uploaded_images:
@@ -295,6 +289,100 @@ with tab_img:
     else:
         st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
 
-# ====== TAB PDF giữ nguyên như cũ, hoặc bạn copy từ phiên bản trước đó ======
+# =================== TAB PDF ===================
+with tab_pdf:
+    st.markdown("#### 📝 OCR PDF Toán, giữ công thức, ảnh minh hoạ")
+    uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"], label_visibility="collapsed")
+    num_pages = None
+    if uploaded_file:
+        pdf_bytes = uploaded_file.read()
+        file_name = uploaded_file.name
+        mime_type = "application/pdf"
+        size_mb = len(pdf_bytes) / (1024 * 1024)
+        try:
+            uploaded_file.seek(0)
+            reader = PdfReader(uploaded_file)
+            num_pages = len(reader.pages)
+            uploaded_file.seek(0)
+        except:
+            num_pages = "?"
+        with st.expander("ℹ️ Thông tin file", expanded=True):
+            st.write(f"**Tên file:** {file_name}")
+            st.write(f"**Loại file:** {mime_type}")
+            st.write(f"**Kích thước:** {size_mb:.1f} MB")
+            st.write(f"**Số trang:** {num_pages}")
 
-st.caption("✨ Tách bảng biến thiên, bảng giá trị, mapping nâng cao, giữ đúng vị trí, xuất Word đúng mapping.")
+    if uploaded_file:
+        if st.button("🚀 Xử lý OCR PDF", type="primary", use_container_width=True):
+            st.info("⏳ Đang xử lý OCR PDF... (vui lòng chờ)")
+            with st.spinner("Đang nhận diện văn bản và trích xuất hình ảnh..."):
+                client = EnhancedSmartOCRClient(API_URL, API_KEY)
+                uploaded_file.seek(0)
+                pdf_bytes = uploaded_file.read()
+                result = client.convert(pdf_bytes, file_name, mime_type)
+                images = extract_images_from_pdf(pdf_bytes)
+            if not result.get("success"):
+                st.error("❌ Xử lý OCR PDF thất bại: " + str(result.get("error")))
+                st.stop()
+            st.session_state["ocr_text_raw"] = result["data"].get("text_content", "")
+            st.session_state["ocr_images"] = images
+            st.session_state["ocr_done"] = True
+            st.success("✅ Đã nhận diện PDF thành công!")
+    if st.session_state.get("ocr_done"):
+        def dollar_to_mathptn(s):
+            return re.sub(r'\$(.+?)\$', r'${\1}$', s)
+        raw_text = st.session_state.get("ocr_text_raw", "")
+        text_content = dollar_to_mathptn(raw_text)
+        images = st.session_state.get("ocr_images", [])
+        tab1, tab2 = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
+        with tab1:
+            st.markdown("#### 📋 Kết quả OCR PDF:")
+            st.text_area("Kết quả OCR PDF:", text_content, height=350, label_visibility="collapsed")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    "📄 Tải văn bản (TXT)",
+                    text_content,
+                    file_name="ket_qua_ocr.txt",
+                    mime="text/plain",
+                    use_container_width=True,
+                )
+            with col2:
+                word_btn = st.button("📝 Tạo và tải file Word", use_container_width=True, key="word")
+                if word_btn:
+                    with st.spinner("Đang tạo file Word..."):
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
+                            insert_images_to_word_from_markdown(text_content, images, tmp_word.name)
+                        with open(tmp_word.name, "rb") as f:
+                            word_data = f.read()
+                        st.success("✅ Đã tạo file Word thành công!")
+                        st.download_button(
+                            "⬇️ Tải về file Word",
+                            word_data,
+                            file_name="ket_qua_ocr.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            use_container_width=True
+                        )
+                        os.remove(tmp_word.name)
+        with tab2:
+            if images:
+                st.success(f"🖼️ Đã tìm thấy {len(images)} hình ảnh:")
+                for idx, img in enumerate(images):
+                    try:
+                        img_bytes = base64.b64decode(img["base64"])
+                        st.image(img_bytes, caption=img["name"], use_container_width=True)
+                        st.download_button(
+                            f"Tải {img['name']}",
+                            img_bytes,
+                            file_name=img["name"],
+                            mime="image/jpeg",
+                            use_container_width=True,
+                            key=f"pdf-download-{img['name']}-{idx}"
+                        )
+                    except Exception as e:
+                        st.error(f"Không đọc được ảnh {img['name']}: {e}")
+            else:
+                st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
+    st.markdown("---")
+
+st.caption("✨ Mapping thông minh, tách bảng & ảnh tự động, chuẩn layout, xuất Word đúng minh hoạ/bảng.")
