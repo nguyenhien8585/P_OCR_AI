@@ -17,7 +17,7 @@ from PyPDF2 import PdfReader
 
 # ====== Key Gemini ======
 GEMINI_API_KEYS = [
-   "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
+  "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
