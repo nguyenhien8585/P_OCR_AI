@@ -11,7 +11,7 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
-# --- TÁCH ẢNH MINH HOẠ (OpenCV) ---
+# =========== TÁCH ẢNH MINH HỌA =============
 def extract_figures_from_image(img_bytes, min_area_ratio=0.05, min_area_abs=1800, min_w=100, min_h=90, max_figures=4):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
@@ -50,51 +50,43 @@ def extract_figures_from_image(img_bytes, min_area_ratio=0.05, min_area_abs=1800
         results.append({"name": f"img-{idx+1}.jpeg", "base64": b64})
     return results
 
-# --- NỐI DÒNG LIỀN MẠCH (không xuống dòng giữa câu) ---
-def join_lines(text):
-    lines = text.split('\n')
-    out = []
-    cur = ""
-    for l in lines:
-        l = l.strip()
-        if not l:
-            if cur: out.append(cur); cur = ""
-            continue
-        if cur and not re.search(r'[.!?…]$', cur):
-            cur += " " + l
-        else:
-            if cur: out.append(cur)
-            cur = l
-    if cur: out.append(cur)
-    return '\n'.join(out)
-
-# --- XÓA TOÀN BỘ MARKDOWN ẢNH CŨ ---
 def remove_all_figure_markdown(text):
     if not isinstance(text, str): return ""
     return re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)\s*', '', text)
 
-# --- CHÈN ẢNH SAU DÒNG "Câu N." (KHÔNG CHÈN GIỮA ĐOẠN VĂN) ---
-def insert_figures_by_cau_number_exact(text, figures):
-    lines = text.split('\n')
-    result = []
-    fig_idx = 0
+# ====== HÀM mapping ảnh: chỉ chèn hình SAU MỖI CÂU HỎI ======
+def insert_figures_by_cau_only_after_question(text, figures):
+    """
+    Chèn ảnh sau khi kết thúc đoạn của mỗi 'Câu N.'
+    (không chen vào giữa đoạn, chỉ sau hết đoạn mỗi câu hỏi),
+    nếu còn ảnh dư sẽ chèn xuống cuối văn bản.
+    """
     cau_pattern = re.compile(r'^Câu\s*\d+\.')
-    for i, line in enumerate(lines):
-        result.append(line)
-        if cau_pattern.match(line.strip()) and fig_idx < len(figures):
-            result.append(f'![{figures[fig_idx]["name"]}]({figures[fig_idx]["name"]})')
-            fig_idx += 1
-    # Nếu còn hình dư, chèn cuối!
-    if fig_idx < len(figures):
-        result.append("")  # dòng trống
-        for j in range(fig_idx, len(figures)):
-            result.append(f'![{figures[j]["name"]}]({figures[j]["name"]})')
-    return '\n'.join(result)
+    lines = text.split('\n')
+    output = []
+    fig_idx = 0
+    buffer = []
+    for i, line in enumerate(lines + ['']):
+        if cau_pattern.match(line.strip()) or i == len(lines):
+            if buffer:
+                output.extend(buffer)
+                buffer = []
+                if fig_idx < len(figures):
+                    output.append(f'![{figures[fig_idx]["name"]}]({figures[fig_idx]["name"]})')
+                    fig_idx += 1
+            if i < len(lines):
+                buffer = [line]
+        else:
+            buffer.append(line)
+    while fig_idx < len(figures):
+        output.append(f'![{figures[fig_idx]["name"]}]({figures[fig_idx]["name"]})')
+        fig_idx += 1
+    output = [l for l in output if l.strip() != '']
+    return '\n'.join(output)
 
-
-# --- GEMINI ---
+# =========== PROMPT GEMINI ==========
 GEMINI_API_KEYS = [
-    "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
+  "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
   "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
   "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
   "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
@@ -109,12 +101,13 @@ GEMINI_PROMPT = '''
 YÊU CẦU:
 1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh.
 2. Nếu phát hiện nhiều hình minh hoạ (hình vẽ, đồ thị, bảng, ...), hãy đánh dấu đúng vị trí từng hình bằng cú pháp markdown: ![img-x.jpeg](img-x.jpeg) với x là số thứ tự hình đã tách từ trên xuống dưới trong ảnh này (bắt đầu từ 1).
-3. Giữ nguyên cấu trúc đoạn văn và xuống dòng.
-4. Công thức toán học: tất cả ở dạng ${...}$ (inline, hệ, ký hiệu ... như hướng dẫn chi tiết).
-5. Bảng biểu: dùng markdown nếu có thể.
-6. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
-Tuyệt đối không tự ý xuống dòng, không bịa nội dung ra.
+3. Với mỗi hình minh hoạ, hãy chèn markdown ngay sau dòng mô tả có từ “xem hình dưới”, “hình dưới đây”, “bảng biến thiên”, “hình vẽ”, “biểu đồ”, hoặc ngay sau dòng câu hỏi liên quan tới hình/bảng/biểu đồ đó.
+4. Giữ nguyên cấu trúc đoạn văn và xuống dòng.
+5. Công thức toán học: tất cả ở dạng ${...}$ (inline, hệ, ký hiệu ... như hướng dẫn chi tiết).
+6. Bảng biểu: dùng markdown nếu có thể.
+7. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
 '''
+
 def gemini_generate_text(image_bytes, api_key):
     api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     b64_img = base64.b64encode(image_bytes).decode()
@@ -137,12 +130,12 @@ def gemini_generate_text(image_bytes, api_key):
     text = res["candidates"][0]["content"]["parts"][0]["text"]
     return text
 
-# --- UI ---
+# ============== APP STREAMLIT ==================
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
 st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & minh hoạ ✨")
 tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Markdown + Minh hoạ"])
 
-# ========== TAB PDF ==========
+# =================== TAB PDF ===================
 with tab_pdf:
     st.markdown("#### 📝 OCR PDF Toán, giữ công thức, ảnh minh hoạ")
     uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"], label_visibility="collapsed")
@@ -238,9 +231,9 @@ with tab_pdf:
                 st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
     st.markdown("---")
 
-# =========== TAB ẢNH ===========
+# =================== TAB ẢNH ===================
 with tab_img:
-    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, mapping ngay sau 'Câu N.', cho phép tải/copy) → Markdown/Text/Word")
+    st.markdown("#### 🖼️ Ảnh (tách minh hoạ tự động, mapping chuẩn, cho phép tải/copy) → Markdown/Text/Word")
     uploaded_images = st.file_uploader(
         "Chọn nhiều ảnh (mỗi ảnh là một trang):",
         type=["png", "jpg", "jpeg", "webp"],
@@ -262,16 +255,17 @@ with tab_img:
                     text = gemini_generate_text(img_bytes, api_key)
                 except Exception as e:
                     text = f"[Lỗi Gemini: {e}]"
-            text = join_lines(text)
             text = remove_all_figure_markdown(text)
-            text = insert_figures_by_cau_number_exact(text, figures)
+            # ==== mapping đúng: chỉ chèn ảnh SAU MỖI CÂU ====
+            text = insert_figures_by_cau_only_after_question(text, figures)
             latex_results.append((img_file.name, text, figures))
 
         with tab1:
             st.markdown("### 📋 Kết quả từng trang (có markdown minh hoạ):")
             for idx, (img_name, latex, figures) in enumerate(latex_results):
-                st.markdown(f"#### Trang {idx+1}: {img_name}")
+                st.markdown(f"### Trang {idx+1}: {img_name}")
                 st.code(latex, language="markdown")
+            # Nút xuất Word đúng mapping
             if st.button("📝 Tạo và tải file Word giữ minh hoạ đúng vị trí", use_container_width=True):
                 with st.spinner("Đang tạo file Word..."):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
@@ -310,4 +304,4 @@ with tab_img:
         with tab2:
             st.info("Chưa có ảnh nào để xem.")
 
-st.caption("✨ Markdown/Word mapping minh hoạ ngay sau dòng 'Câu N.', không chen giữa nội dung! Không xuống dòng dư, chuẩn xuất Word.")
+st.caption("✨ Văn bản chuẩn Markdown, mapping ảnh luôn sau mỗi CÂU, không dư/lặp, copy/tải về, xuất Word chuẩn!")
