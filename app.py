@@ -326,10 +326,8 @@ YÊU CẦU:
 4. Công thức toán học phải để ở dạng LaTeX inline: `${...}$` (bao gồm cả biểu thức, hệ phương trình, ký hiệu, ...)
 5. Nếu phát hiện bảng số liệu, hãy chuyển thành bảng Markdown nếu có thể.
 6. Định dạng từng loại câu hỏi như sau:
-
 Định dạng câu hỏi
-
-1. **Trắc nghiệm 4 phương án**
+1. Trắc nghiệm 4 phương án
 - Bắt đầu bằng "Câu X." (X là số thứ tự), sau đó là nội dung câu hỏi, rồi lần lượt các lựa chọn:
 Câu X. [Nội dung câu hỏi]
 A. [Đáp án A]
@@ -345,7 +343,7 @@ B. Sai
 - Bắt đầu bằng "Câu X.", nội dung câu hỏi.
 Câu X. [Nội dung câu hỏi]
 Trả lời: ________
-4. **Tự luận**
+4. Tự luận
 - Bắt đầu bằng "Câu X.", nội dung câu hỏi.
 Câu X. [Nội dung câu hỏi]
 Bài làm:
@@ -369,6 +367,7 @@ C. Đồ thị là elip.
 D. Đồ thị là hypebol.
 Câu 4. Hãy giải phương trình $x^2 - 4 = 0$.
 Hãy xuất ra văn bản theo đúng định dạng trên!
+Tuyệt đối không bịa hay tự ý thay đổi nội dung.
 '''
 def gemini_generate_text(image_bytes, api_key):
     api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
