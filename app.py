@@ -170,30 +170,13 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
         # Kiểm tra xem buffer hiện tại có kết thúc một câu hoàn chỉnh không
         buffer_ends_sentence = re.search(r'[.!?…:]\s*$', current_buffer.strip())
 
-        # Điều kiện để flush buffer và bắt đầu đoạn mới
-        if current_buffer and (is_new_question_start or not line_strip or buffer_ends_sentence):
-            final_processed_lines.append(current_buffer.strip())
-            current_buffer = ""
-        
-        # Thêm dòng hiện tại vào buffer
-        if line_strip:
-            if not current_buffer or is_new_question_start or buffer_ends_sentence:
-                current_buffer = line_strip
-            else:
-                current_buffer += " " + line_strip
-        elif not line_strip: # Nếu là dòng trống
-            if current_buffer:
-                final_processed_lines.append(current_buffer.strip())
-                current_buffer = ""
-            final_processed_lines.append("") # Giữ dòng trống
-
-        # Logic chèn hình ảnh tại vị trí ngữ cảnh
+        # Logic chèn hình ảnh tại vị trí ngữ cảnh (trước khi flush buffer)
+        # Tìm hình ảnh phù hợp nhất cho dòng hiện tại
         best_fig_for_line = None
         min_dist_to_line = float('inf')
         
         current_line_y_center = idx * (img_h / len(lines))
         
-        # Tìm hình ảnh phù hợp nhất cho dòng hiện tại
         for fig_idx_in_avail, fig in enumerate(available_figures):
             if fig is None or fig["name"] in inserted_figures_names: continue 
             
@@ -218,32 +201,44 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
                 min_dist_to_line = dist
                 best_fig_for_line = fig
         
-        # Nếu tìm thấy hình ảnh phù hợp cho dòng này
-        if best_fig_for_line:
-            # Nếu là placeholder, thay thế trực tiếp trong buffer
-            if ("[HÌNH_PLACEHOLDER]" in current_buffer and not best_fig_for_line["is_table"]) or \
-               ("[BẢNG_PLACEHOLDER]" in current_buffer and best_fig_for_line["is_table"]):
-                if best_fig_for_line["is_table"]:
-                    current_buffer = current_buffer.replace("[BẢNG_PLACEHOLDER]", f"[BẢNG: {best_fig_for_line['name']}]")
-                else:
-                    current_buffer = current_buffer.replace("[HÌNH_PLACEHOLDER]", f"[HÌNH: {best_fig_for_line['name']}]")
-            else:
-                # Flush buffer và chèn hình ảnh vào dòng mới
-                if current_buffer:
-                    final_processed_lines.append(current_buffer.strip())
-                    current_buffer = ""
-                
+        # Điều kiện để flush buffer và bắt đầu đoạn mới
+        # Flush khi:
+        # 1. Dòng hiện tại là đầu câu hỏi mới
+        # 2. Dòng hiện tại là dòng trống
+        # 3. Buffer hiện tại kết thúc bằng dấu câu
+        # 4. CÓ HÌNH ẢNH CẦN CHÈN VÀO DÒNG NÀY (để chèn hình ảnh vào dòng mới sau khi flush buffer)
+        if current_buffer and (is_new_question_start or not line_strip or buffer_ends_sentence or best_fig_for_line):
+            final_processed_lines.append(current_buffer.strip())
+            current_buffer = ""
+            
+            # Chèn hình ảnh ngay sau khi flush buffer (nếu có)
+            if best_fig_for_line:
                 if best_fig_for_line["is_table"]:
                     final_processed_lines.append(f"[BẢNG: {best_fig_for_line['name']}]")
                 else:
                     final_processed_lines.append(f"[HÌNH: {best_fig_for_line['name']}]")
-            
-            inserted_figures_names.add(best_fig_for_line["name"])
-            # Đánh dấu hình ảnh là đã sử dụng trong available_figures
-            for i, fig_item in enumerate(available_figures):
-                if fig_item is not None and fig_item["name"] == best_fig_for_line["name"]:
-                    available_figures[i] = None
-                    break
+                
+                inserted_figures_names.add(best_fig_for_line["name"])
+                # Đánh dấu hình ảnh là đã sử dụng trong available_figures
+                for i, fig_item in enumerate(available_figures):
+                    if fig_item is not None and fig_item["name"] == best_fig_for_line["name"]:
+                        available_figures[i] = None
+                        break
+
+        # Thêm dòng hiện tại vào buffer
+        if line_strip:
+            # Nếu buffer đang trống HOẶC dòng hiện tại là đầu câu hỏi mới HOẶC buffer vừa kết thúc câu
+            # thì dòng hiện tại bắt đầu một buffer mới.
+            # Ngược lại, nối dòng hiện tại vào buffer.
+            if not current_buffer or is_new_question_start or buffer_ends_sentence:
+                current_buffer = line_strip
+            else:
+                current_buffer += " " + line_strip
+        elif not line_strip: # Nếu là dòng trống
+            if current_buffer:
+                final_processed_lines.append(current_buffer.strip())
+                current_buffer = ""
+            final_processed_lines.append("") # Giữ dòng trống
 
     # Flush buffer cuối cùng
     if current_buffer:
