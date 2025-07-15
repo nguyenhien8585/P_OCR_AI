@@ -21,15 +21,16 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 25, 10)
     
     # Tách bảng bằng morphology line horizontal + vertical
-    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.18),1))
+    # Tăng kích thước kernel để nhận diện bảng tốt hơn
+    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.25),1)) # Tăng từ 0.18 lên 0.25
     detected_lines = cv2.morphologyEx(th, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
-    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.08)))
+    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.12))) # Tăng từ 0.08 lên 0.12
     detected_columns = cv2.morphologyEx(th, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
     table_mask = cv2.addWeighted(detected_lines, 0.5, detected_columns, 0.5, 0.0)
     
     # Find table contours
     contours, _ = cv2.findContours(table_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    temp_tables = [] # Use temp_tables to store detected tables
+    temp_tables = [] 
     for cnt in contours: 
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
@@ -42,16 +43,17 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
 
     # Tách hình minh hoạ (contour không phải bảng)
     contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    temp_figures = [] # Use temp_figures to store detected figures
+    temp_figures = [] 
     for cnt in contours: 
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
         if area > min_area_abs and ww > 50 and hh > 50:
             # Loại bỏ vùng bảng đã nhận phía trên
             overlapped = False
-            for t in temp_tables: # Check against temp_tables
+            for t in temp_tables: 
                 tb_x, tb_y, tb_w, tb_h = t['bbox'] 
-                if abs(tb_x-x)<12 and abs(tb_y-y)<12 and abs(tb_w-ww)<25 and abs(tb_h-hh)<25:
+                # Kiểm tra chồng lấn một cách linh hoạt hơn
+                if not (x + ww < tb_x or x > tb_x + tb_w or y + hh < tb_y or y > tb_y + tb_h):
                     overlapped = True
                     break
             if not overlapped:
@@ -138,21 +140,21 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
     
     buffer = "" 
     
-    st.write("--- Debugging join_paragraphs_and_insert_figures_tables ---")
-    st.write(f"Initial figures: {[f['name'] for f in figures]}")
-    st.write(f"Figures with is_table: {[f['name'] + ' (is_table=' + str(f['is_table']) + ')' for f in figures]}")
+    # st.write("--- Debugging join_paragraphs_and_insert_figures_tables ---")
+    # st.write(f"Initial figures: {[f['name'] for f in figures]}")
+    # st.write(f"Figures with is_table: {[f['name'] + ' (is_table=' + str(f['is_table']) + ')' for f in figures]}")
 
 
     for idx, line in enumerate(lines):
         line_strip = line.strip()
-        st.write(f"Processing line {idx}: '{line_strip}'")
+        # st.write(f"Processing line {idx}: '{line_strip}'")
 
         # --- Xử lý Placeholder từ Gemini ---
         if "[HÌNH_PLACEHOLDER]" in line_strip or "[BẢNG_PLACEHOLDER]" in line_strip:
-            st.write(f"  Found placeholder in line: '{line_strip}'")
+            # st.write(f"  Found placeholder in line: '{line_strip}'")
             if buffer: 
                 processed_lines.append(buffer.strip())
-                st.write(f"  Flushing buffer: '{buffer.strip()}'")
+                # st.write(f"  Flushing buffer: '{buffer.strip()}'")
                 buffer = ""
             
             figures_pool = [f for f in figures if f["name"] not in inserted_figures_names]
@@ -166,24 +168,24 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
             if found_fig:
                 if found_fig["is_table"]:
                     processed_lines.append(line_strip.replace("[BẢNG_PLACEHOLDER]", f"[BẢNG: {found_fig['name']}]"))
-                    st.write(f"  Inserted BẢNG: {found_fig['name']} via placeholder.")
+                    # st.write(f"  Inserted BẢNG: {found_fig['name']} via placeholder.")
                 else:
                     processed_lines.append(line_strip.replace("[HÌNH_PLACEHOLDER]", f"[HÌNH: {found_fig['name']}]"))
-                    st.write(f"  Inserted HÌNH: {found_fig['name']} via placeholder.")
+                    # st.write(f"  Inserted HÌNH: {found_fig['name']} via placeholder.")
                 inserted_figures_names.add(found_fig["name"])
             else: 
                 processed_lines.append(line_strip.replace("[HÌNH_PLACEHOLDER]", "").replace("[BẢNG_PLACEHOLDER]", "").strip())
-                st.write(f"  Could not find matching figure for placeholder. Removed placeholder.")
+                # st.write(f"  Could not find matching figure for placeholder. Removed placeholder.")
             continue 
 
         # --- Xử lý các dòng văn bản thông thường ---
         if not line_strip or re.match(r"^(HẾT|Trang|Mã đề|----+)$", line_strip):
             if buffer:
                 processed_lines.append(buffer.strip())
-                st.write(f"  Flushing buffer (separator/empty line): '{buffer.strip()}'")
+                # st.write(f"  Flushing buffer (separator/empty line): '{buffer.strip()}'")
                 buffer = ""
             processed_lines.append(line_strip)
-            st.write(f"  Added separator/empty line: '{line_strip}'")
+            # st.write(f"  Added separator/empty line: '{line_strip}'")
             continue
 
         is_new_question = re.match(r"^Câu\s*\d+\.?", line_strip)
@@ -191,7 +193,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
         # Flush buffer nếu kết thúc câu hoặc là câu hỏi mới
         if buffer and (re.search(r"[.!?…:]$", buffer) or is_new_question):
             processed_lines.append(buffer.strip())
-            st.write(f"  Flushing buffer (sentence end/new question): '{buffer.strip()}'")
+            # st.write(f"  Flushing buffer (sentence end/new question): '{buffer.strip()}'")
             buffer = "" 
 
         # Thêm dòng hiện tại vào buffer
@@ -199,7 +201,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
             buffer += " " + line_strip
         else:
             buffer = line_strip
-        st.write(f"  Current buffer: '{buffer}'")
+        # st.write(f"  Current buffer: '{buffer}'")
 
         lower_buffer = buffer.lower()
 
@@ -217,51 +219,51 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
             # Ưu tiên tìm bảng nếu có từ khóa bảng
             if any(kw in lower_buffer for kw in table_kw):
                 found_fig_to_insert = find_best_matching_figure(figures_pool, True, lower_buffer, keywords, table_kw)
-                if found_fig_to_insert:
-                    st.write(f"  Found table keyword, trying to insert table: {found_fig_to_insert['name']} (is_table={found_fig_to_insert['is_table']})")
+                # if found_fig_to_insert:
+                    # st.write(f"  Found table keyword, trying to insert table: {found_fig_to_insert['name']} (is_table={found_fig_to_insert['is_table']})")
             
             # Nếu chưa tìm thấy và có từ khóa hình ảnh, tìm hình ảnh
             if not found_fig_to_insert and any(kw in lower_buffer for kw in keywords):
                 found_fig_to_insert = find_best_matching_figure(figures_pool, False, lower_buffer, keywords, table_kw)
-                if found_fig_to_insert:
-                    st.write(f"  Found image keyword, trying to insert image: {found_fig_to_insert['name']} (is_table={found_fig_to_insert['is_table']})")
+                # if found_fig_to_insert:
+                    # st.write(f"  Found image keyword, trying to insert image: {found_fig_to_insert['name']} (is_table={found_fig_to_insert['is_table']})")
             
             # Nếu tìm thấy hình ảnh/bảng phù hợp, chèn nó
             if found_fig_to_insert:
                 # Flush buffer trước khi chèn hình ảnh/bảng
                 if buffer:
                     processed_lines.append(buffer.strip())
-                    st.write(f"  Flushing buffer before keyword insert: '{buffer.strip()}'")
+                    # st.write(f"  Flushing buffer before keyword insert: '{buffer.strip()}'")
                     buffer = "" 
 
                 if found_fig_to_insert["is_table"]:
                     processed_lines.append(f"[BẢNG: {found_fig_to_insert['name']}]")
-                    st.write(f"  Inserted BẢNG: {found_fig_to_insert['name']} via keyword.")
+                    # st.write(f"  Inserted BẢNG: {found_fig_to_insert['name']} via keyword.")
                 else:
                     processed_lines.append(f"[HÌNH: {found_fig_to_insert['name']}]")
-                    st.write(f"  Inserted HÌNH: {found_fig_to_insert['name']} via keyword.")
+                    # st.write(f"  Inserted HÌNH: {found_fig_to_insert['name']} via keyword.")
                 inserted_figures_names.add(found_fig_to_insert["name"])
                 buffer = "" 
-        st.write(f"  Inserted figures so far: {inserted_figures_names}")
+        # st.write(f"  Inserted figures so far: {inserted_figures_names}")
 
     # --- Xử lý buffer cuối cùng và các hình/bảng còn lại ---
     if buffer:
         processed_lines.append(buffer.strip())
-        st.write(f"Flushing final buffer: '{buffer.strip()}'")
+        # st.write(f"Flushing final buffer: '{buffer.strip()}'")
 
     # Chèn các hình/bảng còn lại ở cuối tài liệu nếu chưa được chèn
-    st.write("--- Inserting remaining figures ---")
+    # st.write("--- Inserting remaining figures ---")
     for fig in figures:
         if fig["name"] not in inserted_figures_names:
             if fig["is_table"]:
                 processed_lines.append(f"[BẢNG: {fig['name']}]")
-                st.write(f"  Inserted remaining BẢNG: {fig['name']} at end.")
+                # st.write(f"  Inserted remaining BẢNG: {fig['name']} at end.")
             else:
                 processed_lines.append(f"[HÌNH: {fig['name']}]")
-                st.write(f"  Inserted remaining HÌNH: {fig['name']} at end.")
+                # st.write(f"  Inserted remaining HÌNH: {fig['name']} at end.")
             inserted_figures_names.add(fig["name"]) 
     
-    st.write("--- End Debugging ---")
+    # st.write("--- End Debugging ---")
     return '\n'.join([l for l in processed_lines if l.strip()])
 
 # --------- Key Gemini -----------
