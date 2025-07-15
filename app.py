@@ -19,19 +19,19 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     
     # Tăng cường làm mờ để loại bỏ nhiễu nhỏ và làm mịn các cạnh
-    # Kernel size (5,5) là một lựa chọn cân bằng tốt
-    blur = cv2.GaussianBlur(gray, (5,5), 0) 
+    # Kernel size (7,7) là một lựa chọn cân bằng tốt hơn cho ảnh có thể có nhiễu
+    blur = cv2.GaussianBlur(gray, (7,7), 0) 
     
     # Tinh chỉnh adaptiveThreshold:
-    # blockSize: 41, C: 15 thường cho kết quả tốt trên nhiều loại tài liệu
-    th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 41, 15) 
+    # blockSize: 61, C: 20 thường cho kết quả tốt trên nhiều loại tài liệu, làm cho ngưỡng ít nhạy cảm hơn với chi tiết nhỏ
+    th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 61, 20) 
     
     # Tách bảng bằng morphology line horizontal + vertical
     # Kernel size được điều chỉnh để bắt các đường kẻ bảng rõ ràng
-    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.2),1)) # Kernel cho đường ngang
+    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.25),1)) # Kernel cho đường ngang
     detected_lines = cv2.morphologyEx(th, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
     
-    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.1))) # Kernel cho đường dọc
+    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.12))) # Kernel cho đường dọc
     detected_columns = cv2.morphologyEx(th, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
     
     table_mask = cv2.addWeighted(detected_lines, 0.5, detected_columns, 0.5, 0.0)
@@ -41,7 +41,7 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     temp_tables = [] 
     
     # Thắt chặt lại min_table_area
-    min_table_area = max(min_area_abs, 15000) # Tăng lên 15000
+    min_table_area = max(min_area_abs, 10000) # Giảm xuống 10000 để bắt các bảng nhỏ hơn
     
     for cnt in contours: 
         x, y, ww, hh = cv2.boundingRect(cnt)
@@ -52,10 +52,10 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
         solidity = float(contour_area) / (ww * hh + 1e-5)
         
         if (area > min_table_area and 
-            ww > 80 and hh > 50 and # Kích thước tối thiểu hợp lý cho bảng
-            0.05 < aspect_ratio < 20.0 and # Tỷ lệ khung hình rộng cho bảng
-            solidity > 0.4 and # Độ đầy đủ (tăng nhẹ)
-            x > 0.02 * w and x + ww < 0.98 * w and y > 0.02 * h and y + hh < 0.98 * h): # Không quá sát mép ảnh
+            ww > 60 and hh > 40 and # Kích thước tối thiểu hợp lý cho bảng
+            0.02 < aspect_ratio < 50.0 and # Tỷ lệ khung hình rộng cho bảng
+            solidity > 0.3 and # Độ đầy đủ (giảm nhẹ)
+            x > 0.01 * w and x + ww < 0.99 * w and y > 0.01 * h and y + hh < 0.99 * h): # Không quá sát mép ảnh
             
             crop = img[y:y+hh, x:x+ww]
             buf = io.BytesIO()
@@ -69,7 +69,7 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     temp_figures = [] 
     
     # Thắt chặt lại min_figure_area
-    min_figure_area = max(min_area_abs, 5000) # Tăng lên 5000
+    min_figure_area = max(min_area_abs, 3000) # Giảm xuống 3000 để bắt các hình ảnh nhỏ hơn
     
     for cnt in contours: 
         x, y, ww, hh = cv2.boundingRect(cnt)
@@ -81,10 +81,10 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
 
         # Các ngưỡng này cần được điều chỉnh dựa trên kích thước và hình dạng thực tế của ảnh lớp học
         if (area > min_figure_area and 
-            ww > 60 and hh > 60 and # Kích thước tối thiểu hợp lý cho hình ảnh
-            0.2 < aspect_ratio < 5.0 and # Tỷ lệ khung hình cân đối hơn cho hình ảnh
-            solidity > 0.3 and # Độ đầy đủ (tăng nhẹ)
-            x > 0.02 * w and x + ww < 0.98 * w and y > 0.02 * h and y + hh < 0.98 * h): # Không quá sát mép ảnh
+            ww > 50 and hh > 50 and # Kích thước tối thiểu hợp lý cho hình ảnh
+            0.1 < aspect_ratio < 10.0 and # Tỷ lệ khung hình rộng hơn
+            solidity > 0.2 and # Độ đầy đủ (giảm nhẹ)
+            x > 0.01 * w and x + ww < 0.99 * w and y > 0.01 * h and y + hh < 0.99 * h): # Không quá sát mép ảnh
             
             # Loại bỏ vùng bảng đã nhận phía trên
             overlapped = False
