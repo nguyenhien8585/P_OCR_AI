@@ -292,6 +292,7 @@ YÊU CẦU:
 5. Công thức toán học: tất cả ở dạng ${...}$ (inline, hệ, ký hiệu ... như hướng dẫn chi tiết).
 6. Bảng biểu: dùng markdown nếu có thể.
 7. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
+8. nhận dạng đúng hình minh hoạ đúng vị trí câu hỏi.
 '''
 def gemini_generate_text(image_bytes, api_key):
     api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
