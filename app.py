@@ -308,8 +308,6 @@ def gemini_generate_text(image_bytes, api_key):
 # ========== Giao diện ==========
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
 st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & bảng (bảng giá trị, bảng tần số, biến thiên) ✨")
-tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Markdown + Minh hoạ/Bảng"])
-
 # =================== TAB ẢNH ===================
 with tab_img:
     uploaded_images = st.file_uploader(
