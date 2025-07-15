@@ -130,21 +130,6 @@ def remove_all_figure_markdown(text):
     text = re.sub(r'\[BẢNG_PLACEHOLDER\]', '', text)
     return text
 
-# Helper function to find the best matching figure
-def find_best_matching_figure(figures_pool, is_table_needed, current_line_lower, keywords, table_kw):
-    """
-    Tìm hình ảnh/bảng phù hợp nhất từ pool dựa trên loại và từ khóa.
-    Ưu tiên khớp loại (bảng/hình ảnh) và sau đó là từ khóa.
-    """
-    # Tìm kiếm chính xác loại và từ khóa
-    for fig in figures_pool:
-        if fig["is_table"] == is_table_needed:
-            if (is_table_needed and any(kw in current_line_lower for kw in table_kw)) or \
-               (not is_table_needed and any(kw in current_line_lower for kw in keywords)):
-                return fig
-            
-    return None
-
 # -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
 def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywords=None, table_kw=None):
     """
@@ -163,11 +148,9 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
         ]
     
     lines = [l.rstrip() for l in text.split('\n')]
-    processed_lines = []
+    final_processed_lines = []
     
     inserted_figures_names = set()
-    
-    buffer = "" 
     
     # Tạo một bản sao của danh sách figures để dễ dàng quản lý các hình đã được chèn
     available_figures = list(figures) 
@@ -206,10 +189,20 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
     
     # Điền keyword_lines cho từng khối câu hỏi
     for q_block in question_blocks:
+        # Tìm từ khóa trong một "cửa sổ" xung quanh dòng hiện tại
+        # Ví dụ: 3 dòng trước và 3 dòng sau
+        search_window_size = 3 
+        
         for i in range(q_block["start_line"], q_block["end_line"] + 1):
-            line_content = lines[i].lower()
-            if any(kw in line_content for kw in keywords) or any(kw in line_content for kw in table_kw):
+            # Tạo ngữ cảnh cho dòng hiện tại
+            context_lines = []
+            for j in range(max(0, i - search_window_size), min(len(lines), i + search_window_size + 1)):
+                context_lines.append(lines[j].lower())
+            context_text = " ".join(context_lines)
+
+            if any(kw in context_text for kw in keywords) or any(kw in context_text for kw in table_kw):
                 q_block["keyword_lines"].append(i)
+        
         # Thêm vị trí của placeholder từ Gemini nếu có
         for i in range(q_block["start_line"], q_block["end_line"] + 1):
             if "[HÌNH_PLACEHOLDER]" in lines[i] or "[BẢNG_PLACEHOLDER]" in lines[i]:
@@ -246,241 +239,116 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
         if best_q_match:
             figure_to_question_map[fig["name"]] = best_q_match
         else:
-            # Nếu không khớp với câu hỏi nào, gán cho câu hỏi gần nhất (hoặc để sau)
-            # Tạm thời để nó không được gán, sẽ chèn vào cuối
-            pass
+            pass # Để hình ảnh không được gán, sẽ chèn vào cuối
 
     # Bước 3: Xây dựng lại văn bản, chèn hình ảnh vào vị trí tối ưu trong khối câu hỏi
-    figures_inserted_in_text = set() 
-    
-    for q_block in question_blocks:
-        q_start_line = q_block["start_line"]
-        q_end_line = q_block["end_line"]
-        
-        # Lấy các hình ảnh thuộc về câu hỏi này
-        figs_for_this_q = [f for f in available_figures if f is not None and figure_to_question_map.get(f["name"]) == q_block["num"]]
-        figs_for_this_q.sort(key=lambda f: (f['bbox'][1], f['bbox'][0])) 
-
-        # Tạo một danh sách các điểm chèn cụ thể trong khối câu hỏi này
-        q_insertion_points = []
-
-        # Ưu tiên placeholder từ Gemini
-        for line_idx in range(q_start_line, q_end_line + 1):
-            line_content = lines[line_idx]
-            if "[HÌNH_PLACEHOLDER]" in line_content:
-                q_insertion_points.append((line_idx, 'placeholder_img'))
-            elif "[BẢNG_PLACEHOLDER]" in line_content:
-                q_insertion_points.append((line_idx, 'placeholder_table'))
-        
-        # Sau đó là các dòng có từ khóa
-        for line_idx in q_block["keyword_lines"]:
-            if line_idx not in [p[0] for p in q_insertion_points]: 
-                q_insertion_points.append((line_idx, 'keyword'))
-        
-        # Sắp xếp các điểm chèn theo thứ tự dòng
-        q_insertion_points.sort(key=lambda x: x[0])
-
-        # Thực hiện chèn hình ảnh vào khối câu hỏi
-        current_q_buffer = []
-        figs_to_insert_in_q_copy = list(figs_for_this_q) # Bản sao để quản lý
-
-        for line_idx in range(q_start_line, q_end_line + 1):
-            line_content = lines[line_idx]
-            
-            # Xử lý buffer trước khi thêm dòng mới hoặc chèn hình ảnh
-            # Flush buffer nếu dòng hiện tại là đầu câu hỏi mới, hoặc dòng trống, hoặc buffer kết thúc bằng dấu câu
-            is_new_question_line = re.match(r"^Câu\s*\d+\.?", line_content.strip())
-            is_empty_line = not line_content.strip()
-            buffer_ends_sentence = re.search(r'[.!?…:]\s*$', buffer.strip())
-
-            if buffer and (is_new_question_line or is_empty_line or buffer_ends_sentence):
-                processed_lines.append(buffer.strip())
-                buffer = ""
-            
-            # Thêm dòng hiện tại vào buffer
-            if line_content.strip(): # Chỉ thêm vào buffer nếu dòng không rỗng
-                if buffer and not buffer_ends_sentence and not is_new_question_line:
-                    buffer += " " + line_content.strip()
-                else:
-                    buffer = line_content.strip()
-            elif is_empty_line: # Nếu là dòng trống, flush buffer và thêm dòng trống
-                if buffer:
-                    processed_lines.append(buffer.strip())
-                    buffer = ""
-                processed_lines.append("") # Giữ dòng trống
-
-            # Kiểm tra xem có điểm chèn nào ở dòng này không
-            for p_idx, (p_line_idx, p_type) in enumerate(q_insertion_points):
-                if p_line_idx == line_idx:
-                    # Tìm hình ảnh phù hợp nhất để chèn vào điểm này
-                    fig_to_insert_now = None
-                    
-                    if p_type == 'placeholder_img':
-                        for i, fig in enumerate(figs_to_insert_in_q_copy):
-                            if fig is not None and not fig["is_table"]:
-                                fig_to_insert_now = fig
-                                figs_to_insert_in_q_copy[i] = None
-                                break
-                    elif p_type == 'placeholder_table':
-                        for i, fig in enumerate(figs_to_insert_in_q_copy):
-                            if fig is not None and fig["is_table"]:
-                                fig_to_insert_now = fig
-                                figs_to_insert_in_q_copy[i] = None
-                                break
-                    elif p_type == 'keyword':
-                        # Tìm hình ảnh gần nhất về mặt vật lý và khớp loại/từ khóa
-                        best_fig_for_keyword = None
-                        min_dist_for_keyword = float('inf')
-                        
-                        current_line_y_center = line_idx * (img_h / len(lines))
-
-                        for i, fig in enumerate(figs_to_insert_in_q_copy):
-                            if fig is None: continue
-                            
-                            fig_y_center = fig['bbox'][1] + fig['bbox'][3] / 2
-                            dist = abs(fig_y_center - current_line_y_center)
-
-                            line_lower = line_content.lower()
-                            if ((fig["is_table"] and any(kw in line_lower for kw in table_kw)) or
-                                (not fig["is_table"] and any(kw in line_lower for kw in keywords))):
-                                if dist < min_dist_for_keyword:
-                                    min_dist_for_keyword = dist
-                                    best_fig_for_keyword = fig
-                                    best_fig_for_keyword_idx = i
-                        
-                        if best_fig_for_keyword:
-                            fig_to_insert_now = best_fig_for_keyword
-                            figs_to_insert_in_q_copy[best_fig_for_keyword_idx] = None
-
-                    if fig_to_insert_now:
-                        # Thay thế placeholder hoặc chèn vào sau dòng
-                        # Nếu buffer đang chứa dòng có placeholder, thay thế trực tiếp
-                        if "[HÌNH_PLACEHOLDER]" in buffer:
-                            buffer = buffer.replace("[HÌNH_PLACEHOLDER]", f"[HÌNH: {fig_to_insert_now['name']}]")
-                        elif "[BẢNG_PLACEHOLDER]" in buffer:
-                            buffer = buffer.replace("[BẢNG_PLACEHOLDER]", f"[BẢNG: {fig_to_insert_now['name']}]")
-                        else:
-                            # Flush buffer và chèn hình ảnh vào dòng mới
-                            if buffer:
-                                processed_lines.append(buffer.strip())
-                                buffer = ""
-                            if fig_to_insert_now["is_table"]:
-                                processed_lines.append(f"[BẢNG: {fig_to_insert_now['name']}]")
-                            else:
-                                processed_lines.append(f"[HÌNH: {fig_to_insert_now['name']}]")
-                        figures_inserted_in_text.add(fig_to_insert_now["name"])
-        
-        # Sau khi duyệt hết các dòng trong khối câu hỏi, flush buffer cuối cùng của khối
-        if buffer:
-            processed_lines.append(buffer.strip())
-            buffer = ""
-        
-        # Chèn bất kỳ hình ảnh nào còn lại trong khối câu hỏi này vào cuối khối
-        for fig in figs_to_insert_in_q_copy:
-            if fig is not None and fig["name"] not in figures_inserted_in_text:
-                if fig["is_table"]:
-                    processed_lines.append(f"[BẢNG: {fig['name']}]")
-                else:
-                    processed_lines.append(f"[HÌNH: {fig['name']}]")
-                figures_inserted_in_text.add(fig["name"])
-
-    # Bước 4: Xử lý các dòng không thuộc câu hỏi và các hình ảnh còn lại
-    # Thêm các dòng không thuộc câu hỏi vào processed_lines
-    # (Đã được xử lý trong vòng lặp chính, nhưng cần đảm bảo các dòng cuối cùng không phải câu hỏi được thêm vào)
-    # Logic này cần được xem xét lại để đảm bảo không bị trùng lặp hoặc bỏ sót
-    
-    # Cách đơn giản hơn: sau khi xử lý các khối câu hỏi, thêm các dòng còn lại
-    # và các hình ảnh chưa được chèn
-    
-    # Lấy tất cả các dòng đã được xử lý từ các khối câu hỏi
-    final_output_lines = []
-    current_line_idx_in_original = 0
-    
-    for q_block in question_blocks:
-        # Thêm các dòng trước khối câu hỏi hiện tại (nếu có)
-        while current_line_idx_in_original < q_block["start_line"]:
-            line_content = lines[current_line_idx_in_original].strip()
-            if line_content:
-                final_output_lines.append(line_content)
-            else:
-                final_output_lines.append("") # Giữ dòng trống
-            current_line_idx_in_original += 1
-        
-        # Thêm các dòng đã xử lý của khối câu hỏi
-        # Đây là phần phức tạp, cần đảm bảo các hình ảnh đã được chèn đúng cách
-        # Tạm thời, chúng ta sẽ dựa vào logic chèn trong vòng lặp chính
-        # và chỉ thêm các dòng gốc nếu chúng chưa được xử lý
-        
-        # Để đơn giản hóa, chúng ta sẽ xây dựng lại processed_lines từ đầu
-        # sau khi đã có figure_to_question_map và figures_inserted_in_text
-        pass # Logic này sẽ được thực hiện ở bước tiếp theo
-
-    # Xây dựng lại toàn bộ văn bản một lần nữa, dựa trên figure_to_question_map
-    # và các hình ảnh đã được chèn
-    final_processed_lines = []
-    current_buffer_for_final = ""
+    current_buffer = ""
     
     for idx, line in enumerate(lines):
         line_strip = line.strip()
         
-        # Kiểm tra xem có hình ảnh nào được gán cho dòng này không
-        # (dựa trên figure_to_question_map và vị trí gần nhất)
-        figures_to_insert_at_current_point = []
+        # Kiểm tra xem dòng hiện tại có phải là đầu một câu hỏi mới không
+        is_new_question_start = re.match(r"^Câu\s*\d+\.?", line_strip)
         
-        # Tìm hình ảnh có bbox gần với dòng hiện tại nhất
-        best_fig_for_line = None
-        min_dist_to_line = float('inf')
-        
-        current_line_y_center = idx * (img_h / len(lines))
-        
-        for fig in figures:
-            if fig["name"] in inserted_figures_names: continue # Đã chèn rồi
-            
-            fig_y_center = fig['bbox'][1] + fig['bbox'][3] / 2
-            dist = abs(fig_y_center - current_line_y_center)
-            
-            # Chỉ xem xét hình ảnh nếu nó chưa được chèn và gần dòng hiện tại
-            if dist < min_dist_to_line and dist < img_h * 0.1: # Khoảng cách tối đa 10% chiều cao ảnh
-                min_dist_to_line = dist
-                best_fig_for_line = fig
-        
-        # Nếu tìm thấy hình ảnh phù hợp cho dòng này
-        if best_fig_for_line:
-            # Flush buffer trước khi chèn hình ảnh
-            if current_buffer_for_final:
-                final_processed_lines.append(current_buffer_for_final)
-                current_buffer_for_final = ""
-            
-            # Chèn hình ảnh
-            if best_fig_for_line["is_table"]:
-                final_processed_lines.append(f"[BẢNG: {best_fig_for_line['name']}]")
-            else:
-                final_processed_lines.append(f"[HÌNH: {best_fig_for_line['name']}]")
-            inserted_figures_names.add(best_fig_for_line["name"])
-            
-        # Xử lý buffer cho văn bản
-        is_new_question_line = re.match(r"^Câu\s*\d+\.?", line_strip)
-        is_empty_line = not line_strip
-        buffer_ends_sentence = re.search(r'[.!?…:]\s*$', current_buffer_for_final.strip())
+        # Kiểm tra xem buffer hiện tại có kết thúc một câu hoàn chỉnh không
+        buffer_ends_sentence = re.search(r'[.!?…:]\s*$', current_buffer.strip())
 
-        if current_buffer_for_final and (is_new_question_line or is_empty_line or buffer_ends_sentence):
-            final_processed_lines.append(current_buffer_for_final.strip())
-            current_buffer_for_final = ""
+        # Điều kiện để flush buffer và bắt đầu đoạn mới
+        # Flush khi:
+        # 1. Dòng hiện tại là đầu câu hỏi mới
+        # 2. Dòng hiện tại là dòng trống
+        # 3. Buffer hiện tại kết thúc bằng dấu câu VÀ dòng hiện tại không phải là phần tiếp theo của câu đó
+        # (ví dụ: không phải là một từ trong câu)
+        if current_buffer and (is_new_question_start or not line_strip or buffer_ends_sentence):
+            final_processed_lines.append(current_buffer.strip())
+            current_buffer = ""
         
+        # Thêm dòng hiện tại vào buffer
         if line_strip:
-            if current_buffer_for_final and not buffer_ends_sentence and not is_new_question_line:
-                current_buffer_for_final += " " + line_strip
+            if current_buffer and not is_new_question_start and not buffer_ends_sentence:
+                current_buffer += " " + line_strip
             else:
-                current_buffer_for_final = line_strip
-        elif is_empty_line:
-            if current_buffer_for_final:
-                final_processed_lines.append(current_buffer_for_final.strip())
-                current_buffer_for_final = ""
+                current_buffer = line_strip
+        elif not line_strip: # Nếu là dòng trống
+            if current_buffer:
+                final_processed_lines.append(current_buffer.strip())
+                current_buffer = ""
             final_processed_lines.append("") # Giữ dòng trống
 
-    # Flush buffer cuối cùng
-    if current_buffer_for_final:
-        final_processed_lines.append(current_buffer_for_final.strip())
+        # Logic chèn hình ảnh tại vị trí ngữ cảnh
+        # Tìm khối câu hỏi mà dòng hiện tại thuộc về
+        current_q_block = None
+        for q_block in question_blocks:
+            if q_block["start_line"] <= idx <= q_block["end_line"]:
+                current_q_block = q_block
+                break
+        
+        if current_q_block:
+            # Lấy các hình ảnh thuộc về câu hỏi này và chưa được chèn
+            figs_for_this_q_uninserted = [f for f in available_figures if f is not None and figure_to_question_map.get(f["name"]) == current_q_block["num"] and f["name"] not in inserted_figures_names]
+            figs_for_this_q_uninserted.sort(key=lambda f: (f['bbox'][1], f['bbox'][0]))
+
+            # Kiểm tra các điểm chèn cụ thể trong dòng hiện tại
+            # Ưu tiên placeholder
+            if "[HÌNH_PLACEHOLDER]" in line_strip or "[BẢNG_PLACEHOLDER]" in line_strip:
+                fig_to_insert_now = None
+                if "[HÌNH_PLACEHOLDER]" in line_strip:
+                    for i, fig in enumerate(figs_for_this_q_uninserted):
+                        if not fig["is_table"]:
+                            fig_to_insert_now = fig
+                            available_figures[available_figures.index(fig)] = None # Đánh dấu đã dùng
+                            break
+                elif "[BẢNG_PLACEHOLDER]" in line_strip:
+                    for i, fig in enumerate(figs_for_this_q_uninserted):
+                        if fig["is_table"]:
+                            fig_to_insert_now = fig
+                            available_figures[available_figures.index(fig)] = None # Đánh dấu đã dùng
+                            break
+                
+                if fig_to_insert_now:
+                    # Thay thế placeholder trong buffer hiện tại
+                    if fig_to_insert_now["is_table"]:
+                        current_buffer = current_buffer.replace("[BẢNG_PLACEHOLDER]", f"[BẢNG: {fig_to_insert_now['name']}]")
+                    else:
+                        current_buffer = current_buffer.replace("[HÌNH_PLACEHOLDER]", f"[HÌNH: {fig_to_insert_now['name']}]")
+                    inserted_figures_names.add(fig_to_insert_now["name"])
+            
+            # Sau đó là từ khóa mạnh
+            elif idx in current_q_block["keyword_lines"] and not re.search(r'\[(HÌNH|BẢNG):.*?\]', current_buffer): # Chỉ chèn nếu chưa có hình/bảng ở buffer này
+                best_fig_for_keyword = None
+                min_dist_for_keyword = float('inf')
+                
+                current_line_y_center = idx * (img_h / len(lines))
+
+                for fig in figs_for_this_q_uninserted:
+                    if fig is None: continue
+                    
+                    fig_y_center = fig['bbox'][1] + fig['bbox'][3] / 2
+                    dist = abs(fig_y_center - current_line_y_center)
+
+                    line_lower = line_strip.lower()
+                    if ((fig["is_table"] and any(kw in line_lower for kw in table_kw)) or
+                        (not fig["is_table"] and any(kw in line_lower for kw in keywords))):
+                        if dist < min_dist_for_keyword:
+                            min_dist_for_keyword = dist
+                            best_fig_for_keyword = fig
+                
+                if best_fig_for_keyword:
+                    # Flush buffer và chèn hình ảnh vào dòng mới
+                    if current_buffer:
+                        final_processed_lines.append(current_buffer.strip())
+                        current_buffer = ""
+                    
+                    if best_fig_for_keyword["is_table"]:
+                        final_processed_lines.append(f"[BẢNG: {best_fig_for_keyword['name']}]")
+                    else:
+                        final_processed_lines.append(f"[HÌNH: {best_fig_for_keyword['name']}]")
+                    inserted_figures_names.add(best_fig_for_keyword["name"])
+                    available_figures[available_figures.index(best_fig_for_keyword)] = None # Đánh dấu đã dùng
+
+    # Flush buffer cuối cùng sau khi duyệt hết tất cả các dòng
+    if current_buffer:
+        final_processed_lines.append(current_buffer.strip())
 
     # Chèn các hình/bảng còn lại ở cuối tài liệu nếu chưa được chèn
     remaining_figures = sorted([f for f in figures if f['name'] not in inserted_figures_names and 'bbox' in f], key=lambda f: (f['bbox'][1], f['bbox'][0]))
@@ -657,7 +525,7 @@ with tab_pdf:
             num_pages = "?"
         with st.expander("ℹ️ Thông tin file", expanded=True):
             st.write(f"**Tên file:** {file_name}")
-            st.write(f"**Loại file:** {mime_type}")
+            st.write(f"**Loại file:** {mime_file.type}")
             st.write(f"**Kích thước:** {size_mb:.1f} MB")
             st.write(f"**Số trang:** {num_pages}")
 
