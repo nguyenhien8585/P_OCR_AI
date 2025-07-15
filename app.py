@@ -476,25 +476,27 @@ with tab_img:
 
                 with tab_figures_img:
                     figures = st.session_state[fig_key]
-                    if figures:
-                        st.success(f"🖼️ Đã tìm thấy {len(figures)} hình ảnh và bảng:")
-                        for idx, fig in enumerate(figures):
-                            try:
-                                img_bytes = base64.b64decode(fig["base64"])
-                                cap = f"{'Bảng' if fig['is_table'] else 'Hình'}: {fig['name']}"
-                                st.image(img_bytes, caption=cap, width=350)
-                                st.download_button(
-                                    f"Tải {fig['name']}",
-                                    img_bytes,
-                                    file_name=fig["name"],
-                                    mime="image/jpeg",
-                                    use_container_width=True,
-                                    key=f"anh-download-{fig['name']}-{idx}"
+                    if figures: # Chỉ hiển thị nút tải Word nếu có hình ảnh
+                        if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", use_container_width=True, key=f"word-{img_file.name}-{img_idx}"):
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
+                                insert_images_to_word_from_markdown(
+                                    st.session_state[text_key],
+                                    figures,
+                                    tmp_word.name
                                 )
-                            except Exception as e:
-                                st.error(f"Không đọc được ảnh {fig['name']}: {e}")
+                            with open(tmp_word.name, "rb") as f:
+                                word_data = f.read()
+                            st.success("✅ Đã tạo file Word thành công!")
+                            st.download_button(
+                                "⬇️ Tải về file Word",
+                                word_data,
+                                file_name=f"ket_qua_{img_file.name}.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                use_container_width=True
+                            )
+                            os.remove(tmp_word.name)
                     else:
-                        st.info("Không tìm thấy minh hoạ hay bảng nào trong ảnh.")
+                        st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh để xuất Word.")
                 # --- Kết thúc giao diện mới ---
 
     else:
