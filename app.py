@@ -64,7 +64,7 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.005, min_area_abs=150
         
         candidates.append({
             "area": area, "x0": x, "y0": y, "x1": x+ww, "y1": y+hh,
-            "is_table": is_table, "bbox": (x, y, ww, hh) # Thêm bbox để sắp xếp
+            "is_table": is_table, "bbox": (x, y, ww, hh) # Giữ lại bbox ở đây
         })
     
     # Sắp xếp các ứng cử viên theo diện tích giảm dần để ưu tiên các hình lớn
@@ -98,7 +98,8 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.005, min_area_abs=150
         final_figures_list.append({
             "name": name,
             "base64": b64,
-            "is_table": fig_data["is_table"]
+            "is_table": fig_data["is_table"],
+            "bbox": fig_data["bbox"] # QUAN TRỌNG: Giữ lại bbox ở đây
         })
 
     return final_figures_list
@@ -127,20 +128,6 @@ def find_best_matching_figure(figures_pool, is_table_needed, current_line_lower,
             if (is_table_needed and any(kw in current_line_lower for kw in table_kw)) or \
                (not is_table_needed and any(kw in current_line_lower for kw in keywords)):
                 return fig
-    
-    # FALLBACK: Nếu không tìm thấy khớp chính xác theo loại, nhưng có từ khóa mạnh
-    # và chỉ còn một hình ảnh/bảng chưa được chèn, hoặc hình ảnh/bảng đó có vẻ phù hợp nhất
-    # Logic này có thể gây ra việc chèn sai loại hình ảnh nếu không cẩn thận.
-    # Tạm thời bỏ qua logic fallback này để ưu tiên khớp chính xác.
-    # if is_table_needed and any(kw in current_line_lower for kw in table_kw):
-    #     for fig in figures_pool:
-    #         if not fig["is_table"]: 
-    #             return fig 
-    
-    # elif not is_table_needed and any(kw in current_line_lower for kw in keywords):
-    #     for fig in figures_pool:
-    #         if fig["is_table"]: 
-    #             return fig 
             
     return None
 
@@ -169,7 +156,8 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
     buffer = "" 
     
     # Tạo một bản sao của danh sách figures để dễ dàng quản lý các hình đã được chèn
-    available_figures = list(figures)
+    # available_figures sẽ chứa các dictionary đầy đủ, bao gồm 'bbox'
+    available_figures = list(figures) 
     
     for idx, line in enumerate(lines):
         line_strip = line.strip()
@@ -270,7 +258,8 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
 
     # Chèn các hình/bảng còn lại ở cuối tài liệu nếu chưa được chèn
     # Sắp xếp lại các hình còn lại theo thứ tự ban đầu để chèn
-    remaining_figures = sorted([f for f in available_figures if f is not None], key=lambda f: (f['bbox'][1], f['bbox'][0]))
+    # Đảm bảo chỉ sắp xếp các dictionary có chứa 'bbox'
+    remaining_figures = sorted([f for f in available_figures if f is not None and 'bbox' in f], key=lambda f: (f['bbox'][1], f['bbox'][0]))
     for fig in remaining_figures:
         if fig["name"] not in inserted_figures_names: # Kiểm tra lại để tránh trùng lặp
             if fig["is_table"]:
