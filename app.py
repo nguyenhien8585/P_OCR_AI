@@ -80,6 +80,106 @@ def remove_all_figure_markdown(text):
     return text
 
 # -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
+def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, table_kw=None):
+    """
+    Nối các đoạn văn bản và chèn hình ảnh/bảng vào đúng vị trí.
+    Ưu tiên thay thế các placeholder do Gemini tạo ra, sau đó chèn bổ sung
+    dựa trên từ khóa và heuristic nếu cần.
+    """
+    if keywords is None:
+        keywords = [
+            "xem hình", "hình dưới", "hình vẽ", "biểu đồ", "minh hoạ",
+            "minh họa", "bảng dưới", "hình bên", "hình minh hoạ", "hình minh họa"
+        ]
+    if table_kw is None:
+        table_kw = [
+            "bảng biến thiên", "bảng giá trị", "bảng tần số", "bảng sau", "bảng dưới"
+        ]
+    
+    lines = [l.rstrip() for l in text.split('\n')]
+    processed_lines = []
+    fig_idx = 0 # Chỉ số cho danh sách figures đã tách
+    n_fig = len(figures)
+    
+    buffer = "" # Buffer để xây dựng các đoạn văn bản
+    
+    for idx, line in enumerate(lines):
+        line_strip = line.strip()
+
+        # --- Xử lý Placeholder từ Gemini ---
+        # Nếu dòng chứa placeholder do Gemini tạo ra, ưu tiên xử lý nó
+        if "[HÌNH_PLACEHOLDER]" in line_strip or "[BẢNG_PLACEHOLDER]" in line_strip:
+            if buffer: # Nếu có nội dung trong buffer, thêm nó vào processed_lines trước
+                processed_lines.append(buffer.strip())
+                buffer = ""
+            
+            # Thay thế placeholder bằng hình ảnh/bảng thực tế từ danh sách figures
+            if "[HÌNH_PLACEHOLDER]" in line_strip and fig_idx < n_fig and not figures[fig_idx]["is_table"]:
+                processed_lines.append(line_strip.replace("[HÌNH_PLACEHOLDER]", f"[HÌNH: {figures[fig_idx]['name']}]"))
+                fig_idx += 1
+            elif "[BẢNG_PLACEHOLDER]" in line_strip and fig_idx < n_fig and figures[fig_idx]["is_table"]:
+                processed_lines.append(line_strip.replace("[BẢNG_PLACEHOLDER]", f"[BẢNG: {figures[fig_idx]['name']}]"))
+                fig_idx += 1
+            else: 
+                # Nếu placeholder không khớp với hình/bảng tiếp theo, hoặc không còn hình/bảng
+                # Loại bỏ placeholder không được thay thế
+                processed_lines.append(line_strip.replace("[HÌNH_PLACEHOLDER]", "").replace("[BẢNG_PLACEHOLDER]", "").strip())
+            continue # Đã xử lý dòng này, chuyển sang dòng tiếp theo
+
+        # --- Xử lý các dòng văn bản thông thường ---
+        # Nếu dòng là dấu phân cách hoặc trống, kết thúc đoạn hiện tại
+        if not line_strip or re.match(r"^(HẾT|Trang|Mã đề|----+)$", line_strip):
+            if buffer:
+                processed_lines.append(buffer.strip())
+                buffer = ""
+            processed_lines.append(line_strip)
+            continue
+
+        # Kiểm tra xem đây có phải là một câu hỏi mới không
+        is_new_question = re.match(r"^Câu\s*\d+\.?", line_strip)
+
+        # Nếu buffer đã có nội dung và kết thúc bằng một câu hoàn chỉnh (dấu câu)
+        # hoặc nếu đây là một câu hỏi mới, thì kết thúc đoạn hiện tại
+        if buffer and (re.search(r"[.!?…:]$", buffer) or is_new_question):
+            processed_lines.append(buffer.strip())
+            buffer = "" # Reset buffer sau khi thêm đoạn
+
+        # Thêm dòng hiện tại vào buffer
+        if buffer:
+            buffer += " " + line_strip
+        else:
+            buffer = line_strip
+
+        lower_buffer = buffer.lower()
+
+        # --- Logic chèn hình/bảng dựa trên từ khóa (bổ sung nếu Gemini không chèn) ---
+        # Chỉ chèn nếu chưa có hình/bảng nào được chèn ở vị trí này trong buffer
+        # và còn hình/bảng trong danh sách figures
+        
+        # Kiểm tra xem đã có hình/bảng nào được chèn ở các dòng gần đây chưa
+        # (để tránh chèn lặp nếu logic từ khóa đã chèn)
+        already_inserted_near = False
+        if processed_lines:
+            # Kiểm tra dòng cuối cùng đã được thêm vào processed_lines
+            last_line = processed_lines[-1]
+            if re.search(r'\[(HÌNH|BẢNG):.*?\]', last_line):
+                already_inserted_near = True
+
+        if not already_inserted_near and fig_idx < n_fig:
+            # Ưu tiên chèn bảng nếu có từ khóa bảng và bảng còn
+            if figures[fig_idx]["is_table"] and any(kw in lower_buffer for kw in table_kw):
+                processed_lines.append(buffer.strip()) # Thêm đoạn văn bản trước khi chèn bảng
+                processed_lines.append(f"[BẢNG: {figures[fig_idx]['name']}]")
+                fig_idx += 1
+                buffer = "" # Reset buffer sau khi chèn
+            # Ưu tiên chèn hình nếu có từ khóa hình và hình còn
+            elif not figures[fig_idx]["is_table"] and any(kw in lower_buffer for kw in keywords):
+                processed_lines.append(buffer.strip()) # Thêm đoạn văn bản trước khi chèn hình
+                processed_lines.append(f"[HÌNH: {figures[fig_idx]['name']}]")
+                fig_idx += 1
+                buffer = "" # Reset buffer sau khi chèn
+            # Heuristic cho câu hỏi mới nếu chưa có từ khóa cụ thể
+            elif is_new_question:
                 # Nếu là câu hỏi mới và chưa có từ khóa cụ thể, chèn hình/bảng tiếp theo
                 # (có thể tinh chỉnh thêm điều kiện ở đây nếu muốn chặt chẽ hơn)
                 if figures[fig_idx]["is_table"]:
@@ -90,9 +190,11 @@ def remove_all_figure_markdown(text):
                 # Không reset buffer ở đây nếu bạn muốn câu hỏi và ảnh nằm trong cùng một "đoạn" logic
                 # Nhưng để đảm bảo ảnh nằm trên dòng riêng, vẫn reset buffer
                 buffer = "" 
+
     # --- Xử lý buffer cuối cùng và các hình/bảng còn lại ---
     if buffer:
         processed_lines.append(buffer.strip())
+
     # Chèn các hình/bảng còn lại ở cuối tài liệu nếu chưa được chèn
     while fig_idx < n_fig:
         if figures[fig_idx]["is_table"]:
@@ -335,4 +437,3 @@ with tab_pdf:
     st.markdown("---")
 
 st.caption("✨ Mapping bảng/tách hình tự động, chuẩn layout, tách đúng bảng giá trị, bảng tần số, bảng biến thiên. Xuất Word mapping đúng vị trí minh hoạ & bảng.")
-
