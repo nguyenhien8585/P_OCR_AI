@@ -70,8 +70,7 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.005, min_area_abs=150
     # Sắp xếp các ứng cử viên theo diện tích giảm dần để ưu tiên các hình lớn
     candidates = sorted(candidates, key=lambda f: f['area'], reverse=True)
     
-    # Giới hạn cứng số lượng đối tượng trả về là 2 (hoặc max_figures nếu bạn muốn linh hoạt)
-    # Nếu bạn chắc chắn chỉ có 2 ảnh minh họa, giữ nguyên [:2]
+    # Giới hạn cứng số lượng đối tượng trả về là 2
     candidates = candidates[:2] 
 
     # Sắp xếp lại theo vị trí trên trang (y, x) để đảm bảo thứ tự logic
@@ -131,15 +130,17 @@ def find_best_matching_figure(figures_pool, is_table_needed, current_line_lower,
     
     # FALLBACK: Nếu không tìm thấy khớp chính xác theo loại, nhưng có từ khóa mạnh
     # và chỉ còn một hình ảnh/bảng chưa được chèn, hoặc hình ảnh/bảng đó có vẻ phù hợp nhất
-    if is_table_needed and any(kw in current_line_lower for kw in table_kw):
-        for fig in figures_pool:
-            if not fig["is_table"]: 
-                return fig 
+    # Logic này có thể gây ra việc chèn sai loại hình ảnh nếu không cẩn thận.
+    # Tạm thời bỏ qua logic fallback này để ưu tiên khớp chính xác.
+    # if is_table_needed and any(kw in current_line_lower for kw in table_kw):
+    #     for fig in figures_pool:
+    #         if not fig["is_table"]: 
+    #             return fig 
     
-    elif not is_table_needed and any(kw in current_line_lower for kw in keywords):
-        for fig in figures_pool:
-            if fig["is_table"]: 
-                return fig 
+    # elif not is_table_needed and any(kw in current_line_lower for kw in keywords):
+    #     for fig in figures_pool:
+    #         if fig["is_table"]: 
+    #             return fig 
             
     return None
 
@@ -167,6 +168,9 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
     
     buffer = "" 
     
+    # Tạo một bản sao của danh sách figures để dễ dàng quản lý các hình đã được chèn
+    available_figures = list(figures)
+    
     for idx, line in enumerate(lines):
         line_strip = line.strip()
 
@@ -176,13 +180,19 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
                 processed_lines.append(buffer.strip())
                 buffer = ""
             
-            figures_pool = [f for f in figures if f["name"] not in inserted_figures_names]
             found_fig = None
-
-            if "[HÌNH_PLACEHOLDER]" in line_strip:
-                found_fig = find_best_matching_figure(figures_pool, False, line_strip.lower(), keywords, table_kw)
-            elif "[BẢNG_PLACEHOLDER]" in line_strip:
-                found_fig = find_best_matching_figure(figures_pool, True, line_strip.lower(), keywords, table_kw)
+            # Tìm hình ảnh/bảng phù hợp nhất từ các hình chưa được chèn
+            for i, fig in enumerate(available_figures):
+                if fig is None: continue # Bỏ qua các hình đã được chèn
+                
+                if "[HÌNH_PLACEHOLDER]" in line_strip and not fig["is_table"]:
+                    found_fig = fig
+                    available_figures[i] = None # Đánh dấu là đã sử dụng
+                    break
+                elif "[BẢNG_PLACEHOLDER]" in line_strip and fig["is_table"]:
+                    found_fig = fig
+                    available_figures[i] = None # Đánh dấu là đã sử dụng
+                    break
             
             if found_fig:
                 if found_fig["is_table"]:
@@ -191,6 +201,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
                     processed_lines.append(line_strip.replace("[HÌNH_PLACEHOLDER]", f"[HÌNH: {found_fig['name']}]"))
                 inserted_figures_names.add(found_fig["name"])
             else: 
+                # Nếu không tìm thấy hình phù hợp, loại bỏ placeholder
                 processed_lines.append(line_strip.replace("[HÌNH_PLACEHOLDER]", "").replace("[BẢNG_PLACEHOLDER]", "").strip())
             continue 
 
@@ -218,23 +229,26 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
         lower_buffer = buffer.lower()
 
         # --- Logic chèn hình/bảng dựa trên từ khóa (bổ sung nếu Gemini không chèn) ---
+        # Chỉ chèn nếu chưa có hình/bảng nào được chèn gần đây
         already_inserted_near = False
-        if processed_lines:
-            last_line = processed_lines[-1]
-            if re.search(r'\[(HÌNH|BẢNG):.*?\]', last_line):
-                already_inserted_near = True
+        if processed_lines and re.search(r'\[(HÌNH|BẢNG):.*?\]', processed_lines[-1]):
+            already_inserted_near = True
 
         if not already_inserted_near:
-            figures_pool = [f for f in figures if f["name"] not in inserted_figures_names]
             found_fig_to_insert = None
             
-            # Ưu tiên tìm bảng nếu có từ khóa bảng
-            if any(kw in lower_buffer for kw in table_kw):
-                found_fig_to_insert = find_best_matching_figure(figures_pool, True, lower_buffer, keywords, table_kw)
-            
-            # Nếu chưa tìm thấy và có từ khóa hình ảnh, tìm hình ảnh
-            if not found_fig_to_insert and any(kw in lower_buffer for kw in keywords):
-                found_fig_to_insert = find_best_matching_figure(figures_pool, False, lower_buffer, keywords, table_kw)
+            # Tìm hình ảnh/bảng phù hợp nhất từ các hình chưa được chèn
+            for i, fig in enumerate(available_figures):
+                if fig is None: continue # Bỏ qua các hình đã được chèn
+
+                if fig["is_table"] and any(kw in lower_buffer for kw in table_kw):
+                    found_fig_to_insert = fig
+                    available_figures[i] = None # Đánh dấu là đã sử dụng
+                    break
+                elif not fig["is_table"] and any(kw in lower_buffer for kw in keywords):
+                    found_fig_to_insert = fig
+                    available_figures[i] = None # Đánh dấu là đã sử dụng
+                    break
             
             # Nếu tìm thấy hình ảnh/bảng phù hợp, chèn nó
             if found_fig_to_insert:
@@ -255,8 +269,10 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
         processed_lines.append(buffer.strip())
 
     # Chèn các hình/bảng còn lại ở cuối tài liệu nếu chưa được chèn
-    for fig in figures:
-        if fig["name"] not in inserted_figures_names:
+    # Sắp xếp lại các hình còn lại theo thứ tự ban đầu để chèn
+    remaining_figures = sorted([f for f in available_figures if f is not None], key=lambda f: (f['bbox'][1], f['bbox'][0]))
+    for fig in remaining_figures:
+        if fig["name"] not in inserted_figures_names: # Kiểm tra lại để tránh trùng lặp
             if fig["is_table"]:
                 processed_lines.append(f"[BẢNG: {fig['name']}]")
             else:
