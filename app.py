@@ -15,7 +15,7 @@ from word_export import insert_images_to_word_from_markdown
 def extract_figures_and_tables(img_bytes, min_area_ratio=0.008, min_area_abs=2000, min_w=60, min_h=60, max_figures=8):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
-    h, w = img.shape[:2]
+    h, w = img.shape[:2] # h và w được định nghĩa ở đây
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     
     # Áp dụng GaussianBlur để làm mịn nhiễu
@@ -105,7 +105,8 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.008, min_area_abs=200
             "bbox": fig_data["bbox"] 
         })
 
-    return final_figures_list
+    # Trả về cả danh sách hình ảnh và chiều cao/rộng của ảnh gốc
+    return final_figures_list, h, w
 
 def remove_all_figure_markdown(text):
     """
@@ -135,7 +136,7 @@ def find_best_matching_figure(figures_pool, is_table_needed, current_line_lower,
     return None
 
 # -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
-def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, table_kw=None):
+def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywords=None, table_kw=None):
     """
     Nối các đoạn văn bản và chèn hình ảnh/bảng vào đúng vị trí.
     Ưu tiên thay thế các placeholder do Gemini tạo ra, sau đó chèn bổ sung
@@ -232,7 +233,8 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
             
             # Tìm hình ảnh/bảng phù hợp nhất từ các hình chưa được chèn
             # Ưu tiên hình ảnh có bbox gần với vị trí hiện tại của văn bản
-            current_line_y_center = idx * (h / len(lines)) # Ước tính vị trí y của dòng hiện tại
+            # Sử dụng img_h (chiều cao ảnh gốc) để tính toán vị trí tương đối
+            current_line_y_center = idx * (img_h / len(lines)) 
             
             best_match_dist = float('inf')
             best_match_fig_idx = -1
@@ -360,7 +362,8 @@ with tab_img:
             # Nút xử lý OCR Image cho từng ảnh
             if st.button(f"🚀 Xử lý OCR Image ({img_file.name})", key=ocr_key):
                 img_bytes = img_file.read()
-                figures = extract_figures_and_tables(img_bytes)
+                # Thay đổi cách gọi hàm extract_figures_and_tables để nhận cả h và w
+                figures, img_h, img_w = extract_figures_and_tables(img_bytes) 
                 api_key = get_next_api_key()
                 with st.spinner("Đang nhận diện..."):
                     try:
@@ -369,7 +372,8 @@ with tab_img:
                         text = f"[Lỗi Gemini: {e}]"
                 
                 text = remove_all_figure_markdown(text) 
-                text = join_paragraphs_and_insert_figures_tables(text, figures)
+                # Truyền img_h và img_w vào hàm join_paragraphs_and_insert_figures_tables
+                text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
                 
                 st.session_state[text_key] = text
                 st.session_state[fig_key] = figures
@@ -460,8 +464,8 @@ with tab_pdf:
                 client = EnhancedSmartOCRClient(API_URL, API_KEY)
                 uploaded_file.seek(0)
                 pdf_bytes = uploaded_file.read()
+                images = extract_images_from_pdf(pdf_bytes) # extract_images_from_pdf không trả về h, w
                 result = client.convert(pdf_bytes, file_name, mime_type)
-                images = extract_images_from_pdf(pdf_bytes)
             if not result.get("success"):
                 st.error("❌ Xử lý OCR PDF thất bại: " + str(result.get("error")))
                 st.stop()
