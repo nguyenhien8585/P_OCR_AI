@@ -30,8 +30,8 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     # Find table contours
     contours, _ = cv2.findContours(table_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     tables = []
-    table_count = 0 # <-- Thêm bộ đếm riêng cho bảng
-    for cnt in contours: # Không dùng enumerate ở đây
+    table_count = 0 
+    for cnt in contours: 
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
         if area > min_area_abs and ww > 40 and hh > 20:
@@ -40,13 +40,13 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
             Image.fromarray(crop).save(buf, format="JPEG")
             b64 = base64.b64encode(buf.getvalue()).decode()
             tables.append({"name": f"table-{table_count}.jpeg", "base64": b64, "is_table": True, "bbox": (x, y, ww, hh)})
-            table_count += 1 # Tăng bộ đếm khi thêm bảng
+            table_count += 1 
 
     # Tách hình minh hoạ (contour không phải bảng)
     contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     figures = []
-    figure_count = 0 # <-- Thêm bộ đếm riêng cho hình ảnh
-    for cnt in contours: # Không dùng enumerate ở đây
+    figure_count = 0 
+    for cnt in contours: 
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
         if area > min_area_abs and ww > 50 and hh > 50:
@@ -63,19 +63,40 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
                 Image.fromarray(crop).save(buf, format="JPEG")
                 b64 = base64.b64encode(buf.getvalue()).decode()
                 figures.append({"name": f"img-{figure_count}.jpeg", "base64": b64, "is_table": False})
-                figure_count += 1 # Tăng bộ đếm khi thêm hình ảnh
-    return tables + figures
+                figure_count += 1 
+    
+    # Sắp xếp lại figures để đảm bảo thứ tự hợp lý (ví dụ: theo tọa độ y, sau đó x)
+    # Điều này giúp img-0.jpeg và img-1.jpeg có thứ tự đúng nếu chúng nằm trên cùng một dòng
+    # hoặc nếu bảng biến thiên (img-1.jpeg) thực sự nằm dưới hình lăng trụ (img-0.jpeg)
+    # trong ảnh gốc. Nếu không, thứ tự này có thể cần được điều chỉnh.
+    all_figures = tables + figures
+    # Giả định bbox là (x, y, w, h)
+    # Sắp xếp theo tọa độ y (hàng), sau đó theo x (cột)
+    all_figures_sorted = sorted(all_figures, key=lambda f: f['bbox'][1] if 'bbox' in f else 0) # Sort by y-coordinate
+    
+    # Cập nhật lại tên img-X.jpeg và table-X.jpeg sau khi sắp xếp
+    final_figures = []
+    img_idx = 0
+    table_idx = 0
+    for fig in all_figures_sorted:
+        if fig["is_table"]:
+            fig["name"] = f"table-{table_idx}.jpeg"
+            table_idx += 1
+        else:
+            fig["name"] = f"img-{img_idx}.jpeg"
+            img_idx += 1
+        final_figures.append(fig)
+
+    return final_figures
 
 def remove_all_figure_markdown(text):
     """
     Loại bỏ các markdown hình ảnh/bảng cũ hoặc placeholder không mong muốn.
     """
     if not isinstance(text, str): return ""
-    # Loại bỏ các định dạng cũ nếu Gemini vẫn tạo ra
     text = re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)', '', text)
-    text = re.sub(r'\[HÌNH:.*?\]', '', text) # Loại bỏ placeholder cũ nếu có
-    text = re.sub(r'\[BẢNG:.*?\]', '', text) # Loại bỏ placeholder cũ nếu có
-    # Loại bỏ các placeholder mới nếu chúng không được xử lý đúng cách
+    text = re.sub(r'\[HÌNH:.*?\]', '', text) 
+    text = re.sub(r'\[BẢNG:.*?\]', '', text) 
     text = re.sub(r'\[HÌNH_PLACEHOLDER\]', '', text)
     text = re.sub(r'\[BẢNG_PLACEHOLDER\]', '', text)
     return text
@@ -94,9 +115,11 @@ def find_best_matching_figure(figures_pool, is_table_needed, current_line_lower,
                 return fig
     
     # Nếu không tìm thấy khớp chính xác, thử tìm theo loại thôi (nếu có)
+    # Điều này có thể gây chèn sai nếu có nhiều hình cùng loại không có từ khóa
+    # Nhưng cần thiết nếu từ khóa không đủ mạnh
     for fig in figures_pool:
         if fig["is_table"] == is_table_needed:
-            return fig # Trả về hình ảnh/bảng đầu tiên khớp loại
+            return fig 
             
     return None
 
@@ -120,10 +143,9 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
     lines = [l.rstrip() for l in text.split('\n')]
     processed_lines = []
     
-    # Sử dụng một tập hợp để theo dõi các hình ảnh/bảng đã được chèn
     inserted_figures_names = set()
     
-    buffer = "" # Buffer để xây dựng các đoạn văn bản
+    buffer = "" 
     
     st.write("--- Debugging join_paragraphs_and_insert_figures_tables ---")
     st.write(f"Initial figures: {[f['name'] for f in figures]}")
@@ -173,11 +195,13 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
 
         is_new_question = re.match(r"^Câu\s*\d+\.?", line_strip)
 
+        # Flush buffer nếu kết thúc câu hoặc là câu hỏi mới
         if buffer and (re.search(r"[.!?…:]$", buffer) or is_new_question):
             processed_lines.append(buffer.strip())
             st.write(f"  Flushing buffer (sentence end/new question): '{buffer.strip()}'")
             buffer = "" 
 
+        # Thêm dòng hiện tại vào buffer
         if buffer:
             buffer += " " + line_strip
         else:
@@ -211,7 +235,8 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
             
             # Nếu tìm thấy hình ảnh/bảng phù hợp, chèn nó
             if found_fig_to_insert:
-                if buffer and (not processed_lines or processed_lines[-1].strip() != buffer.strip()):
+                # Flush buffer trước khi chèn hình ảnh/bảng
+                if buffer:
                     processed_lines.append(buffer.strip())
                     st.write(f"  Flushing buffer before keyword insert: '{buffer.strip()}'")
                     buffer = "" 
@@ -244,7 +269,6 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
             inserted_figures_names.add(fig["name"]) 
     
     st.write("--- End Debugging ---")
-    # Lọc bỏ các dòng trống không cần thiết và trả về văn bản đã xử lý
     return '\n'.join([l for l in processed_lines if l.strip()])
 
 # --------- Key Gemini -----------
@@ -328,17 +352,12 @@ with tab_img:
                     except Exception as e:
                         text = f"[Lỗi Gemini: {e}]"
                 
-                # Loại bỏ các markdown/placeholder cũ hoặc không mong muốn từ Gemini
                 text = remove_all_figure_markdown(text) 
-                
-                # Chèn hình ảnh/bảng đã tách vào văn bản
                 text = join_paragraphs_and_insert_figures_tables(text, figures)
                 
-                # Lưu vào session
                 st.session_state[text_key] = text
                 st.session_state[fig_key] = figures
 
-            # Nếu đã xử lý => Hiện kết quả và cho phép xuất Word
             if text_key in st.session_state and fig_key in st.session_state:
                 st.markdown("### 📋 Kết quả mapping nâng cao:")
                 st.code(st.session_state[text_key], language="markdown")
@@ -421,7 +440,6 @@ with tab_pdf:
             st.success("✅ Đã nhận diện PDF thành công!")
     if st.session_state.get("ocr_done"):
         def dollar_to_mathptn(s):
-            # Chuyển đổi $...$ thành ${...}$ để đảm bảo định dạng LaTeX nhất quán
             return re.sub(r'\$(.+?)\$', r'${\1}$', s)
         raw_text = st.session_state.get("ocr_text_raw", "")
         text_content = dollar_to_mathptn(raw_text)
