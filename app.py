@@ -30,7 +30,8 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     # Find table contours
     contours, _ = cv2.findContours(table_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     tables = []
-    for idx, cnt in enumerate(contours):
+    table_count = 0 # <-- Thêm bộ đếm riêng cho bảng
+    for cnt in contours: # Không dùng enumerate ở đây
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
         if area > min_area_abs and ww > 40 and hh > 20:
@@ -38,20 +39,20 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
             buf = io.BytesIO()
             Image.fromarray(crop).save(buf, format="JPEG")
             b64 = base64.b64encode(buf.getvalue()).decode()
-            # Đặt tên file bắt đầu từ 0
-            tables.append({"name": f"table-{idx}.jpeg", "base64": b64, "is_table": True, "bbox": (x, y, ww, hh)})
-    
+            tables.append({"name": f"table-{table_count}.jpeg", "base64": b64, "is_table": True, "bbox": (x, y, ww, hh)})
+            table_count += 1 # Tăng bộ đếm khi thêm bảng
+
     # Tách hình minh hoạ (contour không phải bảng)
     contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     figures = []
-    for idx, cnt in enumerate(contours):
+    figure_count = 0 # <-- Thêm bộ đếm riêng cho hình ảnh
+    for cnt in contours: # Không dùng enumerate ở đây
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
         if area > min_area_abs and ww > 50 and hh > 50:
             # Loại bỏ vùng bảng đã nhận phía trên
             overlapped = False
             for t in tables:
-                # Lấy bbox đã lưu trực tiếp để kiểm tra chồng lấn
                 tb_x, tb_y, tb_w, tb_h = t['bbox'] 
                 if abs(tb_x-x)<12 and abs(tb_y-y)<12 and abs(tb_w-ww)<25 and abs(tb_h-hh)<25:
                     overlapped = True
@@ -61,8 +62,8 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
                 buf = io.BytesIO()
                 Image.fromarray(crop).save(buf, format="JPEG")
                 b64 = base64.b64encode(buf.getvalue()).decode()
-                # Đặt tên file bắt đầu từ 0
-                figures.append({"name": f"img-{idx}.jpeg", "base64": b64, "is_table": False})
+                figures.append({"name": f"img-{figure_count}.jpeg", "base64": b64, "is_table": False})
+                figure_count += 1 # Tăng bộ đếm khi thêm hình ảnh
     return tables + figures
 
 def remove_all_figure_markdown(text):
@@ -179,6 +180,8 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
                 fig_idx += 1
                 buffer = "" # Reset buffer sau khi chèn
             # Heuristic cho câu hỏi mới nếu chưa có từ khóa cụ thể
+            # Điều chỉnh heuristic này để chỉ chèn nếu dòng hiện tại là một câu hỏi
+            # và chưa có hình/bảng nào được chèn ngay sau nó
             elif is_new_question:
                 # Nếu là câu hỏi mới và chưa có từ khóa cụ thể, chèn hình/bảng tiếp theo
                 # (có thể tinh chỉnh thêm điều kiện ở đây nếu muốn chặt chẽ hơn)
@@ -187,8 +190,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
                 else:
                     processed_lines.append(f"[HÌNH: {figures[fig_idx]['name']}]")
                 fig_idx += 1
-                # Không reset buffer ở đây nếu bạn muốn câu hỏi và ảnh nằm trong cùng một "đoạn" logic
-                # Nhưng để đảm bảo ảnh nằm trên dòng riêng, vẫn reset buffer
+                # Reset buffer để đảm bảo ảnh nằm trên dòng riêng sau câu hỏi
                 buffer = "" 
 
     # --- Xử lý buffer cuối cùng và các hình/bảng còn lại ---
