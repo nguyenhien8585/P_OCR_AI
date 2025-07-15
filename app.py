@@ -60,9 +60,8 @@ def remove_all_figure_markdown(text):
     text = re.sub(r'\[BẢNG: table-\d+\.jpeg\]', '', text)
     return text
 # -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
-                fig_idx += 1
-                buffer = ""
-        
+        fig_idx += 1
+        buffer = ""
         # Heuristic cho câu hỏi mới nếu chưa có từ khóa cụ thể
         if is_new_question and fig_idx < n_fig:
             # Kiểm tra xem đã có hình/bảng nào được chèn ngay sau câu hỏi này chưa
