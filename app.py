@@ -60,21 +60,134 @@ def remove_all_figure_markdown(text):
     text = re.sub(r'\[BẢNG: table-\d+\.jpeg\]', '', text)
     return text
 # -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
-        fig_idx += 1
-        buffer = ""
-        # Heuristic cho câu hỏi mới nếu chưa có từ khóa cụ thể
-        if is_new_question and fig_idx < n_fig:
-            # Kiểm tra xem đã có hình/bảng nào được chèn ngay sau câu hỏi này chưa
-            # và nếu chưa, chèn hình/bảng tiếp theo
-            if not any(re.search(r'\[(HÌNH|BẢNG):.*?\]', pl) for pl in processed_lines[-2:]): # Kiểm tra 2 dòng cuối
-                if figures[fig_idx]["is_table"]:
-                    processed_lines.append(f"[BẢNG: {figures[fig_idx]['name']}]")
-                else:
-                    processed_lines.append(f"[HÌNH: {figures[fig_idx]['name']}]")
+def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, table_kw=None):
+    """
+    Nối các đoạn văn bản và chèn hình ảnh/bảng vào đúng vị trí.
+    Ưu tiên thay thế các placeholder do Gemini tạo ra, sau đó chèn bổ sung
+    dựa trên từ khóa và heuristic nếu cần.
+    """
+    if keywords is None:
+        keywords = [
+            "xem hình", "hình dưới", "hình vẽ", "biểu đồ", "minh hoạ",
+            "minh họa", "bảng dưới", "hình bên", "hình minh hoạ", "hình minh họa"
+        ]
+    if table_kw is None:
+        table_kw = [
+            "bảng biến thiên", "bảng giá trị", "bảng tần số", "bảng sau", "bảng dưới"
+        ]
+    
+    lines = [l.rstrip() for l in text.split('\n')]
+    processed_lines = []
+    fig_idx = 0 # Chỉ số cho danh sách figures đã tách
+    n_fig = len(figures)
+    
+    buffer = "" # Buffer để xây dựng các đoạn văn bản
+    
+    for idx, line in enumerate(lines):
+        line_strip = line.strip()
+
+        # --- Xử lý Placeholder từ Gemini ---
+        # Nếu dòng chứa placeholder do Gemini tạo ra, ưu tiên xử lý nó
+        if "[HÌNH_PLACEHOLDER]" in line_strip or "[BẢNG_PLACEHOLDER]" in line_strip:
+            if buffer: # Nếu có nội dung trong buffer, thêm nó vào processed_lines trước
+                processed_lines.append(buffer.strip())
+                buffer = ""
+            
+            # Thay thế placeholder bằng hình ảnh/bảng thực tế từ danh sách figures
+            if "[HÌNH_PLACEHOLDER]" in line_strip and fig_idx < n_fig and not figures[fig_idx]["is_table"]:
+                processed_lines.append(line_strip.replace("[HÌNH_PLACEHOLDER]", f"[HÌNH: {figures[fig_idx]['name']}]"))
                 fig_idx += 1
+            elif "[BẢNG_PLACEHOLDER]" in line_strip and fig_idx < n_fig and figures[fig_idx]["is_table"]:
+                processed_lines.append(line_strip.replace("[BẢNG_PLACEHOLDER]", f"[BẢNG: {figures[fig_idx]['name']}]"))
+                fig_idx += 1
+            else: 
+                # Nếu placeholder không khớp với hình/bảng tiếp theo, hoặc không còn hình/bảng
+                # Giữ nguyên placeholder hoặc loại bỏ nó (tùy thuộc vào mong muốn)
+                # Ở đây, tôi sẽ loại bỏ nó để tránh các placeholder không được thay thế
+                processed_lines.append(line_strip.replace("[HÌNH_PLACEHOLDER]", "").replace("[BẢNG_PLACEHOLDER]", "").strip())
+            continue # Đã xử lý dòng này, chuyển sang dòng tiếp theo
+
+        # --- Xử lý các dòng văn bản thông thường ---
+        # Nếu dòng là dấu phân cách hoặc trống, kết thúc đoạn hiện tại
+        if not line_strip or re.match(r"^(HẾT|Trang|Mã đề|----+)$", line_strip):
+            if buffer:
+                processed_lines.append(buffer.strip())
+                buffer = ""
+            processed_lines.append(line_strip)
+            continue
+
+        # Kiểm tra xem đây có phải là một câu hỏi mới không
+        is_new_question = re.match(r"^Câu\s*\d+\.?", line_strip)
+
+        # Nếu buffer đã có nội dung và kết thúc bằng một câu hoàn chỉnh (dấu câu)
+        # hoặc nếu đây là một câu hỏi mới, thì kết thúc đoạn hiện tại
+        if buffer and (re.search(r"[.!?…:]$", buffer) or is_new_question):
+            processed_lines.append(buffer.strip())
+            buffer = "" # Reset buffer sau khi thêm đoạn
+
+        # Thêm dòng hiện tại vào buffer
+        if buffer:
+            buffer += " " + line_strip
+        else:
+            buffer = line_strip
+
+        lower_buffer = buffer.lower()
+
+        # --- Logic chèn hình/bảng dựa trên từ khóa (bổ sung nếu Gemini không chèn) ---
+        # Chỉ chèn nếu chưa có hình/bảng nào được chèn ở vị trí này trong buffer
+        # và còn hình/bảng trong danh sách figures
+        
+        # Ưu tiên chèn bảng nếu có từ khóa bảng và bảng còn
+        if any(kw in lower_buffer for kw in table_kw) and fig_idx < n_fig and figures[fig_idx]["is_table"]:
+            # Kiểm tra xem buffer đã chứa một tham chiếu bảng chưa
+            if not re.search(r'\[BẢNG:.*?\]', buffer): 
+                processed_lines.append(buffer.strip()) # Thêm đoạn văn bản trước khi chèn bảng
+                processed_lines.append(f"[BẢNG: {figures[fig_idx]['name']}]")
+                fig_idx += 1
+                buffer = "" # Reset buffer sau khi chèn
+        # Ưu tiên chèn hình nếu có từ khóa hình và hình còn
+        elif any(kw in lower_buffer for kw in keywords) and fig_idx < n_fig and not figures[fig_idx]["is_table"]:
+            # Kiểm tra xem buffer đã chứa một tham chiếu hình chưa
+            if not re.search(r'\[HÌNH:.*?\]', buffer):
+                processed_lines.append(buffer.strip()) # Thêm đoạn văn bản trước khi chèn hình
+                processed_lines.append(f"[HÌNH: {figures[fig_idx]['name']}]")
+                fig_idx += 1
+                buffer = "" # Reset buffer sau khi chèn
+        
+        # --- Heuristic cho câu hỏi mới nếu chưa có từ khóa cụ thể ---
+        # Nếu là một câu hỏi mới và chưa có hình/bảng nào được chèn ngay sau nó
+        # và còn hình/bảng trong danh sách figures
+        if is_new_question and fig_idx < n_fig:
+            # Kiểm tra xem đã có hình/bảng nào được chèn ở các dòng gần đây chưa
+            # (ví dụ: 2 dòng cuối cùng trong processed_lines)
+            # Điều này giúp tránh chèn lặp nếu logic từ khóa đã chèn
+            already_inserted_near_question = False
+            for pl in processed_lines[-2:]: # Kiểm tra 2 dòng cuối
+                if re.search(r'\[(HÌNH|BẢNG):.*?\]', pl):
+                    already_inserted_near_question = True
+                    break
+            
+            if not already_inserted_near_question:
+                # Chèn hình/bảng tiếp theo nếu nó phù hợp (ví dụ: bảng nếu có từ khóa bảng)
+                # Hoặc chèn hình/bảng đầu tiên còn lại
+                if figures[fig_idx]["is_table"] and any(tbl in lower_buffer for tbl in table_kw):
+                    processed_lines.append(f"[BẢNG: {figures[fig_idx]['name']}]")
+                    fig_idx += 1
+                elif not figures[fig_idx]["is_table"] and any(kw in lower_buffer for kw in keywords):
+                    processed_lines.append(f"[HÌNH: {figures[fig_idx]['name']}]")
+                    fig_idx += 1
+                else: # Nếu không có từ khóa cụ thể, chèn hình/bảng tiếp theo
+                    if figures[fig_idx]["is_table"]:
+                        processed_lines.append(f"[BẢNG: {figures[fig_idx]['name']}]")
+                    else:
+                        processed_lines.append(f"[HÌNH: {figures[fig_idx]['name']}]")
+                    fig_idx += 1
+
+    # --- Xử lý buffer cuối cùng và các hình/bảng còn lại ---
     if buffer:
         processed_lines.append(buffer.strip())
-    # Chèn các hình/bảng còn lại ở cuối nếu chưa được chèn
+
+    # Chèn các hình/bảng còn lại ở cuối tài liệu nếu chưa được chèn
     while fig_idx < n_fig:
         if figures[fig_idx]["is_table"]:
             processed_lines.append(f"[BẢNG: {figures[fig_idx]['name']}]")
@@ -82,6 +195,7 @@ def remove_all_figure_markdown(text):
             processed_lines.append(f"[HÌNH: {figures[fig_idx]['name']}]")
         fig_idx += 1
     
+    # Lọc bỏ các dòng trống không cần thiết và trả về văn bản đã xử lý
     return '\n'.join([l for l in processed_lines if l.strip()])
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
