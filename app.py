@@ -141,11 +141,11 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
         keywords = [
             "xem hình", "hình dưới", "hình vẽ", "biểu đồ", "minh hoạ",
             "minh họa", "hình bên", "hình minh hoạ", "hình minh họa",
-            "hình chữ nhật", "điểm", "cạnh", "diện tích", "vùng đất" # Thêm từ khóa cho câu hình học
+            "hình chữ nhật", "điểm", "cạnh", "diện tích", "vùng đất", "như hình vẽ"
         ]
     if table_kw is None:
         table_kw = [
-            "bảng biến thiên", "bảng giá trị", "bảng tần số", "bảng sau", "bảng dưới"
+            "bảng biến thiên", "bảng giá trị", "bảng tần số", "bảng sau", "bảng dưới", "thống kê lại ở bảng"
         ]
     
     lines = [l.rstrip() for l in text.split('\n')]
@@ -253,11 +253,17 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
                     current_buffer = ""
                 final_processed_lines.append("")
             else:
-                # Nối dòng vào buffer
-                if current_buffer and not re.match(r"^Câu\s*(\d+)\.?", line_strip) and not re.search(r'[.!?…:]\s*$', current_buffer.strip()):
-                    current_buffer += " " + line_strip
-                else:
+                                # Nối dòng vào buffer
+                # Nếu buffer đang trống HOẶC dòng hiện tại là đầu câu hỏi mới HOẶC buffer vừa kết thúc câu
+                # thì dòng hiện tại bắt đầu một buffer mới.
+                # Ngược lại, nối dòng hiện tại vào buffer.
+                is_new_question_start_in_line = re.match(r"^Câu\s*(\d+)\.?", line_strip)
+                buffer_ends_sentence_in_buffer = re.search(r'[.!?…:]\s*$', current_buffer.strip())
+
+                if not current_buffer or is_new_question_start_in_line or buffer_ends_sentence_in_buffer:
                     current_buffer = line_strip
+                else:
+                    current_buffer += " " + line_strip
         
         # Flush buffer cuối cùng của khối
         if current_buffer:
@@ -306,90 +312,92 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
     "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
-  "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
-  "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
-  "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
-  "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
-  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
+    "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
+    "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
+    "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
+    "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
+    "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
 ]
 api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
     return next(api_key_cycle)
 
+# GEMINI_PROMPT được cập nhật theo yêu cầu của bạn
 GEMINI_PROMPT = '''
 YÊU CẦU:
 1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh, giữ nguyên cấu trúc đoạn văn, dấu xuống dòng và định dạng ban đầu.
 2. Nếu phát hiện nhiều hình minh hoạ (hình vẽ, đồ thị, bảng, ...), hãy đánh dấu đúng vị trí từng hình bằng cú pháp placeholder:
     - `[HÌNH_PLACEHOLDER]` cho hình ảnh minh hoạ.
     - `[BẢNG_PLACEHOLDER]` cho bảng hoặc bảng số liệu.
-3. Với mỗi placeholder, hãy chèn ngay sau dòng mô tả có các cụm từ như: "xem hình dưới", "hình dưới đây", "bảng biến thiên", "bảng tần số", "bảng giá trị", "hình vẽ", "biểu đồ", hoặc ngay sau dòng câu hỏi liên quan tới hình/bảng/biểu đồ đó.
+3. Với mỗi placeholder, hãy chèn ngay sau dòng mô tả có các cụm từ như: "xem hình dưới", "hình dưới đây", "bảng biến thiên", "bảng tần số", "bảng giá trị", "hình vẽ", "biểu đồ", "như hình vẽ", "thống kê lại ở bảng", hoặc ngay sau dòng câu hỏi liên quan tới hình/bảng/biểu đồ đó.
 4. Công thức toán học phải để ở dạng LaTeX inline: `${...}$` (bao gồm cả biểu thức, hệ phương trình, ký hiệu, ...)
 5. Nếu phát hiện bảng số liệu, hãy chuyển thành bảng Markdown nếu có thể.
 6. Định dạng từng loại câu hỏi như sau:
-Định dạng câu hỏi
-1. Trắc nghiệm 4 phương án
-- Bắt đầu bằng "Câu X." (X là số thứ tự), sau đó là nội dung câu hỏi, rồi lần lượt các lựa chọn:
-Câu X. [Nội dung câu hỏi]
-A. [Đáp án A]
-B. [Đáp án B]
-C. [Đáp án C]
-D. [Đáp án D]
-2. Đúng/Sai
+
+**Định dạng câu hỏi:**
+
+1. **Trắc nghiệm 4 phương án**
+   - Bắt đầu bằng "Câu X." (X là số thứ tự), sau đó là nội dung câu hỏi ĐẦY ĐỦ, rồi lần lượt TẤT CẢ các lựa chọn A, B, C, D:
+   Câu X. [Nội dung câu hỏi đầy đủ] 
+   A. [Đáp án A đầy đủ] 
+   B. [Đáp án B đầy đủ] 
+   C. [Đáp án C đầy đủ] 
+   D. [Đáp án D đầy đủ]
+2. **Đúng/Sai**
 - Bắt đầu bằng "Câu X.", nội dung câu hỏi, cuối cùng là 2 lựa chọn trên 2 dòng riêng:
-Câu X. [Nội dung câu hỏi]
-A. Đúng
-B. Sai
-3. Trả lời ngắn
+Câu X. [Nội dung câu hỏi] A. Đúng B. Sai
+3. **Trả lời ngắn**
 - Bắt đầu bằng "Câu X.", nội dung câu hỏi.
-Câu X. [Nội dung câu hỏi]
-Trả lời: ________
-4. Tự luận
+Câu X. [Nội dung câu hỏi] Trả lời: ________
+4. **Tự luận**
 - Bắt đầu bằng "Câu X.", nội dung câu hỏi.
-Câu X. [Nội dung câu hỏi]
-Bài làm:
-Lưu ý:
-- Giữ nguyên thứ tự các câu hỏi, đáp án, nội dung gốc.
-- Chỉ chèn placeholder đúng vị trí liên quan tới hình hoặc bảng.
-- Không tự ý bỏ qua hay thay đổi bất kỳ chi tiết nào.
+Câu X. [Nội dung câu hỏi] 
+
+**Lưu ý quan trọng:**
+- KHÔNG BỎ SÓT bất kỳ câu hỏi nào, kể cả câu hỏi bị thiếu một phần
+- KHÔNG BỎ SÓT bất kỳ đáp án nào (A, B, C, D) - nếu thiếu thì ghi "..." 
+- Giữ nguyên thứ tự các câu hỏi, đáp án, nội dung gốc
+- Chỉ chèn placeholder đúng vị trí liên quan tới hình hoặc bảng
+- Không tự ý bỏ qua hay thay đổi bất kỳ chi tiết nào
+- Ghi rõ thông tin đề thi (tiêu đề, mã đề, thời gian...)
+- Nếu có câu hỏi bị cắt hoặc thiếu, vẫn phải ghi lại phần có thể đọc được
+
 **Ví dụ minh hoạ:**
-Câu 1. Cho tam giác $ABC$ có $AB = AC$. Xem hình dưới.
+
+Câu 1. Cho tam giác ${ABC}$ có ${AB = AC}$. Xem hình dưới.
 [HÌNH_PLACEHOLDER]
-A. Tam giác cân tại $A$.
-B. Tam giác vuông tại $B$.
+A. Tam giác cân tại ${A}$.
+B. Tam giác vuông tại ${B}$.
 C. Tam giác đều.
 D. Tam giác tù.
+
 Câu 2. Điền số thích hợp vào ô trống trong bảng giá trị sau:
 [BẢNG_PLACEHOLDER]
-Câu 3. Phát biểu nào sau đây là đúng về đồ thị hàm số $y = x^2$?
-A. Đồ thị là đường thẳng.
-B. Đồ thị là parabol.
-C. Đồ thị là elip.
-D. Đồ thị là hypebol.
-Câu 4. Hãy giải phương trình $x^2 - 4 = 0$.
+
 Hãy xuất ra văn bản theo đúng định dạng trên!
-Tuyệt đối không bịa hay tự ý thay đổi nội dung.
 '''
+
 def gemini_generate_text(image_bytes, api_key):
-    api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-    b64_img = base64.b64encode(image_bytes).decode()
-    payload = {
-        "contents": [{
-            "role": "user",
-            "parts": [
-                {"text": GEMINI_PROMPT},
-                {"inlineData": {
-                    "mimeType": "image/png",
-                    "data": b64_img
-                }}
-            ]
-        }]
-    }
-    headers = {"Content-Type": "application/json"}
-    r = requests.post(f"{api_url}?key={api_key}", json=payload, headers=headers, timeout=90)
-    r.raise_for_status()
-    res = r.json()
-    text = res["candidates"][0]["content"]["parts"][0]["text"]
-    return text
+ api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+ b64_img = base64.b64encode(image_bytes).decode()
+ payload = {
+     "contents": [{
+         "role": "user",
+         "parts": [
+             {"text": GEMINI_PROMPT},
+             {"inlineData": {
+                 "mimeType": "image/png",
+                 "data": b64_img
+             }}
+         ]
+     }]
+ }
+ headers = {"Content-Type": "application/json"}
+ r = requests.post(f"{api_url}?key={api_key}", json=payload, headers=headers, timeout=90)
+ r.raise_for_status()
+ res = r.json()
+ text = res["candidates"][0]["content"]["parts"][0]["text"]
+ return text
 
 # ========== Giao diện ==========
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
@@ -398,54 +406,54 @@ tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Markdown + Minh
 
 # =================== TAB ẢNH ===================
 with tab_img:
-    uploaded_images = st.file_uploader(
-        "Chọn nhiều ảnh (mỗi ảnh là một trang):",
-        type=["png", "jpg", "jpeg", "webp"],
-        accept_multiple_files=True,
-        help="Mỗi ảnh là 1 trang, minh hoạ & bảng sẽ được tách tự động."
-    )
+ uploaded_images = st.file_uploader(
+     "Chọn nhiều ảnh (mỗi ảnh là một trang):",
+     type=["png", "jpg", "jpeg", "webp"],
+     accept_multiple_files=True,
+     help="Mỗi ảnh là 1 trang, minh hoạ & bảng sẽ được tách tự động."
+ )
 
-    if uploaded_images:
-        for img_idx, img_file in enumerate(uploaded_images):
-            with st.expander("ℹ️ Thông tin file", expanded=True):
-                st.write(f"**🖼️ Tên file:** {img_file.name}")
-                st.write(f"**🟡 Loại file:** {img_file.type}")
-                st.write(f"**✏️ Kích thước:** {img_file.size/1024:.1f} KB")
+ if uploaded_images:
+     for img_idx, img_file in enumerate(uploaded_images):
+         with st.expander("ℹ️ Thông tin file", expanded=True):
+             st.write(f"**🖼️ Tên file:** {img_file.name}")
+             st.write(f"**🟡 Loại file:** {img_file.type}")
+             st.write(f"**✏️ Kích thước:** {img_file.size/1024:.1f} KB")
 
-            ocr_key = f"ocr_{img_file.name}_{img_idx}"
-            text_key = f"text_{img_file.name}_{img_idx}"
-            fig_key = f"fig_{img_file.name}_{img_idx}"
+         ocr_key = f"ocr_{img_file.name}_{img_idx}"
+         text_key = f"text_{img_file.name}_{img_idx}"
+         fig_key = f"fig_{img_file.name}_{img_idx}"
 
-            # Nút xử lý OCR Image cho từng ảnh
-            if st.button(f"🚀 Xử lý OCR Image ({img_file.name})", key=ocr_key):
-                img_bytes = img_file.read()
-                # Thay đổi cách gọi hàm extract_figures_and_tables để nhận cả h và w
-                figures, img_h, img_w = extract_figures_and_tables(img_bytes) 
-                api_key = get_next_api_key()
-                with st.spinner("Đang nhận diện..."):
-                    try:
-                        text = gemini_generate_text(img_bytes, api_key)
-                    except Exception as e:
-                        text = f"[Lỗi Gemini: {e}]"
-                
-                text = remove_all_figure_markdown(text) 
-                # Truyền img_h và img_w vào hàm join_paragraphs_and_insert_figures_tables
-                text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
-                
-                st.session_state[text_key] = text
-                st.session_state[fig_key] = figures
+         # Nút xử lý OCR Image cho từng ảnh
+         if st.button(f"🚀 Xử lý OCR Image ({img_file.name})", key=ocr_key):
+             img_bytes = img_file.read()
+             # Thay đổi cách gọi hàm extract_figures_and_tables để nhận cả h và w
+             figures, img_h, img_w = extract_figures_and_tables(img_bytes) 
+             api_key = get_next_api_key()
+             with st.spinner("Đang nhận diện..."):
+                 try:
+                     text = gemini_generate_text(img_bytes, api_key)
+                 except Exception as e:
+                     text = f"[Lỗi Gemini: {e}]"
+             
+             text = remove_all_figure_markdown(text) 
+             # Truyền img_h và img_w vào hàm join_paragraphs_and_insert_figures_tables
+             text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
+             
+             st.session_state[text_key] = text
+             st.session_state[fig_key] = figures
 
-            if text_key in st.session_state and fig_key in st.session_state:
-                st.markdown("### 📋 Kết quả mapping nâng cao:")
-                
-                # --- Giao diện mới cho tab "Ảnh" ---
-                tab_text_img, tab_figures_img = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
+         if text_key in st.session_state and fig_key in st.session_state:
+             st.markdown("### 📋 Kết quả mapping nâng cao:")
+             
+             # --- Giao diện mới cho tab "Ảnh" ---
+             tab_text_img, tab_figures_img = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
 
-                with tab_text_img:
-                    st.code(st.session_state[text_key], language="markdown")
-                    figures = st.session_state[fig_key] # Lấy lại figures để dùng trong nút tải Word
-                    if figures: # Chỉ hiển thị nút tải Word nếu có hình ảnh
-                        if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", use_container_width=True, key=f"word-{img_file.name}-{img_idx}"):
+             with tab_text_img:
+                 st.code(st.session_state[text_key], language="markdown")
+                 figures = st.session_state[fig_key] # Lấy lại figures để dùng trong nút tải Word
+                 if figures: # Chỉ hiển thị nút tải Word nếu có hình ảnh
+                                             if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", use_container_width=True, key=f"word-{img_file.name}-{img_idx}"):
                             with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
                                 insert_images_to_word_from_markdown(
                                     st.session_state[text_key],
@@ -491,6 +499,7 @@ with tab_img:
 
     else:
         st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
+
 # =================== TAB PDF ===================
 with tab_pdf:
     st.markdown("#### 📝 OCR PDF Toán, giữ công thức, ảnh minh hoạ")
@@ -530,6 +539,7 @@ with tab_pdf:
             st.session_state["ocr_images"] = images
             st.session_state["ocr_done"] = True
             st.success("✅ Đã nhận diện PDF thành công!")
+    
     if st.session_state.get("ocr_done"):
         def dollar_to_mathptn(s):
             return re.sub(r'\$(.+?)\$', r'${\1}$', s)
