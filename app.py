@@ -166,31 +166,31 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
             if re.search(r'\[(HÌNH|BẢNG):.*?\]', last_line):
                 already_inserted_near = True
 
+        # Logic chèn hình ảnh/bảng sau một câu hỏi
         if not already_inserted_near and fig_idx < n_fig:
-            # Ưu tiên chèn bảng nếu có từ khóa bảng và bảng còn
+            # Kiểm tra từ khóa trong buffer hiện tại (có thể là câu hỏi hoặc đoạn văn mô tả)
+            found_keyword_for_current_fig = False
             if figures[fig_idx]["is_table"] and any(kw in lower_buffer for kw in table_kw):
-                processed_lines.append(buffer.strip()) # Thêm đoạn văn bản trước khi chèn bảng
-                processed_lines.append(f"[BẢNG: {figures[fig_idx]['name']}]")
-                fig_idx += 1
-                buffer = "" # Reset buffer sau khi chèn
-            # Ưu tiên chèn hình nếu có từ khóa hình và hình còn
+                found_keyword_for_current_fig = True
             elif not figures[fig_idx]["is_table"] and any(kw in lower_buffer for kw in keywords):
-                processed_lines.append(buffer.strip()) # Thêm đoạn văn bản trước khi chèn hình
-                processed_lines.append(f"[HÌNH: {figures[fig_idx]['name']}]")
-                fig_idx += 1
-                buffer = "" # Reset buffer sau khi chèn
-            # Heuristic cho câu hỏi mới nếu chưa có từ khóa cụ thể
-            # Điều chỉnh heuristic này để chỉ chèn nếu dòng hiện tại là một câu hỏi
-            # và chưa có hình/bảng nào được chèn ngay sau nó
-            elif is_new_question:
-                # Nếu là câu hỏi mới và chưa có từ khóa cụ thể, chèn hình/bảng tiếp theo
-                # (có thể tinh chỉnh thêm điều kiện ở đây nếu muốn chặt chẽ hơn)
+                found_keyword_for_current_fig = True
+            
+            # Nếu tìm thấy từ khóa HOẶC đây là một câu hỏi mới VÀ hình ảnh/bảng đầu tiên
+            # (heuristic cho trường hợp câu 1 có hình ảnh nhưng không có từ khóa rõ ràng)
+            if (found_keyword_for_current_fig) or \
+               (is_new_question and fig_idx == 0): # Chỉ áp dụng cho hình đầu tiên
+                
+                # Nếu buffer chưa được thêm vào processed_lines, thêm nó trước khi chèn hình
+                if buffer and not processed_lines[-1].strip() == buffer.strip():
+                    processed_lines.append(buffer.strip())
+                    buffer = "" # Reset buffer sau khi thêm
+
                 if figures[fig_idx]["is_table"]:
                     processed_lines.append(f"[BẢNG: {figures[fig_idx]['name']}]")
                 else:
                     processed_lines.append(f"[HÌNH: {figures[fig_idx]['name']}]")
                 fig_idx += 1
-                # Reset buffer để đảm bảo ảnh nằm trên dòng riêng sau câu hỏi
+                # Reset buffer để đảm bảo ảnh nằm trên dòng riêng sau câu hỏi/đoạn văn
                 buffer = "" 
 
     # --- Xử lý buffer cuối cùng và các hình/bảng còn lại ---
