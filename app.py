@@ -166,7 +166,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
             if re.search(r'\[(HÌNH|BẢNG):.*?\]', last_line):
                 already_inserted_near = True
 
-        # Logic chèn hình ảnh/bảng sau một câu hỏi
+        # Logic chèn hình ảnh/bảng sau một câu hỏi hoặc đoạn văn có từ khóa
         if not already_inserted_near and fig_idx < n_fig:
             # Kiểm tra từ khóa trong buffer hiện tại (có thể là câu hỏi hoặc đoạn văn mô tả)
             found_keyword_for_current_fig = False
@@ -175,13 +175,10 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
             elif not figures[fig_idx]["is_table"] and any(kw in lower_buffer for kw in keywords):
                 found_keyword_for_current_fig = True
             
-            # Nếu tìm thấy từ khóa HOẶC đây là một câu hỏi mới VÀ hình ảnh/bảng đầu tiên
-            # (heuristic cho trường hợp câu 1 có hình ảnh nhưng không có từ khóa rõ ràng)
-            if (found_keyword_for_current_fig) or \
-               (is_new_question and fig_idx == 0): # Chỉ áp dụng cho hình đầu tiên
-                
+            # Chỉ chèn nếu tìm thấy từ khóa
+            if found_keyword_for_current_fig:
                 # Nếu buffer chưa được thêm vào processed_lines, thêm nó trước khi chèn hình
-                if buffer and not processed_lines[-1].strip() == buffer.strip():
+                if buffer and (not processed_lines or processed_lines[-1].strip() != buffer.strip()):
                     processed_lines.append(buffer.strip())
                     buffer = "" # Reset buffer sau khi thêm
 
@@ -192,12 +189,15 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
                 fig_idx += 1
                 # Reset buffer để đảm bảo ảnh nằm trên dòng riêng sau câu hỏi/đoạn văn
                 buffer = "" 
+            # Loại bỏ heuristic is_new_question và fig_idx == 0 để tránh chèn sai
+            # Nếu không có từ khóa, hình ảnh sẽ được xử lý ở cuối hàm
 
     # --- Xử lý buffer cuối cùng và các hình/bảng còn lại ---
     if buffer:
         processed_lines.append(buffer.strip())
 
     # Chèn các hình/bảng còn lại ở cuối tài liệu nếu chưa được chèn
+    # Đây là "fallback" nếu không tìm thấy vị trí phù hợp dựa trên từ khóa
     while fig_idx < n_fig:
         if figures[fig_idx]["is_table"]:
             processed_lines.append(f"[BẢNG: {figures[fig_idx]['name']}]")
