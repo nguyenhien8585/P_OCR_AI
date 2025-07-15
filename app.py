@@ -19,46 +19,40 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     
     # Tăng cường làm mờ để loại bỏ nhiễu nhỏ và làm mịn các cạnh
-    blur = cv2.GaussianBlur(gray, (9,9), 0) # Tăng kernel size lên (9,9)
+    blur = cv2.GaussianBlur(gray, (11,11), 0) # Tăng kernel size lên (11,11)
     
     # Tinh chỉnh adaptiveThreshold: Tăng blockSize và C để ít nhạy cảm hơn với chi tiết nhỏ
-    # blockSize phải là số lẻ >=3. C là hằng số trừ đi.
-    th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 51, 25) # Tăng blockSize và C
+    th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 61, 30) # Tăng blockSize và C
     
     # Tách bảng bằng morphology line horizontal + vertical
-    # Kernel size có thể cần điều chỉnh tùy thuộc vào kích thước bảng trong ảnh
-    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.4),1)) # Tăng nhẹ
+    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.45),1)) # Tăng nhẹ
     detected_lines = cv2.morphologyEx(th, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
     
-    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.25))) # Tăng nhẹ
-    detected_columns = cv2.morphologyEx(th, cv2.MORPH_OPEN, vertical_kernel, iterations=2) # Đã di chuyển lên trên
+    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.3))) # Tăng nhẹ
+    detected_columns = cv2.morphologyEx(th, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
     
     table_mask = cv2.addWeighted(detected_lines, 0.5, detected_columns, 0.5, 0.0)
     
     # Find table contours
-    # Sử dụng cv2.RETR_EXTERNAL để chỉ lấy các contour ngoài cùng
     contours, _ = cv2.findContours(table_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     temp_tables = [] 
     
     # Tăng mạnh min_table_area
-    min_table_area = max(min_area_abs, 15000) # Tăng lên 15000
+    min_table_area = max(min_area_abs, 20000) # Tăng lên 20000
     
     for cnt in contours: 
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
         aspect_ratio = ww / (hh + 1e-5)
         
-        # Lọc theo độ đầy đủ (solidity) của contour
         contour_area = cv2.contourArea(cnt)
         solidity = float(contour_area) / (ww * hh + 1e-5)
         
-        # Thêm lọc kích thước tối thiểu cho chiều rộng và chiều cao
-        # Thêm lọc theo tỷ lệ của bounding box so với kích thước ảnh tổng thể
         if (area > min_table_area and 
-            ww > 100 and hh > 60 and # Kích thước tối thiểu
-            0.1 < aspect_ratio < 10.0 and # Tỷ lệ khung hình
-            solidity > 0.4 and # Độ đầy đủ (tránh các đường kẻ rời rạc)
-            ww < 0.9 * w and hh < 0.9 * h): # Không quá sát mép ảnh
+            ww > 150 and hh > 80 and # Kích thước tối thiểu
+            0.05 < aspect_ratio < 20.0 and # Tỷ lệ khung hình (cho phép bảng rất rộng/cao)
+            solidity > 0.5 and # Độ đầy đủ (tăng nhẹ)
+            x > 0.05 * w and x + ww < 0.95 * w and y > 0.05 * h and y + hh < 0.95 * h): # Không quá sát mép ảnh (chừa 5% mép)
             
             crop = img[y:y+hh, x:x+ww]
             buf = io.BytesIO()
@@ -67,12 +61,11 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
             temp_tables.append({"base64": b64, "is_table": True, "bbox": (x, y, ww, hh)})
 
     # Tách hình minh hoạ (contour không phải bảng)
-    # Sử dụng cv2.RETR_EXTERNAL để chỉ lấy các contour ngoài cùng
     contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     temp_figures = [] 
     
     # Tăng mạnh min_figure_area
-    min_figure_area = max(min_area_abs, 8000) # Tăng lên 8000
+    min_figure_area = max(min_area_abs, 12000) # Tăng lên 12000
     
     for cnt in contours: 
         x, y, ww, hh = cv2.boundingRect(cnt)
@@ -82,19 +75,17 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
         contour_area = cv2.contourArea(cnt)
         solidity = float(contour_area) / (ww * hh + 1e-5)
 
-        # Thêm lọc kích thước tối thiểu cho chiều rộng và chiều cao
-        # Thêm lọc theo tỷ lệ của bounding box so với kích thước ảnh tổng thể
         if (area > min_figure_area and 
-            ww > 120 and hh > 120 and # Kích thước tối thiểu
-            0.2 < aspect_ratio < 5.0 and # Tỷ lệ khung hình
-            solidity > 0.5 and # Độ đầy đủ (hình ảnh thường đặc hơn)
-            ww < 0.9 * w and hh < 0.9 * h): # Không quá sát mép ảnh
+            ww > 180 and hh > 180 and # Kích thước tối thiểu (tăng đáng kể)
+            0.3 < aspect_ratio < 3.0 and # Tỷ lệ khung hình (chặt chẽ hơn)
+            solidity > 0.6 and # Độ đầy đủ (tăng đáng kể)
+            x > 0.05 * w and x + ww < 0.95 * w and y > 0.05 * h and y + hh < 0.95 * h): # Không quá sát mép ảnh (chừa 5% mép)
             
             # Loại bỏ vùng bảng đã nhận phía trên
             overlapped = False
             for t in temp_tables: 
                 tb_x, tb_y, tb_w, tb_h = t['bbox'] 
-                # Nếu vùng hiện tại nằm hoàn toàn trong một bảng đã phát hiện, bỏ qua
+                # Kiểm tra chồng lấn một cách linh hoạt hơn
                 if x >= tb_x and y >= tb_y and (x + ww) <= (tb_x + tb_w) and (y + hh) <= (tb_y + tb_h):
                     overlapped = True
                     break
@@ -109,18 +100,19 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     all_detected_objects = temp_tables + temp_figures
     
     # Sắp xếp theo tọa độ y (hàng), sau đó theo x (cột) để có thứ tự logic trên trang
-    # Sau đó sắp xếp lại theo diện tích giảm dần để ưu tiên các đối tượng lớn hơn
     all_detected_objects_sorted = sorted(all_detected_objects, key=lambda f: (f['bbox'][1], f['bbox'][0]))
-    
-    # Lọc cuối cùng: Chỉ lấy các đối tượng lớn nhất và có vẻ hợp lý nhất
-    # Nếu bạn biết số lượng ảnh minh họa chính xác (ví dụ: 2), hãy thay đổi max_figures
-    # hoặc thêm một bước lọc cứng ở đây.
     
     final_figures_list = []
     img_idx = 0
     table_idx = 0
     
-    # Giới hạn số lượng trả về theo max_figures
+    # Lọc cuối cùng: Nếu bạn biết chắc chắn chỉ có 2 hình ảnh, hãy giới hạn cứng ở đây.
+    # Ví dụ:
+    # if len(all_detected_objects_sorted) > 2:
+    #     # Sắp xếp theo diện tích giảm dần và chỉ lấy 2 cái lớn nhất
+    #     all_detected_objects_sorted = sorted(all_detected_objects_sorted, key=lambda f: f['bbox'][2] * f['bbox'][3], reverse=True)[:2]
+    
+    # Giới hạn số lượng trả về theo max_figures (mặc định 10)
     for fig in all_detected_objects_sorted[:max_figures]: 
         if fig["is_table"]:
             fig["name"] = f"table-{table_idx}.jpeg"
@@ -131,45 +123,6 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
         final_figures_list.append(fig)
 
     return final_figures_list
-
-def remove_all_figure_markdown(text):
-    """
-    Loại bỏ các markdown hình ảnh/bảng cũ hoặc placeholder không mong muốn.
-    """
-    if not isinstance(text, str): return ""
-    text = re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)', '', text)
-    text = re.sub(r'\[HÌNH:.*?\]', '', text) 
-    text = re.sub(r'\[BẢNG:.*?\]', '', text) 
-    text = re.sub(r'\[HÌNH_PLACEHOLDER\]', '', text)
-    text = re.sub(r'\[BẢNG_PLACEHOLDER\]', '', text)
-    return text
-
-# Helper function to find the best matching figure
-def find_best_matching_figure(figures_pool, is_table_needed, current_line_lower, keywords, table_kw):
-    """
-    Tìm hình ảnh/bảng phù hợp nhất từ pool dựa trên loại và từ khóa.
-    Ưu tiên khớp loại (bảng/hình ảnh) và sau đó là từ khóa.
-    """
-    # Tìm kiếm chính xác loại và từ khóa
-    for fig in figures_pool:
-        if fig["is_table"] == is_table_needed:
-            if (is_table_needed and any(kw in current_line_lower for kw in table_kw)) or \
-               (not is_table_needed and any(kw in current_line_lower for kw in keywords)):
-                return fig
-    
-    # FALLBACK: Nếu không tìm thấy khớp chính xác theo loại, nhưng có từ khóa mạnh
-    # và chỉ còn một hình ảnh/bảng chưa được chèn, hoặc hình ảnh/bảng đó có vẻ phù hợp nhất
-    if is_table_needed and any(kw in current_line_lower for kw in table_kw):
-        for fig in figures_pool:
-            if not fig["is_table"]: 
-                return fig 
-    
-    elif not is_table_needed and any(kw in current_line_lower for kw in keywords):
-        for fig in figures_pool:
-            if fig["is_table"]: 
-                return fig 
-            
-    return None
 
 # -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
 def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, table_kw=None):
