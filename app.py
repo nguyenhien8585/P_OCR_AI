@@ -11,8 +11,6 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
-
-
 # ----------- Hàm tách bảng giá trị/bảng biến thiên và hình minh hoạ (chuẩn nâng cao) ----------
 def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -21,12 +19,14 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     blur = cv2.GaussianBlur(gray, (3,3), 0)
     th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 25, 10)
+    
     # Tách bảng bằng morphology line horizontal + vertical
     horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.18),1))
     detected_lines = cv2.morphologyEx(th, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
     vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.08)))
     detected_columns = cv2.morphologyEx(th, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
     table_mask = cv2.addWeighted(detected_lines, 0.5, detected_columns, 0.5, 0.0)
+    
     # Find table contours
     contours, _ = cv2.findContours(table_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     tables = []
@@ -38,8 +38,9 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
             buf = io.BytesIO()
             Image.fromarray(crop).save(buf, format="JPEG")
             b64 = base64.b64encode(buf.getvalue()).decode()
-            # CHỈNH SỬA TẠI ĐÂY: img-{idx}.jpeg thay vì img-{idx+1}.jpeg
-            tables.append({"name": f"table-{idx}.jpeg", "base64": b64, "is_table": True})
+            # Đặt tên file bắt đầu từ 0
+            tables.append({"name": f"table-{idx}.jpeg", "base64": b64, "is_table": True, "bbox": (x, y, ww, hh)})
+    
     # Tách hình minh hoạ (contour không phải bảng)
     contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     figures = []
@@ -50,13 +51,8 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
             # Loại bỏ vùng bảng đã nhận phía trên
             overlapped = False
             for t in tables:
-                # Lưu ý: re.findall(r'\d+', t['name']) sẽ lấy tất cả số, bao gồm cả số 0
-                # Cần đảm bảo logic kiểm tra chồng lấn vẫn hoạt động đúng với tên mới
-                # Hoặc đơn giản hơn, bạn có thể lưu x, y, w, h trực tiếp vào dict của bảng
-                # để tránh parse lại từ tên
-                # Ví dụ: t['bbox'] = (tb_x, tb_y, tb_w, tb_h)
-                # Hiện tại, logic này vẫn hoạt động vì nó chỉ cần số từ tên
-                tb_x, tb_y, tb_w, tb_h = [int(v) for v in re.findall(r'\d+', t['name'])] # Đã bỏ str(t['is_table'])
+                # Lấy bbox đã lưu trực tiếp để kiểm tra chồng lấn
+                tb_x, tb_y, tb_w, tb_h = t['bbox'] 
                 if abs(tb_x-x)<12 and abs(tb_y-y)<12 and abs(tb_w-ww)<25 and abs(tb_h-hh)<25:
                     overlapped = True
                     break
@@ -65,9 +61,24 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
                 buf = io.BytesIO()
                 Image.fromarray(crop).save(buf, format="JPEG")
                 b64 = base64.b64encode(buf.getvalue()).decode()
-                # CHỈNH SỬA TẠI ĐÂY: img-{idx}.jpeg thay vì img-{idx+1}.jpeg
+                # Đặt tên file bắt đầu từ 0
                 figures.append({"name": f"img-{idx}.jpeg", "base64": b64, "is_table": False})
     return tables + figures
+
+def remove_all_figure_markdown(text):
+    """
+    Loại bỏ các markdown hình ảnh/bảng cũ hoặc placeholder không mong muốn.
+    """
+    if not isinstance(text, str): return ""
+    # Loại bỏ các định dạng cũ nếu Gemini vẫn tạo ra
+    text = re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)', '', text)
+    text = re.sub(r'\[HÌNH:.*?\]', '', text) # Loại bỏ placeholder cũ nếu có
+    text = re.sub(r'\[BẢNG:.*?\]', '', text) # Loại bỏ placeholder cũ nếu có
+    # Loại bỏ các placeholder mới nếu chúng không được xử lý đúng cách
+    text = re.sub(r'\[HÌNH_PLACEHOLDER\]', '', text)
+    text = re.sub(r'\[BẢNG_PLACEHOLDER\]', '', text)
+    return text
+
 # -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
 def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, table_kw=None):
     """
@@ -89,14 +100,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
     processed_lines = []
     fig_idx = 0 # Chỉ số cho danh sách figures đã tách
     n_fig = len(figures)
-
-    def remove_all_figure_markdown(text):
-        if not isinstance(text, str): return ""
-        # Dòng này đã được comment out trong các phiên bản trước để không loại bỏ markdown cũ
-        # text = re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)', '', text)
-        text = re.sub(r'\[HÌNH:.*?\]', '', text) # Loại bỏ placeholder cũ nếu có
-        text = re.sub(r'\[BẢNG:.*?\]', '', text) # Loại bỏ placeholder cũ nếu có
-        return text
+    
     buffer = "" # Buffer để xây dựng các đoạn văn bản
     
     for idx, line in enumerate(lines):
@@ -118,7 +122,6 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
                 fig_idx += 1
             else: 
                 # Nếu placeholder không khớp với hình/bảng tiếp theo, hoặc không còn hình/bảng
-                # Giữ nguyên placeholder hoặc loại bỏ nó (tùy thuộc vào mong muốn)
                 # Ở đây, tôi sẽ loại bỏ nó để tránh các placeholder không được thay thế
                 processed_lines.append(line_strip.replace("[HÌNH_PLACEHOLDER]", "").replace("[BẢNG_PLACEHOLDER]", "").strip())
             continue # Đã xử lý dòng này, chuyển sang dòng tiếp theo
@@ -192,12 +195,12 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
                 elif not figures[fig_idx]["is_table"] and any(kw in lower_buffer for kw in keywords):
                     processed_lines.append(f"[HÌNH: {figures[fig_idx]['name']}]")
                     fig_idx += 1
-                else: # Nếu không có từ khóa cụ thể, chèn hình/bảng tiếp theo
-                    if figures[fig_idx]["is_table"]:
-                        processed_lines.append(f"[BẢNG: {figures[fig_idx]['name']}]")
-                    else:
-                        processed_lines.append(f"[HÌNH: {figures[fig_idx]['name']}]")
-                    fig_idx += 1
+                # else: # Nếu không có từ khóa cụ thể, chèn hình/bảng tiếp theo (có thể bỏ qua nếu muốn chặt chẽ hơn)
+                #     if figures[fig_idx]["is_table"]:
+                #         processed_lines.append(f"[BẢNG: {figures[fig_idx]['name']}]")
+                #     else:
+                #         processed_lines.append(f"[HÌNH: {figures[fig_idx]['name']}]")
+                #     fig_idx += 1
 
     # --- Xử lý buffer cuối cùng và các hình/bảng còn lại ---
     if buffer:
@@ -213,6 +216,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
     
     # Lọc bỏ các dòng trống không cần thiết và trả về văn bản đã xử lý
     return '\n'.join([l for l in processed_lines if l.strip()])
+
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
     "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
@@ -236,7 +240,6 @@ YÊU CẦU:
 6. Bảng biểu: dùng markdown nếu có thể.
 7. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
 '''
-
 def gemini_generate_text(image_bytes, api_key):
     api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     b64_img = base64.b64encode(image_bytes).decode()
@@ -275,7 +278,7 @@ with tab_img:
 
     if uploaded_images:
         for img_idx, img_file in enumerate(uploaded_images):
-            with st.expander(f"ℹ️ Thông tin file {img_file.name}", expanded=True):
+            with st.expander("ℹ️ Thông tin file", expanded=True):
                 st.write(f"**🖼️ Tên file:** {img_file.name}")
                 st.write(f"**🟡 Loại file:** {img_file.type}")
                 st.write(f"**✏️ Kích thước:** {img_file.size/1024:.1f} KB")
@@ -294,9 +297,14 @@ with tab_img:
                         text = gemini_generate_text(img_bytes, api_key)
                     except Exception as e:
                         text = f"[Lỗi Gemini: {e}]"
-                text = remove_all_figure_markdown(text)
+                
+                # Loại bỏ các markdown/placeholder cũ hoặc không mong muốn từ Gemini
+                text = remove_all_figure_markdown(text) 
+                
+                # Chèn hình ảnh/bảng đã tách vào văn bản
                 text = join_paragraphs_and_insert_figures_tables(text, figures)
-                # Lưu vào session để giữ kết quả khi chuyển tab
+                
+                # Lưu vào session
                 st.session_state[text_key] = text
                 st.session_state[fig_key] = figures
 
@@ -306,9 +314,6 @@ with tab_img:
                 st.code(st.session_state[text_key], language="markdown")
                 figures = st.session_state[fig_key]
 
-                # Đếm lại số hình/bảng cho caption đúng index
-                img_count = 0
-                tbl_count = 0
                 if figures:
                     if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", key=f"word-{img_file.name}-{img_idx}"):
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
@@ -329,14 +334,9 @@ with tab_img:
                         )
                         os.remove(tmp_word.name)
                     st.markdown("### 🖼️ Hình & Bảng đã tách:")
-                    for fig in figures:
+                    for idx, fig in enumerate(figures):
                         img_bytes = base64.b64decode(fig["base64"])
-                        if fig['is_table']:
-                            cap = f"Bảng: table-{tbl_count}.jpeg"
-                            tbl_count += 1
-                        else:
-                            cap = f"Hình: img-{img_count}.jpeg"
-                            img_count += 1
+                        cap = f"{'Bảng' if fig['is_table'] else 'Hình'}: {fig['name']}"
                         st.image(img_bytes, caption=cap, width=350)
                         st.download_button(
                             f"Tải {fig['name']}",
@@ -344,7 +344,7 @@ with tab_img:
                             file_name=fig["name"],
                             mime="image/jpeg",
                             use_container_width=True,
-                            key=f"anh-download-{fig['name']}-{img_file.name}"
+                            key=f"anh-download-{fig['name']}-{idx}-{img_file.name}"
                         )
                 else:
                     st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh.")
@@ -372,6 +372,7 @@ with tab_pdf:
             st.write(f"**Loại file:** {mime_type}")
             st.write(f"**Kích thước:** {size_mb:.1f} MB")
             st.write(f"**Số trang:** {num_pages}")
+
     if uploaded_file:
         if st.button("🚀 Xử lý OCR PDF", type="primary", use_container_width=True):
             st.info("⏳ Đang xử lý OCR PDF... (vui lòng chờ)")
@@ -390,6 +391,7 @@ with tab_pdf:
             st.success("✅ Đã nhận diện PDF thành công!")
     if st.session_state.get("ocr_done"):
         def dollar_to_mathptn(s):
+            # Chuyển đổi $...$ thành ${...}$ để đảm bảo định dạng LaTeX nhất quán
             return re.sub(r'\$(.+?)\$', r'${\1}$', s)
         raw_text = st.session_state.get("ocr_text_raw", "")
         text_content = dollar_to_mathptn(raw_text)
@@ -445,4 +447,4 @@ with tab_pdf:
                 st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
     st.markdown("---")
 
-st.caption("✨ Mapping bảng/tách hình tự động, chuẩn layout, chỉ chèn hình đúng vị trí [HÌNH:], không chèn bảng vào Word.")
+st.caption("✨ Mapping bảng/tách hình tự động, chuẩn layout, tách đúng bảng giá trị, bảng tần số, bảng biến thiên. Xuất Word mapping đúng vị trí minh hoạ & bảng.")
