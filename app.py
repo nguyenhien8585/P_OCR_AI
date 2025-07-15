@@ -324,11 +324,11 @@ with tab_img:
         for img_idx, img_file in enumerate(uploaded_images):
             with st.expander("ℹ️ Thông tin file", expanded=True):
                 st.write(f"**🖼️ Tên file:** {img_file.name}")
-                st.write(f"**🟡 Loại file:** {img_file.type}")
-                st.write(f"**✏️ Kích thước:** {img_file.size/1024:.1f} KB")
+                                st.write(f"**🟡 Loại file:** {img_file.type}")
+                st.write(f"**✏️ Kích thước:** {img_file.size / 1024:.1f} KB")
 
             ocr_key = f"ocr_{img_file.name}_{img_idx}"
-                        text_key = f"text_{img_file.name}_{img_idx}"
+            text_key = f"text_{img_file.name}_{img_idx}"
             fig_key = f"fig_{img_file.name}_{img_idx}"
 
             if st.button(f"🚀 Xử lý OCR Image ({img_file.name})", key=ocr_key):
@@ -385,7 +385,7 @@ with tab_img:
                     if figures:
                         for fig in figures:
                             img_bytes_fig = base64.b64decode(fig["base64"])
-                            st.image(img_bytes_fig, caption=fig["name"], use_container_width=True)
+                            st.image(img_bytes_fig, caption=fig["name"], use_column_width=True)
                             st.download_button(
                                 f"Tải {fig['name']}",
                                 img_bytes_fig,
