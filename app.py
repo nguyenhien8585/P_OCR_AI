@@ -189,6 +189,17 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
         for line_content in block["content_lines"]:
             line_strip = line_content.strip()
 
+            # Chèn hình ảnh/bảng nếu có từ khóa
+            if any(keyword in line_strip for keyword in ["hình vẽ", "hình minh họa", "bảng", "theo sơ đồ dưới đây"]):
+                if not any(fig["name"] in inserted_figures_names for fig in available_figures):
+                    if available_figures:
+                        fig_to_insert = available_figures[0]  # Chọn hình ảnh đầu tiên
+                        if fig_to_insert["is_table"]:
+                            current_buffer += f"[BẢNG: {fig_to_insert['name']}]\n"
+                        else:
+                            current_buffer += f"[HÌNH: {fig_to_insert['name']}]\n"
+                        inserted_figures_names.add(fig_to_insert["name"])
+
             if not line_strip:
                 if current_buffer:
                     final_processed_lines.append(current_buffer.strip())
@@ -211,6 +222,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
             inserted_figures_names.add(fig_to_insert["name"])
 
     return '\n'.join([l for l in final_processed_lines if l.strip() or l == ""])
+
 
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
