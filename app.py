@@ -21,7 +21,6 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 25, 10)
     
     # Tách bảng bằng morphology line horizontal + vertical
-    # Tăng kích thước kernel để nhận diện bảng tốt hơn
     horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.3),1)) 
     detected_lines = cv2.morphologyEx(th, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
     vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.15))) 
@@ -52,7 +51,6 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
             overlapped = False
             for t in temp_tables: 
                 tb_x, tb_y, tb_w, tb_h = t['bbox'] 
-                # Kiểm tra chồng lấn một cách linh hoạt hơn
                 if not (x + ww < tb_x or x > tb_x + tb_w or y + hh < tb_y or y > tb_y + tb_h):
                     overlapped = True
                     break
@@ -111,20 +109,15 @@ def find_best_matching_figure(figures_pool, is_table_needed, current_line_lower,
     
     # FALLBACK: Nếu không tìm thấy khớp chính xác theo loại, nhưng có từ khóa mạnh
     # và chỉ còn một hình ảnh/bảng chưa được chèn, hoặc hình ảnh/bảng đó có vẻ phù hợp nhất
-    # (Đây là heuristic rủi ro nhưng cần thiết cho các trường hợp phân loại sai)
     if is_table_needed and any(kw in current_line_lower for kw in table_kw):
-        # Nếu có từ khóa bảng nhưng không tìm thấy is_table=True, thử tìm is_table=False
-        # (trường hợp bảng bị phân loại sai thành hình ảnh)
         for fig in figures_pool:
-            if not fig["is_table"]: # Tìm hình ảnh
-                return fig # Trả về hình ảnh đầu tiên chưa được chèn
+            if not fig["is_table"]: 
+                return fig 
     
     elif not is_table_needed and any(kw in current_line_lower for kw in keywords):
-        # Tương tự, nếu có từ khóa hình ảnh nhưng không tìm thấy is_table=False, thử tìm is_table=True
-        # (trường hợp hình ảnh bị phân loại sai thành bảng)
         for fig in figures_pool:
-            if fig["is_table"]: # Tìm bảng
-                return fig # Trả về bảng đầu tiên chưa được chèn
+            if fig["is_table"]: 
+                return fig 
             
     return None
 
@@ -339,43 +332,58 @@ with tab_img:
 
             if text_key in st.session_state and fig_key in st.session_state:
                 st.markdown("### 📋 Kết quả mapping nâng cao:")
-                st.code(st.session_state[text_key], language="markdown")
-                figures = st.session_state[fig_key]
+                
+                # --- Giao diện mới cho tab "Ảnh" ---
+                tab_text_img, tab_figures_img = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
 
-                if figures:
-                    if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", use_container_width=True, key=f"word-{img_file.name}-{img_idx}"):
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                            insert_images_to_word_from_markdown(
-                                st.session_state[text_key],
-                                figures,
-                                tmp_word.name
+                with tab_text_img:
+                    st.code(st.session_state[text_key], language="markdown")
+                    figures = st.session_state[fig_key] # Lấy lại figures để dùng trong nút tải Word
+                    if figures: # Chỉ hiển thị nút tải Word nếu có hình ảnh
+                        if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", use_container_width=True, key=f"word-{img_file.name}-{img_idx}"):
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
+                                insert_images_to_word_from_markdown(
+                                    st.session_state[text_key],
+                                    figures,
+                                    tmp_word.name
+                                )
+                            with open(tmp_word.name, "rb") as f:
+                                word_data = f.read()
+                            st.success("✅ Đã tạo file Word thành công!")
+                            st.download_button(
+                                "⬇️ Tải về file Word",
+                                word_data,
+                                file_name=f"ket_qua_{img_file.name}.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                use_container_width=True
                             )
-                        with open(tmp_word.name, "rb") as f:
-                            word_data = f.read()
-                        st.success("✅ Đã tạo file Word thành công!")
-                        st.download_button(
-                            "⬇️ Tải về file Word",
-                            word_data,
-                            file_name=f"ket_qua_{img_file.name}.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            use_container_width=True
-                        )
-                        os.remove(tmp_word.name)
-                    st.markdown("### 🖼️ Hình & Bảng đã tách:")
-                    for idx, fig in enumerate(figures):
-                        img_bytes = base64.b64decode(fig["base64"])
-                        cap = f"{'Bảng' if fig['is_table'] else 'Hình'}: {fig['name']}"
-                        st.image(img_bytes, caption=cap, width=350)
-                        st.download_button(
-                            f"Tải {fig['name']}",
-                            img_bytes,
-                            file_name=fig["name"],
-                            mime="image/jpeg",
-                            use_container_width=True,
-                            key=f"anh-download-{fig['name']}-{idx}-{img_file.name}"
-                        )
-                else:
-                    st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh.")
+                            os.remove(tmp_word.name)
+                    else:
+                        st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh để xuất Word.")
+
+                with tab_figures_img:
+                    figures = st.session_state[fig_key]
+                    if figures:
+                        st.success(f"🖼️ Đã tìm thấy {len(figures)} hình ảnh và bảng:")
+                        for idx, fig in enumerate(figures):
+                            try:
+                                img_bytes = base64.b64decode(fig["base64"])
+                                cap = f"{'Bảng' if fig['is_table'] else 'Hình'}: {fig['name']}"
+                                st.image(img_bytes, caption=cap, width=350)
+                                st.download_button(
+                                    f"Tải {fig['name']}",
+                                    img_bytes,
+                                    file_name=fig["name"],
+                                    mime="image/jpeg",
+                                    use_container_width=True,
+                                    key=f"anh-download-{fig['name']}-{idx}-{img_file.name}"
+                                )
+                            except Exception as e:
+                                st.error(f"Không đọc được ảnh {fig['name']}: {e}")
+                    else:
+                        st.info("Không tìm thấy minh hoạ hay bảng nào trong ảnh.")
+                # --- Kết thúc giao diện mới ---
+
     else:
         st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
 # =================== TAB PDF ===================
