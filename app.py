@@ -357,12 +357,8 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
 
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
-    "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
-    "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
-    "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
-    "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
-    "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
-    "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
+    "AIzaSyB5YTKx6aLeehY3sjHsgCR4dROFLDOeV00",
+    "AIzaSyDJ_7Fw2zJvFA7Yl3nrh0as8gFT8FxwOO0"
 ]
 api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
