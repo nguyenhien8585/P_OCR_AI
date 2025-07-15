@@ -19,21 +19,19 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     
     # Tăng cường làm mờ để loại bỏ nhiễu nhỏ và làm mịn các cạnh
-    # Giữ kernel size nhỏ để không làm mất quá nhiều chi tiết
-    blur = cv2.GaussianBlur(gray, (3,3), 0) 
+    # Kernel size (5,5) là một lựa chọn cân bằng tốt
+    blur = cv2.GaussianBlur(gray, (5,5), 0) 
     
     # Tinh chỉnh adaptiveThreshold:
-    # blockSize: Kích thước vùng lân cận để tính ngưỡng. Cần là số lẻ.
-    # C: Hằng số trừ đi từ giá trị trung bình/trọng số.
-    # Thử nghiệm với các giá trị khác nhau cho blockSize và C
-    th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 25, 10) 
+    # blockSize: 41, C: 15 thường cho kết quả tốt trên nhiều loại tài liệu
+    th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 41, 15) 
     
     # Tách bảng bằng morphology line horizontal + vertical
-    # Kernel size có thể cần điều chỉnh tùy thuộc vào kích thước bảng trong ảnh
-    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.18),1))
+    # Kernel size được điều chỉnh để bắt các đường kẻ bảng rõ ràng
+    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.2),1)) # Kernel cho đường ngang
     detected_lines = cv2.morphologyEx(th, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
     
-    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.08)))
+    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.1))) # Kernel cho đường dọc
     detected_columns = cv2.morphologyEx(th, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
     
     table_mask = cv2.addWeighted(detected_lines, 0.5, detected_columns, 0.5, 0.0)
@@ -42,8 +40,8 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     contours, _ = cv2.findContours(table_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     temp_tables = [] 
     
-    # Nới lỏng min_table_area một chút
-    min_table_area = max(min_area_abs, 5000) # Giảm xuống 5000
+    # Thắt chặt lại min_table_area
+    min_table_area = max(min_area_abs, 15000) # Tăng lên 15000
     
     for cnt in contours: 
         x, y, ww, hh = cv2.boundingRect(cnt)
@@ -54,10 +52,10 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
         solidity = float(contour_area) / (ww * hh + 1e-5)
         
         if (area > min_table_area and 
-            ww > 50 and hh > 30 and # Kích thước tối thiểu
-            0.01 < aspect_ratio < 100.0 and # Tỷ lệ khung hình rất rộng cho bảng
-            solidity > 0.2 and # Độ đầy đủ (giảm)
-            x > 0.01 * w and x + ww < 0.99 * w and y > 0.01 * h and y + hh < 0.99 * h): # Nới lỏng mép ảnh
+            ww > 80 and hh > 50 and # Kích thước tối thiểu hợp lý cho bảng
+            0.05 < aspect_ratio < 20.0 and # Tỷ lệ khung hình rộng cho bảng
+            solidity > 0.4 and # Độ đầy đủ (tăng nhẹ)
+            x > 0.02 * w and x + ww < 0.98 * w and y > 0.02 * h and y + hh < 0.98 * h): # Không quá sát mép ảnh
             
             crop = img[y:y+hh, x:x+ww]
             buf = io.BytesIO()
@@ -70,8 +68,8 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     temp_figures = [] 
     
-    # Nới lỏng min_figure_area đáng kể
-    min_figure_area = max(min_area_abs, 1000) # Giảm xuống 1000
+    # Thắt chặt lại min_figure_area
+    min_figure_area = max(min_area_abs, 5000) # Tăng lên 5000
     
     for cnt in contours: 
         x, y, ww, hh = cv2.boundingRect(cnt)
@@ -83,10 +81,10 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
 
         # Các ngưỡng này cần được điều chỉnh dựa trên kích thước và hình dạng thực tế của ảnh lớp học
         if (area > min_figure_area and 
-            ww > 30 and hh > 30 and # Kích thước tối thiểu rất nhỏ
-            0.05 < aspect_ratio < 20.0 and # Tỷ lệ khung hình rộng hơn
-            solidity > 0.1 and # Độ đầy đủ rất thấp (cho phép ảnh có nhiều khoảng trống)
-            x > 0.01 * w and x + ww < 0.99 * w and y > 0.01 * h and y + hh < 0.99 * h): # Nới lỏng mép ảnh
+            ww > 60 and hh > 60 and # Kích thước tối thiểu hợp lý cho hình ảnh
+            0.2 < aspect_ratio < 5.0 and # Tỷ lệ khung hình cân đối hơn cho hình ảnh
+            solidity > 0.3 and # Độ đầy đủ (tăng nhẹ)
+            x > 0.02 * w and x + ww < 0.98 * w and y > 0.02 * h and y + hh < 0.98 * h): # Không quá sát mép ảnh
             
             # Loại bỏ vùng bảng đã nhận phía trên
             overlapped = False
@@ -113,14 +111,12 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     img_idx = 0
     table_idx = 0
     
-    # Lọc cuối cùng: Sắp xếp theo diện tích giảm dần và chỉ lấy N cái lớn nhất
-    # Nếu bạn biết chắc chắn chỉ có 1 ảnh lớp học và 1 ảnh khác, bạn có thể giới hạn cứng là 2.
-    # Nếu chỉ có ảnh lớp học, bạn có thể giới hạn là 1.
+    # Lọc cuối cùng: Sắp xếp theo diện tích giảm dần và chỉ lấy 2 cái lớn nhất
+    # Đây là biện pháp mạnh mẽ nhất để đảm bảo chỉ có 2 hình ảnh được trả về.
     all_detected_objects_sorted = sorted(all_detected_objects_sorted, key=lambda f: f['bbox'][2] * f['bbox'][3], reverse=True)
     
-    # Giới hạn số lượng đối tượng trả về (ví dụ: chỉ 1 hoặc 2 đối tượng lớn nhất)
-    # Điều chỉnh số này tùy theo số lượng ảnh bạn mong muốn trên trang
-    all_detected_objects_sorted = all_detected_objects_sorted[:max_figures] # Sử dụng max_figures từ tham số hàm
+    # Giới hạn cứng số lượng đối tượng trả về là 2
+    all_detected_objects_sorted = all_detected_objects_sorted[:2] 
     
     # Sau khi lọc, gán lại tên
     for fig in all_detected_objects_sorted: 
@@ -133,6 +129,7 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
         final_figures_list.append(fig)
 
     return final_figures_list
+
 def remove_all_figure_markdown(text):
     """
     Loại bỏ các markdown hình ảnh/bảng cũ hoặc placeholder không mong muốn.
