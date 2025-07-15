@@ -140,7 +140,8 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
     if keywords is None:
         keywords = [
             "xem hình", "hình dưới", "hình vẽ", "biểu đồ", "minh hoạ",
-            "minh họa", "hình bên", "hình minh hoạ", "hình minh họa" 
+            "minh họa", "hình bên", "hình minh hoạ", "hình minh họa",
+            "hình chữ nhật", "điểm", "cạnh", "diện tích", "vùng đất" # Thêm từ khóa cho câu hình học
         ]
     if table_kw is None:
         table_kw = [
@@ -167,25 +168,15 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
         is_new_question_start = re.match(r"^Câu\s*(\d+)\.?", line_strip)
         
         # Kiểm tra xem buffer hiện tại có kết thúc một câu hoàn chỉnh không
-        # Sử dụng regex để tìm dấu câu ở cuối chuỗi, có thể có khoảng trắng
         buffer_ends_sentence = re.search(r'[.!?…:]\s*$', current_buffer.strip())
 
         # Điều kiện để flush buffer và bắt đầu đoạn mới
-        # Flush khi:
-        # 1. Dòng hiện tại là đầu câu hỏi mới
-        # 2. Dòng hiện tại là dòng trống
-        # 3. Buffer hiện tại kết thúc bằng dấu câu VÀ dòng hiện tại không phải là phần tiếp theo của câu đó
-        #    (ví dụ: không phải là một từ trong câu, hoặc là một dòng mới hoàn toàn)
-        #    Để đơn giản, nếu buffer kết thúc câu, ta flush nó.
         if current_buffer and (is_new_question_start or not line_strip or buffer_ends_sentence):
             final_processed_lines.append(current_buffer.strip())
             current_buffer = ""
         
         # Thêm dòng hiện tại vào buffer
         if line_strip:
-            # Nếu buffer đang trống HOẶC dòng hiện tại là đầu câu hỏi mới HOẶC buffer vừa kết thúc câu
-            # thì dòng hiện tại bắt đầu một buffer mới.
-            # Ngược lại, nối dòng hiện tại vào buffer.
             if not current_buffer or is_new_question_start or buffer_ends_sentence:
                 current_buffer = line_strip
             else:
@@ -197,20 +188,18 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
             final_processed_lines.append("") # Giữ dòng trống
 
         # Logic chèn hình ảnh tại vị trí ngữ cảnh
-        # Tìm hình ảnh có bbox gần với dòng hiện tại nhất
         best_fig_for_line = None
         min_dist_to_line = float('inf')
         
         current_line_y_center = idx * (img_h / len(lines))
         
-        for fig in available_figures:
-            if fig is None or fig["name"] in inserted_figures_names: continue # Bỏ qua hình đã chèn hoặc None
+        # Tìm hình ảnh phù hợp nhất cho dòng hiện tại
+        for fig_idx_in_avail, fig in enumerate(available_figures):
+            if fig is None or fig["name"] in inserted_figures_names: continue 
             
             fig_y_center = fig['bbox'][1] + fig['bbox'][3] / 2
             dist = abs(fig_y_center - current_line_y_center)
             
-            # Chỉ xem xét hình ảnh nếu nó chưa được chèn và gần dòng hiện tại
-            # Thêm điều kiện về từ khóa để ưu tiên khớp ngữ cảnh
             line_lower = line_strip.lower()
             is_keyword_match = (
                 (fig["is_table"] and any(kw in line_lower for kw in table_kw)) or
@@ -223,9 +212,8 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
 
             # Ưu tiên placeholder, sau đó là từ khóa, sau đó là gần vị trí vật lý
             if is_placeholder_match:
-                # Nếu có placeholder, ưu tiên khớp ngay lập tức
                 best_fig_for_line = fig
-                break # Tìm thấy hình ảnh khớp placeholder, thoát vòng lặp
+                break # Tìm thấy hình ảnh khớp placeholder, ưu tiên cao nhất
             elif is_keyword_match and dist < min_dist_to_line and dist < img_h * 0.15: # Khoảng cách tối đa 15% chiều cao ảnh
                 min_dist_to_line = dist
                 best_fig_for_line = fig
@@ -252,7 +240,6 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
             
             inserted_figures_names.add(best_fig_for_line["name"])
             # Đánh dấu hình ảnh là đã sử dụng trong available_figures
-            # Tìm index của best_fig_for_line trong available_figures và đặt nó thành None
             for i, fig_item in enumerate(available_figures):
                 if fig_item is not None and fig_item["name"] == best_fig_for_line["name"]:
                     available_figures[i] = None
