@@ -36,29 +36,36 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
             buf = io.BytesIO()
             Image.fromarray(crop).save(buf, format="JPEG")
             b64 = base64.b64encode(buf.getvalue()).decode()
-            tables.append({"name": f"table-{idx+1}.jpeg", "base64": b64, "is_table": True})   # <-- Bắt đầu từ 1
+            # CHỈNH SỬA TẠI ĐÂY: img-{idx}.jpeg thay vì img-{idx+1}.jpeg
+            tables.append({"name": f"table-{idx}.jpeg", "base64": b64, "is_table": True})
     # Tách hình minh hoạ (contour không phải bảng)
     contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     figures = []
-    img_idx = 0
     for idx, cnt in enumerate(contours):
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
         if area > min_area_abs and ww > 50 and hh > 50:
-            # Không cần overlap vì thường không trùng bảng
-            crop = img[y:y+hh, x:x+ww]
-            buf = io.BytesIO()
-            Image.fromarray(crop).save(buf, format="JPEG")
-            b64 = base64.b64encode(buf.getvalue()).decode()
-            figures.append({"name": f"img-{img_idx+1}.jpeg", "base64": b64, "is_table": False})  # <-- Bắt đầu từ 1
-            img_idx += 1
+            # Loại bỏ vùng bảng đã nhận phía trên
+            overlapped = False
+            for t in tables:
+                # Lưu ý: re.findall(r'\d+', t['name']) sẽ lấy tất cả số, bao gồm cả số 0
+                # Cần đảm bảo logic kiểm tra chồng lấn vẫn hoạt động đúng với tên mới
+                # Hoặc đơn giản hơn, bạn có thể lưu x, y, w, h trực tiếp vào dict của bảng
+                # để tránh parse lại từ tên
+                # Ví dụ: t['bbox'] = (tb_x, tb_y, tb_w, tb_h)
+                # Hiện tại, logic này vẫn hoạt động vì nó chỉ cần số từ tên
+                tb_x, tb_y, tb_w, tb_h = [int(v) for v in re.findall(r'\d+', t['name'])] # Đã bỏ str(t['is_table'])
+                if abs(tb_x-x)<12 and abs(tb_y-y)<12 and abs(tb_w-ww)<25 and abs(tb_h-hh)<25:
+                    overlapped = True
+                    break
+            if not overlapped:
+                crop = img[y:y+hh, x:x+ww]
+                buf = io.BytesIO()
+                Image.fromarray(crop).save(buf, format="JPEG")
+                b64 = base64.b64encode(buf.getvalue()).decode()
+                # CHỈNH SỬA TẠI ĐÂY: img-{idx}.jpeg thay vì img-{idx+1}.jpeg
+                figures.append({"name": f"img-{idx}.jpeg", "base64": b64, "is_table": False})
     return tables + figures
-
-def remove_all_figure_markdown(text):
-    if not isinstance(text, str): return ""
-    text = re.sub(r'\[HÌNH: img-\d+\.jpeg\]', '', text)
-    text = re.sub(r'\[BẢNG: table-\d+\.jpeg\]', '', text)
-    return text
 # -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
 def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, table_kw=None):
     """
@@ -213,8 +220,8 @@ def get_next_api_key():
 GEMINI_PROMPT = '''
 YÊU CẦU:
 1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh.
-2. Nếu phát hiện nhiều hình minh hoạ (hình vẽ, đồ thị, bảng, ...), hãy đánh dấu đúng vị trí từng hình bằng cú pháp markdown: ![img-x.jpeg](img-x.jpeg) với x là số thứ tự hình đã tách từ trên xuống dưới trong ảnh này (bắt đầu từ 1).
-3. Với mỗi hình minh hoạ, hãy chèn markdown ngay sau dòng mô tả có từ “xem hình dưới”, “hình dưới đây”, “bảng biến thiên”, “bảng tần số”, “bảng giá trị”, “hình vẽ”, “biểu đồ”, hoặc ngay sau dòng câu hỏi liên quan tới hình/bảng/biểu đồ đó.
+2. Nếu phát hiện nhiều hình minh hoạ (hình vẽ, đồ thị, bảng, ...), hãy đánh dấu đúng vị trí từng hình bằng cú pháp placeholder: `[HÌNH_PLACEHOLDER]` cho hình ảnh và `[BẢNG_PLACEHOLDER]` cho bảng.
+3. Với mỗi placeholder, hãy chèn nó ngay sau dòng mô tả có từ “xem hình dưới”, “hình dưới đây”, “bảng biến thiên”, “bảng tần số”, “bảng giá trị”, “hình vẽ”, “biểu đồ”, hoặc ngay sau dòng câu hỏi liên quan tới hình/bảng/biểu đồ đó.
 4. Giữ nguyên cấu trúc đoạn văn và xuống dòng.
 5. Công thức toán học: tất cả ở dạng ${...}$ (inline, hệ, ký hiệu ... như hướng dẫn chi tiết).
 6. Bảng biểu: dùng markdown nếu có thể.
