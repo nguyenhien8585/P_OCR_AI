@@ -124,6 +124,45 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
 
     return final_figures_list
 
+def remove_all_figure_markdown(text):
+    """
+    Loại bỏ các markdown hình ảnh/bảng cũ hoặc placeholder không mong muốn.
+    """
+    if not isinstance(text, str): return ""
+    text = re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)', '', text)
+    text = re.sub(r'\[HÌNH:.*?\]', '', text) 
+    text = re.sub(r'\[BẢNG:.*?\]', '', text) 
+    text = re.sub(r'\[HÌNH_PLACEHOLDER\]', '', text)
+    text = re.sub(r'\[BẢNG_PLACEHOLDER\]', '', text)
+    return text
+
+# Helper function to find the best matching figure
+def find_best_matching_figure(figures_pool, is_table_needed, current_line_lower, keywords, table_kw):
+    """
+    Tìm hình ảnh/bảng phù hợp nhất từ pool dựa trên loại và từ khóa.
+    Ưu tiên khớp loại (bảng/hình ảnh) và sau đó là từ khóa.
+    """
+    # Tìm kiếm chính xác loại và từ khóa
+    for fig in figures_pool:
+        if fig["is_table"] == is_table_needed:
+            if (is_table_needed and any(kw in current_line_lower for kw in table_kw)) or \
+               (not is_table_needed and any(kw in current_line_lower for kw in keywords)):
+                return fig
+    
+    # FALLBACK: Nếu không tìm thấy khớp chính xác theo loại, nhưng có từ khóa mạnh
+    # và chỉ còn một hình ảnh/bảng chưa được chèn, hoặc hình ảnh/bảng đó có vẻ phù hợp nhất
+    if is_table_needed and any(kw in current_line_lower for kw in table_kw):
+        for fig in figures_pool:
+            if not fig["is_table"]: 
+                return fig 
+    
+    elif not is_table_needed and any(kw in current_line_lower for kw in keywords):
+        for fig in figures_pool:
+            if fig["is_table"]: 
+                return fig 
+            
+    return None
+
 # -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
 def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, table_kw=None):
     """
@@ -486,4 +525,3 @@ with tab_pdf:
     st.markdown("---")
 
 st.caption("✨ Mapping bảng/tách hình tự động, chuẩn layout, tách đúng bảng giá trị, bảng tần số, bảng biến thiên. Xuất Word mapping đúng vị trí minh hoạ & bảng.")
-
