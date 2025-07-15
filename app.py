@@ -324,7 +324,7 @@ with tab_img:
         for img_idx, img_file in enumerate(uploaded_images):
             with st.expander("ℹ️ Thông tin file", expanded=True):
                 st.write(f"**🖼️ Tên file:** {img_file.name}")
-                                st.write(f"**🟡 Loại file:** {img_file.type}")
+                st.write(f"**🟡 Loại file:** {img_file.type}")
                 st.write(f"**✏️ Kích thước:** {img_file.size / 1024:.1f} KB")
 
             ocr_key = f"ocr_{img_file.name}_{img_idx}"
