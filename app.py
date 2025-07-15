@@ -318,13 +318,57 @@ def get_next_api_key():
 
 GEMINI_PROMPT = '''
 YÊU CẦU:
-1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh.
-2. Nếu phát hiện nhiều hình minh hoạ (hình vẽ, đồ thị, bảng, ...), hãy đánh dấu đúng vị trí từng hình bằng cú pháp placeholder: `[HÌNH_PLACEHOLDER]` cho hình ảnh và `[BẢNG_PLACEHOLDER]` cho bảng.
-3. Với mỗi placeholder, hãy chèn nó ngay sau dòng mô tả có từ “xem hình dưới”, “hình dưới đây”, “bảng biến thiên”, “bảng tần số”, “bảng giá trị”, “hình vẽ”, “biểu đồ”, hoặc ngay sau dòng câu hỏi liên quan tới hình/bảng/biểu đồ đó.
-4. Giữ nguyên cấu trúc đoạn văn và xuống dòng.
-5. Công thức toán học: tất cả ở dạng ${...}$ (inline, hệ, ký hiệu ... như hướng dẫn chi tiết).
-6. Bảng biểu: dùng markdown nếu có thể.
-7. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
+1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh, giữ nguyên cấu trúc đoạn văn, dấu xuống dòng và định dạng ban đầu.
+2. Nếu phát hiện nhiều hình minh hoạ (hình vẽ, đồ thị, bảng, ...), hãy đánh dấu đúng vị trí từng hình bằng cú pháp placeholder:
+    - `[HÌNH_PLACEHOLDER]` cho hình ảnh minh hoạ.
+    - `[BẢNG_PLACEHOLDER]` cho bảng hoặc bảng số liệu.
+3. Với mỗi placeholder, hãy chèn ngay sau dòng mô tả có các cụm từ như: "xem hình dưới", "hình dưới đây", "bảng biến thiên", "bảng tần số", "bảng giá trị", "hình vẽ", "biểu đồ", hoặc ngay sau dòng câu hỏi liên quan tới hình/bảng/biểu đồ đó.
+4. Công thức toán học phải để ở dạng LaTeX inline: `${...}$` (bao gồm cả biểu thức, hệ phương trình, ký hiệu, ...)
+5. Nếu phát hiện bảng số liệu, hãy chuyển thành bảng Markdown nếu có thể.
+6. Định dạng từng loại câu hỏi như sau:
+
+Định dạng câu hỏi
+
+1. **Trắc nghiệm 4 phương án**
+- Bắt đầu bằng "Câu X." (X là số thứ tự), sau đó là nội dung câu hỏi, rồi lần lượt các lựa chọn:
+Câu X. [Nội dung câu hỏi]
+A. [Đáp án A]
+B. [Đáp án B]
+C. [Đáp án C]
+D. [Đáp án D]
+2. Đúng/Sai
+- Bắt đầu bằng "Câu X.", nội dung câu hỏi, cuối cùng là 2 lựa chọn trên 2 dòng riêng:
+Câu X. [Nội dung câu hỏi]
+A. Đúng
+B. Sai
+3. Trả lời ngắn
+- Bắt đầu bằng "Câu X.", nội dung câu hỏi.
+Câu X. [Nội dung câu hỏi]
+Trả lời: ________
+4. **Tự luận**
+- Bắt đầu bằng "Câu X.", nội dung câu hỏi.
+Câu X. [Nội dung câu hỏi]
+Bài làm:
+Lưu ý:
+- Giữ nguyên thứ tự các câu hỏi, đáp án, nội dung gốc.
+- Chỉ chèn placeholder đúng vị trí liên quan tới hình hoặc bảng.
+- Không tự ý bỏ qua hay thay đổi bất kỳ chi tiết nào.
+**Ví dụ minh hoạ:**
+Câu 1. Cho tam giác $ABC$ có $AB = AC$. Xem hình dưới.
+[HÌNH_PLACEHOLDER]
+A. Tam giác cân tại $A$.
+B. Tam giác vuông tại $B$.
+C. Tam giác đều.
+D. Tam giác tù.
+Câu 2. Điền số thích hợp vào ô trống trong bảng giá trị sau:
+[BẢNG_PLACEHOLDER]
+Câu 3. Phát biểu nào sau đây là đúng về đồ thị hàm số $y = x^2$?
+A. Đồ thị là đường thẳng.
+B. Đồ thị là parabol.
+C. Đồ thị là elip.
+D. Đồ thị là hypebol.
+Câu 4. Hãy giải phương trình $x^2 - 4 = 0$.
+Hãy xuất ra văn bản theo đúng định dạng trên!
 '''
 def gemini_generate_text(image_bytes, api_key):
     api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
