@@ -123,9 +123,10 @@ def remove_all_figure_markdown(text):
     Loại bỏ các markdown hình ảnh/bảng cũ hoặc placeholder không mong muốn.
     """
     if not isinstance(text, str): return ""
+    # Giữ nguyên các regex này để loại bỏ các placeholder cũ hoặc không mong muốn
     text = re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)', '', text)
-    text = re.sub(r'\[HÌNH:.*?\]', '', text) 
-    text = re.sub(r'\[BẢNG:.*?\]', '', text) 
+    text = re.sub(r'\[HÌNH:.*?\]', '', text)
+    text = re.sub(r'\[BẢNG:.*?\]', '', text)
     text = re.sub(r'\[HÌNH_PLACEHOLDER\]', '', text)
     text = re.sub(r'\[BẢNG_PLACEHOLDER\]', '', text)
     return text
@@ -147,29 +148,29 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
         table_kw = [
             "bảng biến thiên", "bảng giá trị", "bảng tần số", "bảng sau", "bảng dưới", "thống kê lại ở bảng"
         ]
-    
+
     lines = [l.rstrip() for l in text.split('\n')]
     final_processed_lines = []
-    
+
     inserted_figures_names = set()
-    
+
     # Tạo một bản sao của danh sách figures để dễ dàng quản lý các hình đã được chèn
-    available_figures = list(figures) 
-    
+    available_figures = list(figures)
+
     # Sắp xếp lại available_figures theo vị trí để xử lý tuần tự
     available_figures.sort(key=lambda f: (f['bbox'][1], f['bbox'][0]))
 
     # Bước 1: Phân tích các khối văn bản (câu hỏi, đoạn văn) và vị trí của chúng
     text_blocks = [] # List of (type, content_lines, start_line_idx, end_line_idx)
-    current_block_type = "intro" # "intro", "question", "footer"
+    current_block_type = "intro" # "intro", "question", "footer", "paragraph"
     current_block_lines = []
     current_block_start_idx = 0
-    
+
     for idx, line in enumerate(lines):
         line_strip = line.strip()
-        
-        is_question_start = re.match(r"^Câu\s*(\d+)\.?", line_strip)
-        is_footer_start = re.match(r"^(HẾT|Trang|Mã đề|----+)$", line_strip)
+
+        is_question_start = re.match(r"^(Câu\s*\d+\.?|Bài\s*\d+\.?|Câu hỏi\s*\d+\.?)$", line_strip, re.IGNORECASE) # Mở rộng nhận diện câu hỏi
+        is_footer_start = re.match(r"^(HẾT|Trang|Mã đề|----+)$", line_strip, re.IGNORECASE) # Mở rộng nhận diện footer
 
         if is_question_start:
             if current_block_lines:
@@ -193,9 +194,21 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
             current_block_type = "footer"
             current_block_lines = [line]
             current_block_start_idx = idx
+        elif not line_strip and current_block_lines: # Xử lý dòng trống để phân tách đoạn
+            if current_block_lines:
+                text_blocks.append({
+                    "type": current_block_type,
+                    "content_lines": list(current_block_lines),
+                    "start_line_idx": current_block_start_idx,
+                    "end_line_idx": idx - 1
+                })
+            current_block_type = "paragraph" # Đặt loại là paragraph cho các đoạn văn bản thông thường
+            current_block_lines = []
+            current_block_start_idx = idx
+            final_processed_lines.append("") # Thêm dòng trống vào output để giữ khoảng cách
         else:
             current_block_lines.append(line)
-    
+
     # Thêm khối cuối cùng
     if current_block_lines:
         text_blocks.append({
@@ -207,45 +220,59 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
 
     # Bước 2: Gán hình ảnh cho các khối văn bản
     figure_to_block_map = {} # {figure_name: text_block_index}
-    
+
     for fig in available_figures:
         if fig is None: continue
-        
+
         fig_y_center = fig['bbox'][1] + fig['bbox'][3] / 2
-        
+
         best_block_match_idx = -1
         min_y_dist = float('inf')
-        
+
         for block_idx, block in enumerate(text_blocks):
+            # Tính toán vị trí Y của khối dựa trên chỉ số dòng và chiều cao ảnh
             block_start_y = block["start_line_idx"] * (img_h / len(lines))
             block_end_y = (block["end_line_idx"] + 1) * (img_h / len(lines))
             block_y_center = (block_start_y + block_end_y) / 2
 
             dist = abs(fig_y_center - block_y_center)
-            
+
             # Kiểm tra xem hình ảnh có nằm trong phạm vi Y của khối không
-            padding_y = img_h * 0.05 # 5% chiều cao ảnh làm đệm
-            
+            # Mở rộng padding để bao phủ tốt hơn các trường hợp hình ảnh nằm giữa các khối
+            padding_y = img_h * 0.08 # 8% chiều cao ảnh làm đệm
+
             if (block_start_y - padding_y) <= fig_y_center <= (block_end_y + padding_y):
                 if dist < min_y_dist:
                     min_y_dist = dist
                     best_block_match_idx = block_idx
-        
+
         if best_block_match_idx != -1:
             figure_to_block_map[fig["name"]] = best_block_match_idx
         else:
             # Nếu không khớp với khối nào, gán cho khối gần nhất (hoặc để sau)
-            # Tạm thời, nếu không khớp, nó sẽ được chèn vào cuối tài liệu
-            pass
+            # Tìm khối gần nhất nếu không có sự chồng lấn
+            min_dist_overall = float('inf')
+            closest_block_idx = -1
+            for block_idx, block in enumerate(text_blocks):
+                block_start_y = block["start_line_idx"] * (img_h / len(lines))
+                block_end_y = (block["end_line_idx"] + 1) * (img_h / len(lines))
+                block_y_center = (block_start_y + block_end_y) / 2
+                dist = abs(fig_y_center - block_y_center)
+                if dist < min_dist_overall:
+                    min_dist_overall = dist
+                    closest_block_idx = block_idx
+            if closest_block_idx != -1:
+                figure_to_block_map[fig["name"]] = closest_block_idx
+
 
     # Bước 3: Xây dựng lại văn bản, chèn hình ảnh vào cuối khối văn bản liên quan
     for block_idx, block in enumerate(text_blocks):
         current_buffer = ""
-        
+
         # Nối các dòng trong khối thành một đoạn văn bản
         for line_content in block["content_lines"]:
             line_strip = line_content.strip()
-            
+
             # Nếu dòng trống, flush buffer và thêm dòng trống
             if not line_strip:
                 if current_buffer:
@@ -253,22 +280,24 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
                     current_buffer = ""
                 final_processed_lines.append("")
             else:
-                                # Nối dòng vào buffer
+                # Nối dòng vào buffer
                 # Nếu buffer đang trống HOẶC dòng hiện tại là đầu câu hỏi mới HOẶC buffer vừa kết thúc câu
                 # thì dòng hiện tại bắt đầu một buffer mới.
                 # Ngược lại, nối dòng hiện tại vào buffer.
-                is_new_question_start_in_line = re.match(r"^Câu\s*(\d+)\.?", line_strip)
+                is_new_question_start_in_line = re.match(r"^(Câu\s*\d+\.?|Bài\s*\d+\.?|Câu hỏi\s*\d+\.?)$", line_strip, re.IGNORECASE)
                 buffer_ends_sentence_in_buffer = re.search(r'[.!?…:]\s*$', current_buffer.strip())
 
                 if not current_buffer or is_new_question_start_in_line or buffer_ends_sentence_in_buffer:
+                    if current_buffer and not is_new_question_start_in_line: # Nếu buffer có nội dung và không phải câu hỏi mới, thêm dấu xuống dòng
+                        final_processed_lines.append(current_buffer.strip())
                     current_buffer = line_strip
                 else:
                     current_buffer += " " + line_strip
-        
+
         # Flush buffer cuối cùng của khối
         if current_buffer:
             final_processed_lines.append(current_buffer.strip())
-        
+
         # Chèn hình ảnh thuộc về khối này vào cuối khối
         figures_for_this_block = [f for f in available_figures if f is not None and figure_to_block_map.get(f["name"]) == block_idx and f["name"] not in inserted_figures_names]
         figures_for_this_block.sort(key=lambda f: (f['bbox'][1], f['bbox'][0])) # Sắp xếp theo vị trí
@@ -277,20 +306,37 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
             # Kiểm tra xem có placeholder trong buffer cuối cùng của khối không
             # Nếu có, thay thế placeholder
             last_line_in_output = final_processed_lines[-1] if final_processed_lines else ""
-            
-            if ("[HÌNH_PLACEHOLDER]" in last_line_in_output and not fig_to_insert["is_table"]) or \
-               ("[BẢNG_PLACEHOLDER]" in last_line_in_output and fig_to_insert["is_table"]):
-                if fig_to_insert["is_table"]:
-                    final_processed_lines[-1] = last_line_in_output.replace("[BẢNG_PLACEHOLDER]", f"[BẢNG: {fig_to_insert['name']}]")
-                else:
-                    final_processed_lines[-1] = last_line_in_output.replace("[HÌNH_PLACEHOLDER]", f"[HÌNH: {fig_to_insert['name']}]")
-            else:
-                # Chèn vào dòng mới
+
+            # Tìm vị trí chèn tốt nhất:
+            # 1. Ngay sau dòng có từ khóa liên quan đến hình/bảng
+            # 2. Ngay sau dòng có placeholder do Gemini tạo ra
+            # 3. Cuối khối văn bản nếu không tìm thấy vị trí cụ thể
+
+            inserted_at_placeholder = False
+            for i in range(len(final_processed_lines) - 1, -1, -1):
+                line_to_check = final_processed_lines[i]
+                if (("[HÌNH_PLACEHOLDER]" in line_to_check and not fig_to_insert["is_table"]) or
+                    ("[BẢNG_PLACEHOLDER]" in line_to_check and fig_to_insert["is_table"])):
+                    if fig_to_insert["is_table"]:
+                        final_processed_lines[i] = line_to_check.replace("[BẢNG_PLACEHOLDER]", f"[BẢNG: {fig_to_insert['name']}]")
+                    else:
+                        final_processed_lines[i] = line_to_check.replace("[HÌNH_PLACEHOLDER]", f"[HÌNH: {fig_to_insert['name']}]")
+                    inserted_at_placeholder = True
+                    break
+                # Kiểm tra từ khóa trong các dòng gần đây
+                if any(kw.lower() in line_to_check.lower() for kw in (table_kw if fig_to_insert["is_table"] else keywords)):
+                    # Chèn ngay sau dòng có từ khóa
+                    final_processed_lines.insert(i + 1, f"[{'BẢNG' if fig_to_insert['is_table'] else 'HÌNH'}: {fig_to_insert['name']}]")
+                    inserted_at_placeholder = True
+                    break
+
+            if not inserted_at_placeholder:
+                # Nếu không tìm thấy placeholder hoặc từ khóa, chèn vào cuối khối
                 if fig_to_insert["is_table"]:
                     final_processed_lines.append(f"[BẢNG: {fig_to_insert['name']}]")
                 else:
                     final_processed_lines.append(f"[HÌNH: {fig_to_insert['name']}]")
-            
+
             inserted_figures_names.add(fig_to_insert["name"])
             # Đánh dấu hình ảnh là đã sử dụng trong available_figures
             for i, fig_item in enumerate(available_figures):
@@ -305,9 +351,9 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
             final_processed_lines.append(f"[BẢNG: {fig['name']}]")
         else:
             final_processed_lines.append(f"[HÌNH: {fig['name']}]")
-        inserted_figures_names.add(fig["name"]) 
-    
-    return '\n'.join([l for l in final_processed_lines if l.strip()])
+        inserted_figures_names.add(fig["name"])
+
+    return '\n'.join([l for l in final_processed_lines if l.strip() or l == ""]) # Giữ lại dòng trống
 
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
@@ -324,43 +370,43 @@ def get_next_api_key():
 
 # GEMINI_PROMPT được cập nhật theo yêu cầu của bạn
 GEMINI_PROMPT = '''
-YÊU CẦU:
-1. Đọc và gõ lại TẤT CẢ văn bản trong ảnh, giữ nguyên cấu trúc đoạn văn, dấu xuống dòng và định dạng ban đầu.
-2. Nếu phát hiện nhiều hình minh hoạ (hình vẽ, đồ thị, bảng, ...), hãy đánh dấu đúng vị trí từng hình bằng cú pháp placeholder:
-    - `[HÌNH_PLACEHOLDER]` cho hình ảnh minh hoạ.
-    - `[BẢNG_PLACEHOLDER]` cho bảng hoặc bảng số liệu.
-3. Với mỗi placeholder, hãy chèn ngay sau dòng mô tả có các cụm từ như: "xem hình dưới", "hình dưới đây", "bảng biến thiên", "bảng tần số", "bảng giá trị", "hình vẽ", "biểu đồ", "như hình vẽ", "thống kê lại ở bảng", hoặc ngay sau dòng câu hỏi liên quan tới hình/bảng/biểu đồ đó.
-4. Công thức toán học phải để ở dạng LaTeX inline: `${...}$` (bao gồm cả biểu thức, hệ phương trình, ký hiệu, ...)
-5. Nếu phát hiện bảng số liệu, hãy chuyển thành bảng Markdown nếu có thể.
-6. Định dạng từng loại câu hỏi như sau:
+YÊU CẦU QUAN TRỌNG:
+1.  **GÕ LẠI CHÍNH XÁC TẤT CẢ VĂN BẢN TRONG ẢNH**: Đảm bảo không bỏ sót bất kỳ từ, câu, đoạn văn nào. Giữ nguyên cấu trúc đoạn văn, dấu xuống dòng, và định dạng gốc (ví dụ: in đậm, in nghiêng nếu có thể).
+2.  **ĐÁNH DẤU VỊ TRÍ HÌNH ẢNH/BẢNG**: Nếu phát hiện hình minh hoạ (hình vẽ, đồ thị, biểu đồ) hoặc bảng số liệu (bảng giá trị, bảng biến thiên, bảng tần số), hãy đánh dấu đúng vị trí của chúng bằng cú pháp placeholder:
+    *   `[HÌNH_PLACEHOLDER]` cho hình ảnh minh hoạ.
+    *   `[BẢNG_PLACEHOLDER]` cho bảng hoặc bảng số liệu.
+3.  **CHÈN PLACEHOLDER ĐÚNG VỊ TRÍ**: Với mỗi placeholder, hãy chèn ngay sau dòng mô tả có các cụm từ như: "xem hình dưới", "hình dưới đây", "bảng biến thiên", "bảng tần số", "bảng giá trị", "hình vẽ", "biểu đồ", "như hình vẽ", "thống kê lại ở bảng", hoặc ngay sau dòng câu hỏi liên quan trực tiếp tới hình/bảng/biểu đồ đó. Nếu không có từ khóa, hãy chèn vào vị trí logic nhất trong đoạn văn bản liên quan.
+4.  **ĐỊNH DẠNG CÔNG THỨC TOÁN HỌC**: Mọi công thức toán học, biểu thức, hệ phương trình, ký hiệu toán học phải được định dạng bằng LaTeX inline: `${...}$`.
+5.  **CHUYỂN BẢNG SỐ LIỆU SANG MARKDOWN**: Nếu phát hiện bảng số liệu, hãy chuyển đổi chúng thành định dạng bảng Markdown nếu có thể.
+6.  **ĐỊNH DẠNG CÂU HỎI**: Tuân thủ nghiêm ngặt các định dạng sau cho từng loại câu hỏi:
 
-**Định dạng câu hỏi:**
+    **Định dạng câu hỏi:**
 
-1. **Trắc nghiệm 4 phương án**
-   - Bắt đầu bằng "Câu X." (X là số thứ tự), sau đó là nội dung câu hỏi ĐẦY ĐỦ, rồi lần lượt TẤT CẢ các lựa chọn A, B, C, D:
-   Câu X. [Nội dung câu hỏi đầy đủ] 
-   A. [Đáp án A đầy đủ] 
-   B. [Đáp án B đầy đủ] 
-   C. [Đáp án C đầy đủ] 
-   D. [Đáp án D đầy đủ]
-2. **Đúng/Sai**
-- Bắt đầu bằng "Câu X.", nội dung câu hỏi, cuối cùng là 2 lựa chọn trên 2 dòng riêng:
-Câu X. [Nội dung câu hỏi] A. Đúng B. Sai
-3. **Trả lời ngắn**
-- Bắt đầu bằng "Câu X.", nội dung câu hỏi.
-Câu X. [Nội dung câu hỏi] Trả lời: ________
-4. **Tự luận**
-- Bắt đầu bằng "Câu X.", nội dung câu hỏi.
-Câu X. [Nội dung câu hỏi] 
+    1.  **Trắc nghiệm 4 phương án**
+        *   Bắt đầu bằng "Câu X." (X là số thứ tự), sau đó là nội dung câu hỏi ĐẦY ĐỦ, rồi lần lượt TẤT CẢ các lựa chọn A, B, C, D trên các dòng riêng biệt:
+        Câu X. [Nội dung câu hỏi đầy đủ]
+        A. [Đáp án A đầy đủ]
+        B. [Đáp án B đầy đủ]
+        C. [Đáp án C đầy đủ]
+        D. [Đáp án D đầy đủ]
+    2.  **Đúng/Sai**
+        *   Bắt đầu bằng "Câu X.", nội dung câu hỏi, cuối cùng là 2 lựa chọn trên 2 dòng riêng:
+        Câu X. [Nội dung câu hỏi]
+        A. Đúng
+        B. Sai
+    3.  **Trả lời ngắn**
+        *   Bắt đầu bằng "Câu X.", nội dung câu hỏi.
+        Câu X. [Nội dung câu hỏi] Trả lời: ________
+    4.  **Tự luận**
+        *   Bắt đầu bằng "Câu X.", nội dung câu hỏi.
+        Câu X. [Nội dung câu hỏi]
 
-**Lưu ý quan trọng:**
-- KHÔNG BỎ SÓT bất kỳ câu hỏi nào, kể cả câu hỏi bị thiếu một phần
-- KHÔNG BỎ SÓT bất kỳ đáp án nào (A, B, C, D) - nếu thiếu thì ghi "..." 
-- Giữ nguyên thứ tự các câu hỏi, đáp án, nội dung gốc
-- Chỉ chèn placeholder đúng vị trí liên quan tới hình hoặc bảng
-- Không tự ý bỏ qua hay thay đổi bất kỳ chi tiết nào
-- Ghi rõ thông tin đề thi (tiêu đề, mã đề, thời gian...)
-- Nếu có câu hỏi bị cắt hoặc thiếu, vẫn phải ghi lại phần có thể đọc được
+**Lưu ý cực kỳ quan trọng:**
+*   **KHÔNG BỎ SÓT BẤT KỲ NỘI DUNG NÀO**: Kể cả câu hỏi bị thiếu một phần, đáp án bị cắt, hay bất kỳ đoạn văn bản nào. Nếu một phần bị cắt, hãy ghi lại phần có thể đọc được và thêm `[...]` để chỉ ra phần bị thiếu.
+*   **KHÔNG BỎ SÓT ĐÁP ÁN**: Nếu một lựa chọn (A, B, C, D) bị thiếu nội dung, hãy ghi `...` vào vị trí đó.
+*   **GIỮ NGUYÊN THỨ TỰ**: Đảm bảo thứ tự của các câu hỏi, đáp án, và nội dung gốc được giữ nguyên.
+*   **CHỈ CHÈN PLACEHOLDER ĐÚNG VỊ TRÍ**: Không tự ý chèn placeholder ở những nơi không liên quan đến hình hoặc bảng.
+*   **KHÔNG TỰ Ý BỎ QUA HAY THAY ĐỔI CHI TIẾT**: Mọi thông tin, bao gồm tiêu đề đề thi, mã đề, thời gian, v.v., phải được ghi lại chính xác.
 
 **Ví dụ minh hoạ:**
 
