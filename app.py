@@ -331,8 +331,15 @@ YÊU CẦU QUAN TRỌNG:
     *   `[BẢNG_PLACEHOLDER]` cho bảng hoặc bảng số liệu.
 3.  **CHÈN PLACEHOLDER ĐÚNG VỊ TRÍ**: Với mỗi placeholder, hãy chèn ngay sau dòng mô tả có các cụm từ như: "xem hình dưới", "hình dưới đây", "bảng biến thiên", "bảng tần số", "bảng giá trị", "hình vẽ", "biểu đồ", "như hình vẽ", "thống kê lại ở bảng", hoặc ngay sau dòng câu hỏi liên quan trực tiếp tới hình/bảng/biểu đồ đó. Nếu không có từ khóa, hãy chèn vào vị trí logic nhất trong đoạn văn bản liên quan.
 4.  **ĐỊNH DẠNG CÔNG THỨC TOÁN HỌC**: Mọi công thức toán học, biểu thức, hệ phương trình, ký hiệu toán học phải được định dạng bằng LaTeX inline: `${...}$`.
-5.  **CHUYỂN BẢNG SỐ LIỆU SANG MARKDOWN**: Nếu phát hiện bảng số liệu, hãy chuyển đổi chúng thành định dạng bảng Markdown nếu có thể.
-6.  **ĐỊNH DẠNG CÂU HỎI**: Tuân thủ nghiêm ngặt các định dạng sau cho từng loại câu hỏi:
+5. CÔNG THỨC TOÁN HỌC
+- Giữ nguyên công thức dưới dạng LaTeX chuẩn:
+- Toán inline: `${...}$`
+- Toán độc lập hoặc hệ phương trình: `$begin{{cases}}...\end{{cases}}$`
+- Các chữ kí hiệu cho hình học và các số để dạng ${....}$.
+Ví dụ: ${Oxyz}$, ${A}$,${AB}$,${0,1%}$,${0.1%}$,....
+- KHÔNG dùng `\(...\)` hoặc `\[...\]`
+6.  **CHUYỂN BẢNG SỐ LIỆU SANG MARKDOWN**: Nếu phát hiện bảng số liệu, hãy chuyển đổi chúng thành định dạng bảng Markdown nếu có thể.
+7.  **ĐỊNH DẠNG CÂU HỎI**: Tuân thủ nghiêm ngặt các định dạng sau cho từng loại câu hỏi:
 
     **Định dạng câu hỏi:**
 
