@@ -17,30 +17,47 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     img = np.array(img_pil)
     h, w = img.shape[:2]
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    blur = cv2.GaussianBlur(gray, (5,5), 0) # Tăng blur kernel size
     
-    # Tinh chỉnh adaptiveThreshold: blockSize phải là số lẻ >=3. C là hằng số trừ đi.
-    # Tăng blockSize và C có thể giúp loại bỏ nhiễu tốt hơn.
-    th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 31, 15) 
+    # Tăng cường làm mờ để loại bỏ nhiễu nhỏ và làm mịn các cạnh
+    blur = cv2.GaussianBlur(gray, (9,9), 0) # Tăng kernel size lên (9,9)
+    
+    # Tinh chỉnh adaptiveThreshold: Tăng blockSize và C để ít nhạy cảm hơn với chi tiết nhỏ
+    # blockSize phải là số lẻ >=3. C là hằng số trừ đi.
+    th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 51, 25) # Tăng blockSize và C
     
     # Tách bảng bằng morphology line horizontal + vertical
-    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.3),1)) 
+    # Kernel size có thể cần điều chỉnh tùy thuộc vào kích thước bảng trong ảnh
+    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.4),1)) # Tăng nhẹ
     detected_lines = cv2.morphologyEx(th, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
-    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.15))) 
-    detected_columns = cv2.morphologyEx(th, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
+    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.25))) # Tăng nhẹ
     table_mask = cv2.addWeighted(detected_lines, 0.5, detected_columns, 0.5, 0.0)
     
     # Find table contours
+    # Sử dụng cv2.RETR_EXTERNAL để chỉ lấy các contour ngoài cùng
     contours, _ = cv2.findContours(table_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     temp_tables = [] 
-    # Tăng min_area_abs cho bảng để loại bỏ các bảng nhỏ không mong muốn
-    min_table_area = max(min_area_abs, 5000) # Bảng thường lớn hơn hình ảnh
+    
+    # Tăng mạnh min_table_area
+    min_table_area = max(min_area_abs, 15000) # Tăng lên 15000
+    
     for cnt in contours: 
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
-        # Thêm lọc tỷ lệ khung hình cho bảng
         aspect_ratio = ww / (hh + 1e-5)
-        if area > min_table_area and ww > 50 and hh > 30 and 0.1 < aspect_ratio < 10.0: # Rộng hơn cho bảng
+        
+        # Lọc theo độ đầy đủ (solidity) để loại bỏ các contour rỗng hoặc có hình dạng bất thường
+        # Solidity = Contour Area / Bounding Box Area
+        contour_area = cv2.contourArea(cnt)
+        solidity = float(contour_area) / (ww * hh + 1e-5)
+        
+        # Thêm lọc kích thước tối thiểu cho chiều rộng và chiều cao
+        # Thêm lọc theo tỷ lệ của bounding box so với kích thước ảnh tổng thể
+        if (area > min_table_area and 
+            ww > 100 and hh > 60 and # Kích thước tối thiểu
+            0.1 < aspect_ratio < 10.0 and # Tỷ lệ khung hình
+            solidity > 0.4 and # Độ đầy đủ (tránh các đường kẻ rời rạc)
+            ww < 0.9 * w and hh < 0.9 * h): # Không quá sát mép ảnh
+            
             crop = img[y:y+hh, x:x+ww]
             buf = io.BytesIO()
             Image.fromarray(crop).save(buf, format="JPEG")
@@ -48,21 +65,33 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
             temp_tables.append({"base64": b64, "is_table": True, "bbox": (x, y, ww, hh)})
 
     # Tách hình minh hoạ (contour không phải bảng)
+    # Sử dụng cv2.RETR_EXTERNAL để chỉ lấy các contour ngoài cùng
     contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     temp_figures = [] 
-    # Tăng min_area_abs cho hình ảnh
-    min_figure_area = max(min_area_abs, 3000) # Hình ảnh cũng cần đủ lớn
+    
+    # Tăng mạnh min_figure_area
+    min_figure_area = max(min_area_abs, 8000) # Tăng lên 8000
+    
     for cnt in contours: 
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
-        # Thêm lọc tỷ lệ khung hình cho hình ảnh
         aspect_ratio = ww / (hh + 1e-5)
-        if area > min_figure_area and ww > 60 and hh > 60 and 0.2 < aspect_ratio < 5.0: # Chặt chẽ hơn cho hình ảnh
+        
+        contour_area = cv2.contourArea(cnt)
+        solidity = float(contour_area) / (ww * hh + 1e-5)
+
+        # Thêm lọc kích thước tối thiểu cho chiều rộng và chiều cao
+        # Thêm lọc theo tỷ lệ của bounding box so với kích thước ảnh tổng thể
+        if (area > min_figure_area and 
+            ww > 120 and hh > 120 and # Kích thước tối thiểu
+            0.2 < aspect_ratio < 5.0 and # Tỷ lệ khung hình
+            solidity > 0.5 and # Độ đầy đủ (hình ảnh thường đặc hơn)
+            ww < 0.9 * w and hh < 0.9 * h): # Không quá sát mép ảnh
+            
             # Loại bỏ vùng bảng đã nhận phía trên
             overlapped = False
             for t in temp_tables: 
                 tb_x, tb_y, tb_w, tb_h = t['bbox'] 
-                # Kiểm tra chồng lấn một cách linh hoạt hơn
                 # Nếu vùng hiện tại nằm hoàn toàn trong một bảng đã phát hiện, bỏ qua
                 if x >= tb_x and y >= tb_y and (x + ww) <= (tb_x + tb_w) and (y + hh) <= (tb_y + tb_h):
                     overlapped = True
@@ -74,22 +103,26 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
                 b64 = base64.b64encode(buf.getvalue()).decode()
                 temp_figures.append({"base64": b64, "is_table": False, "bbox": (x, y, ww, hh)})
     
-    # Gộp và sắp xếp tất cả các đối tượng đã tìm thấy
+    # Gộp tất cả các đối tượng đã tìm thấy
     all_detected_objects = temp_tables + temp_figures
     
     # Sắp xếp theo tọa độ y (hàng), sau đó theo x (cột) để có thứ tự logic trên trang
+    # Sau đó sắp xếp lại theo diện tích giảm dần để ưu tiên các đối tượng lớn hơn
     all_detected_objects_sorted = sorted(all_detected_objects, key=lambda f: (f['bbox'][1], f['bbox'][0]))
     
-    # Giới hạn số lượng hình ảnh/bảng trả về
+    # Lọc cuối cùng: Chỉ lấy các đối tượng lớn nhất và có vẻ hợp lý nhất
+    # Nếu bạn biết số lượng ảnh minh họa chính xác (ví dụ: 2), hãy thay đổi max_figures
+    # hoặc thêm một bước lọc cứng ở đây.
+    
+    # Ví dụ: Nếu bạn chỉ muốn 2 hình ảnh lớn nhất (không phân biệt bảng/hình)
+    # all_detected_objects_sorted = sorted(all_detected_objects_sorted, key=lambda f: f['bbox'][2] * f['bbox'][3], reverse=True)
+    # all_detected_objects_sorted = all_detected_objects_sorted[:2] # Chỉ lấy 2 cái lớn nhất
+    
     final_figures_list = []
     img_idx = 0
     table_idx = 0
     
-    # Lọc ra các hình ảnh/bảng lớn nhất và có vẻ hợp lý nhất
-    # Có thể cần tinh chỉnh thêm logic này nếu vẫn còn quá nhiều
-    # Ví dụ: chỉ lấy 2 hình ảnh và 1 bảng lớn nhất
-    
-    # Lấy tối đa max_figures (mặc định 10)
+    # Giới hạn số lượng trả về theo max_figures
     for fig in all_detected_objects_sorted[:max_figures]: 
         if fig["is_table"]:
             fig["name"] = f"table-{table_idx}.jpeg"
