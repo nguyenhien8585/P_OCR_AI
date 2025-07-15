@@ -12,7 +12,7 @@ from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
 # ----------- Hàm tách bảng giá trị/bảng biến thiên và hình minh hoạ (chuẩn nâng cao) ----------
-def extract_figures_and_tables(img_bytes, min_area_ratio=0.005, min_area_abs=1500, min_w=50, min_h=50, max_figures=8):
+def extract_figures_and_tables(img_bytes, min_area_ratio=0.008, min_area_abs=2500, min_w=70, min_h=70, max_figures=8):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
     h, w = img.shape[:2] 
@@ -44,24 +44,36 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.005, min_area_abs=150
         aspect = ww / (hh + 1e-6)
         
         # Lọc các vùng quá nhỏ hoặc quá lớn
-        if area < min_area_abs or area_ratio < min_area_ratio or area_ratio > 0.6: # Điều chỉnh ngưỡng tối đa
+        # Tăng min_area_abs và min_area_ratio để loại bỏ các đối tượng nhỏ như mã đề
+        if area < min_area_abs or area_ratio < min_area_ratio or area_ratio > 0.6: 
             continue
         
         # Lọc theo kích thước tối thiểu
+        # Tăng min_w và min_h
         if ww < min_w or hh < min_h:
             continue
 
         # Lọc theo tỷ lệ khung hình hợp lý cho hình ảnh/bảng
-        if not (0.1 < aspect < 12.0): # Phạm vi rộng hơn một chút
+        # Mã đề thường rất dài và mỏng, có thể loại bỏ bằng cách thắt chặt aspect ratio
+        if not (0.2 < aspect < 8.0): # Thắt chặt hơn một chút
             continue
 
-        # Không lấy vùng quá sát mép giấy (chừa 1.5% mép)
-        if x < 0.015*w or y < 0.015*h or (x+ww) > 0.985*w or (y+hh) > 0.985*h:
+        # Không lấy vùng quá sát mép giấy (chừa 3% mép)
+        # Mã đề thường nằm rất sát mép
+        if x < 0.03*w or y < 0.03*h or (x+ww) > 0.97*w or (y+hh) > 0.97*h:
             continue
         
+        # Thêm lọc dựa trên solidity (độ đặc của contour)
+        # Mã đề thường là văn bản, có solidity thấp hơn hình ảnh đặc
+        hull = cv2.convexHull(cnt)
+        hull_area = cv2.contourArea(hull)
+        if hull_area == 0: continue # Tránh chia cho 0
+        solidity = float(area)/hull_area
+        if solidity < 0.4: # Ngưỡng solidity, có thể điều chỉnh
+            continue
+
         # Logic nhận dạng bảng: chiều rộng lớn, tỷ lệ khung hình rộng
-        # Cân nhắc lại ngưỡng cho bảng, có thể cần linh hoạt hơn
-        is_table = (ww > 0.2*w and hh > 0.04*h and aspect > 2.0 and aspect < 10.0) 
+        is_table = (ww > 0.25*w and hh > 0.05*h and aspect > 2.0 and aspect < 10.0) 
         
         candidates.append({
             "area": area, "x0": x, "y0": y, "x1": x+ww, "y1": y+hh,
@@ -176,7 +188,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
                     "num": current_question_num,
                     "start_line": current_question_start_line,
                     "end_line": idx - 1,
-                    "keyword_lines": [] # Sẽ điền sau
+                    "keyword_lines": [] 
                 })
             current_question_num = int(match_q.group(1))
             current_question_start_line = idx
@@ -201,8 +213,8 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
         # Thêm vị trí của placeholder từ Gemini nếu có
         for i in range(q_block["start_line"], q_block["end_line"] + 1):
             if "[HÌNH_PLACEHOLDER]" in lines[i] or "[BẢNG_PLACEHOLDER]" in lines[i]:
-                q_block["keyword_lines"].append(i) # Coi placeholder là một dạng keyword line
-        q_block["keyword_lines"] = sorted(list(set(q_block["keyword_lines"]))) # Loại bỏ trùng lặp và sắp xếp
+                q_block["keyword_lines"].append(i) 
+        q_block["keyword_lines"] = sorted(list(set(q_block["keyword_lines"]))) 
 
     # Bước 2: Gán hình ảnh cho các khối câu hỏi
     figure_to_question_map = {} # {figure_name: question_number}
@@ -221,9 +233,12 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
             
             # Kiểm tra xem hình ảnh có nằm trong phạm vi Y của câu hỏi không
             q_start_y = q_block["start_line"] * (img_h / len(lines))
-            q_end_y = (q_block["end_line"] + 1) * (img_h / len(lines)) # +1 để bao gồm cả dòng cuối
+            q_end_y = (q_block["end_line"] + 1) * (img_h / len(lines)) 
             
-            if q_start_y <= fig_y_center <= q_end_y:
+            # Thêm một khoảng đệm nhỏ cho phạm vi Y của câu hỏi
+            padding_y = img_h * 0.05 # 5% chiều cao ảnh làm đệm
+            
+            if (q_start_y - padding_y) <= fig_y_center <= (q_end_y + padding_y):
                 if dist < min_y_dist:
                     min_y_dist = dist
                     best_q_match = q_block["num"]
@@ -236,7 +251,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
             pass
 
     # Bước 3: Xây dựng lại văn bản, chèn hình ảnh vào vị trí tối ưu trong khối câu hỏi
-    figures_inserted_in_text = set() # Theo dõi các hình đã chèn vào văn bản
+    figures_inserted_in_text = set() 
     
     for q_block in question_blocks:
         q_start_line = q_block["start_line"]
@@ -244,10 +259,9 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
         
         # Lấy các hình ảnh thuộc về câu hỏi này
         figs_for_this_q = [f for f in available_figures if f is not None and figure_to_question_map.get(f["name"]) == q_block["num"]]
-        figs_for_this_q.sort(key=lambda f: (f['bbox'][1], f['bbox'][0])) # Sắp xếp theo vị trí
+        figs_for_this_q.sort(key=lambda f: (f['bbox'][1], f['bbox'][0])) 
 
         # Tạo một danh sách các điểm chèn cụ thể trong khối câu hỏi này
-        # (line_idx, type, fig_obj)
         q_insertion_points = []
 
         # Ưu tiên placeholder từ Gemini
@@ -260,7 +274,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
         
         # Sau đó là các dòng có từ khóa
         for line_idx in q_block["keyword_lines"]:
-            if line_idx not in [p[0] for p in q_insertion_points]: # Tránh trùng lặp với placeholder
+            if line_idx not in [p[0] for p in q_insertion_points]: 
                 q_insertion_points.append((line_idx, 'keyword'))
         
         # Sắp xếp các điểm chèn theo thứ tự dòng
@@ -268,11 +282,32 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
 
         # Thực hiện chèn hình ảnh vào khối câu hỏi
         current_q_buffer = []
-        figs_to_insert_in_q = list(figs_for_this_q) # Bản sao để quản lý
+        figs_to_insert_in_q_copy = list(figs_for_this_q) # Bản sao để quản lý
 
         for line_idx in range(q_start_line, q_end_line + 1):
             line_content = lines[line_idx]
-            current_q_buffer.append(line_content)
+            
+            # Xử lý buffer trước khi thêm dòng mới hoặc chèn hình ảnh
+            # Flush buffer nếu dòng hiện tại là đầu câu hỏi mới, hoặc dòng trống, hoặc buffer kết thúc bằng dấu câu
+            is_new_question_line = re.match(r"^Câu\s*\d+\.?", line_content.strip())
+            is_empty_line = not line_content.strip()
+            buffer_ends_sentence = re.search(r'[.!?…:]\s*$', buffer.strip())
+
+            if buffer and (is_new_question_line or is_empty_line or buffer_ends_sentence):
+                processed_lines.append(buffer.strip())
+                buffer = ""
+            
+            # Thêm dòng hiện tại vào buffer
+            if line_content.strip(): # Chỉ thêm vào buffer nếu dòng không rỗng
+                if buffer and not buffer_ends_sentence and not is_new_question_line:
+                    buffer += " " + line_content.strip()
+                else:
+                    buffer = line_content.strip()
+            elif is_empty_line: # Nếu là dòng trống, flush buffer và thêm dòng trống
+                if buffer:
+                    processed_lines.append(buffer.strip())
+                    buffer = ""
+                processed_lines.append("") # Giữ dòng trống
 
             # Kiểm tra xem có điểm chèn nào ở dòng này không
             for p_idx, (p_line_idx, p_type) in enumerate(q_insertion_points):
@@ -281,16 +316,16 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
                     fig_to_insert_now = None
                     
                     if p_type == 'placeholder_img':
-                        for i, fig in enumerate(figs_to_insert_in_q):
+                        for i, fig in enumerate(figs_to_insert_in_q_copy):
                             if fig is not None and not fig["is_table"]:
                                 fig_to_insert_now = fig
-                                figs_to_insert_in_q[i] = None
+                                figs_to_insert_in_q_copy[i] = None
                                 break
                     elif p_type == 'placeholder_table':
-                        for i, fig in enumerate(figs_to_insert_in_q):
+                        for i, fig in enumerate(figs_to_insert_in_q_copy):
                             if fig is not None and fig["is_table"]:
                                 fig_to_insert_now = fig
-                                figs_to_insert_in_q[i] = None
+                                figs_to_insert_in_q_copy[i] = None
                                 break
                     elif p_type == 'keyword':
                         # Tìm hình ảnh gần nhất về mặt vật lý và khớp loại/từ khóa
@@ -299,7 +334,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
                         
                         current_line_y_center = line_idx * (img_h / len(lines))
 
-                        for i, fig in enumerate(figs_to_insert_in_q):
+                        for i, fig in enumerate(figs_to_insert_in_q_copy):
                             if fig is None: continue
                             
                             fig_y_center = fig['bbox'][1] + fig['bbox'][3] / 2
@@ -315,27 +350,33 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
                         
                         if best_fig_for_keyword:
                             fig_to_insert_now = best_fig_for_keyword
-                            figs_to_insert_in_q[best_fig_for_keyword_idx] = None
+                            figs_to_insert_in_q_copy[best_fig_for_keyword_idx] = None
 
                     if fig_to_insert_now:
                         # Thay thế placeholder hoặc chèn vào sau dòng
-                        if "[HÌNH_PLACEHOLDER]" in current_q_buffer[-1]:
-                            current_q_buffer[-1] = current_q_buffer[-1].replace("[HÌNH_PLACEHOLDER]", f"[HÌNH: {fig_to_insert_now['name']}]")
-                        elif "[BẢNG_PLACEHOLDER]" in current_q_buffer[-1]:
-                            current_q_buffer[-1] = current_q_buffer[-1].replace("[BẢNG_PLACEHOLDER]", f"[BẢNG: {fig_to_insert_now['name']}]")
+                        # Nếu buffer đang chứa dòng có placeholder, thay thế trực tiếp
+                        if "[HÌNH_PLACEHOLDER]" in buffer:
+                            buffer = buffer.replace("[HÌNH_PLACEHOLDER]", f"[HÌNH: {fig_to_insert_now['name']}]")
+                        elif "[BẢNG_PLACEHOLDER]" in buffer:
+                            buffer = buffer.replace("[BẢNG_PLACEHOLDER]", f"[BẢNG: {fig_to_insert_now['name']}]")
                         else:
-                            # Chèn vào dòng mới sau dòng hiện tại
+                            # Flush buffer và chèn hình ảnh vào dòng mới
+                            if buffer:
+                                processed_lines.append(buffer.strip())
+                                buffer = ""
                             if fig_to_insert_now["is_table"]:
-                                current_q_buffer.append(f"[BẢNG: {fig_to_insert_now['name']}]")
+                                processed_lines.append(f"[BẢNG: {fig_to_insert_now['name']}]")
                             else:
-                                current_q_buffer.append(f"[HÌNH: {fig_to_insert_now['name']}]")
+                                processed_lines.append(f"[HÌNH: {fig_to_insert_now['name']}]")
                         figures_inserted_in_text.add(fig_to_insert_now["name"])
         
-        # Thêm các dòng đã xử lý của khối câu hỏi vào processed_lines
-        processed_lines.extend(current_q_buffer)
+        # Sau khi duyệt hết các dòng trong khối câu hỏi, flush buffer cuối cùng của khối
+        if buffer:
+            processed_lines.append(buffer.strip())
+            buffer = ""
         
         # Chèn bất kỳ hình ảnh nào còn lại trong khối câu hỏi này vào cuối khối
-        for fig in figs_to_insert_in_q:
+        for fig in figs_to_insert_in_q_copy:
             if fig is not None and fig["name"] not in figures_inserted_in_text:
                 if fig["is_table"]:
                     processed_lines.append(f"[BẢNG: {fig['name']}]")
@@ -345,28 +386,112 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w, keywo
 
     # Bước 4: Xử lý các dòng không thuộc câu hỏi và các hình ảnh còn lại
     # Thêm các dòng không thuộc câu hỏi vào processed_lines
-    last_processed_line_idx = -1
-    if processed_lines:
-        # Tìm dòng cuối cùng đã được xử lý từ các khối câu hỏi
-        # Đây là một cách đơn giản, có thể cần phức tạp hơn nếu có các đoạn văn bản không phải câu hỏi xen kẽ
-        for q_block in question_blocks:
-            if q_block["end_line"] > last_processed_line_idx:
-                last_processed_line_idx = q_block["end_line"]
+    # (Đã được xử lý trong vòng lặp chính, nhưng cần đảm bảo các dòng cuối cùng không phải câu hỏi được thêm vào)
+    # Logic này cần được xem xét lại để đảm bảo không bị trùng lặp hoặc bỏ sót
     
-    # Thêm các dòng từ sau khối câu hỏi cuối cùng đến hết tài liệu
-    for line_idx in range(last_processed_line_idx + 1, len(lines)):
-        processed_lines.append(lines[line_idx])
+    # Cách đơn giản hơn: sau khi xử lý các khối câu hỏi, thêm các dòng còn lại
+    # và các hình ảnh chưa được chèn
+    
+    # Lấy tất cả các dòng đã được xử lý từ các khối câu hỏi
+    final_output_lines = []
+    current_line_idx_in_original = 0
+    
+    for q_block in question_blocks:
+        # Thêm các dòng trước khối câu hỏi hiện tại (nếu có)
+        while current_line_idx_in_original < q_block["start_line"]:
+            line_content = lines[current_line_idx_in_original].strip()
+            if line_content:
+                final_output_lines.append(line_content)
+            else:
+                final_output_lines.append("") # Giữ dòng trống
+            current_line_idx_in_original += 1
+        
+        # Thêm các dòng đã xử lý của khối câu hỏi
+        # Đây là phần phức tạp, cần đảm bảo các hình ảnh đã được chèn đúng cách
+        # Tạm thời, chúng ta sẽ dựa vào logic chèn trong vòng lặp chính
+        # và chỉ thêm các dòng gốc nếu chúng chưa được xử lý
+        
+        # Để đơn giản hóa, chúng ta sẽ xây dựng lại processed_lines từ đầu
+        # sau khi đã có figure_to_question_map và figures_inserted_in_text
+        pass # Logic này sẽ được thực hiện ở bước tiếp theo
+
+    # Xây dựng lại toàn bộ văn bản một lần nữa, dựa trên figure_to_question_map
+    # và các hình ảnh đã được chèn
+    final_processed_lines = []
+    current_buffer_for_final = ""
+    
+    for idx, line in enumerate(lines):
+        line_strip = line.strip()
+        
+        # Kiểm tra xem có hình ảnh nào được gán cho dòng này không
+        # (dựa trên figure_to_question_map và vị trí gần nhất)
+        figures_to_insert_at_current_point = []
+        
+        # Tìm hình ảnh có bbox gần với dòng hiện tại nhất
+        best_fig_for_line = None
+        min_dist_to_line = float('inf')
+        
+        current_line_y_center = idx * (img_h / len(lines))
+        
+        for fig in figures:
+            if fig["name"] in inserted_figures_names: continue # Đã chèn rồi
+            
+            fig_y_center = fig['bbox'][1] + fig['bbox'][3] / 2
+            dist = abs(fig_y_center - current_line_y_center)
+            
+            # Chỉ xem xét hình ảnh nếu nó chưa được chèn và gần dòng hiện tại
+            if dist < min_dist_to_line and dist < img_h * 0.1: # Khoảng cách tối đa 10% chiều cao ảnh
+                min_dist_to_line = dist
+                best_fig_for_line = fig
+        
+        # Nếu tìm thấy hình ảnh phù hợp cho dòng này
+        if best_fig_for_line:
+            # Flush buffer trước khi chèn hình ảnh
+            if current_buffer_for_final:
+                final_processed_lines.append(current_buffer_for_final)
+                current_buffer_for_final = ""
+            
+            # Chèn hình ảnh
+            if best_fig_for_line["is_table"]:
+                final_processed_lines.append(f"[BẢNG: {best_fig_for_line['name']}]")
+            else:
+                final_processed_lines.append(f"[HÌNH: {best_fig_for_line['name']}]")
+            inserted_figures_names.add(best_fig_for_line["name"])
+            
+        # Xử lý buffer cho văn bản
+        is_new_question_line = re.match(r"^Câu\s*\d+\.?", line_strip)
+        is_empty_line = not line_strip
+        buffer_ends_sentence = re.search(r'[.!?…:]\s*$', current_buffer_for_final.strip())
+
+        if current_buffer_for_final and (is_new_question_line or is_empty_line or buffer_ends_sentence):
+            final_processed_lines.append(current_buffer_for_final.strip())
+            current_buffer_for_final = ""
+        
+        if line_strip:
+            if current_buffer_for_final and not buffer_ends_sentence and not is_new_question_line:
+                current_buffer_for_final += " " + line_strip
+            else:
+                current_buffer_for_final = line_strip
+        elif is_empty_line:
+            if current_buffer_for_final:
+                final_processed_lines.append(current_buffer_for_final.strip())
+                current_buffer_for_final = ""
+            final_processed_lines.append("") # Giữ dòng trống
+
+    # Flush buffer cuối cùng
+    if current_buffer_for_final:
+        final_processed_lines.append(current_buffer_for_final.strip())
 
     # Chèn các hình/bảng còn lại ở cuối tài liệu nếu chưa được chèn
-    remaining_figures = sorted([f for f in figures if f['name'] not in figures_inserted_in_text and 'bbox' in f], key=lambda f: (f['bbox'][1], f['bbox'][0]))
+    remaining_figures = sorted([f for f in figures if f['name'] not in inserted_figures_names and 'bbox' in f], key=lambda f: (f['bbox'][1], f['bbox'][0]))
     for fig in remaining_figures:
         if fig["is_table"]:
-            processed_lines.append(f"[BẢNG: {fig['name']}]")
+            final_processed_lines.append(f"[BẢNG: {fig['name']}]")
         else:
-            processed_lines.append(f"[HÌNH: {fig['name']}]")
-        figures_inserted_in_text.add(fig["name"]) 
+            final_processed_lines.append(f"[HÌNH: {fig['name']}]")
+        inserted_figures_names.add(fig["name"]) 
     
-    return '\n'.join([l for l in processed_lines if l.strip()])
+    return '\n'.join([l for l in final_processed_lines if l.strip()])
 
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
