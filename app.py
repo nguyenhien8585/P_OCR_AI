@@ -22,9 +22,9 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     
     # Tách bảng bằng morphology line horizontal + vertical
     # Tăng kích thước kernel để nhận diện bảng tốt hơn
-    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.25),1)) # Tăng từ 0.18 lên 0.25
+    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.3),1)) # Tăng từ 0.25 lên 0.3
     detected_lines = cv2.morphologyEx(th, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
-    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.12))) # Tăng từ 0.08 lên 0.12
+    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.15))) # Tăng từ 0.12 lên 0.15
     detected_columns = cv2.morphologyEx(th, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
     table_mask = cv2.addWeighted(detected_lines, 0.5, detected_columns, 0.5, 0.0)
     
@@ -109,10 +109,25 @@ def find_best_matching_figure(figures_pool, is_table_needed, current_line_lower,
                (not is_table_needed and any(kw in current_line_lower for kw in keywords)):
                 return fig
     
-    # Nếu không tìm thấy khớp chính xác, thử tìm theo loại thôi (nếu có)
-    for fig in figures_pool:
-        if fig["is_table"] == is_table_needed:
-            return fig 
+    # FALLBACK: Nếu không tìm thấy khớp chính xác theo loại, nhưng có từ khóa mạnh
+    # và chỉ còn một hình ảnh/bảng chưa được chèn, hoặc hình ảnh/bảng đó có vẻ phù hợp nhất
+    # (Đây là heuristic rủi ro nhưng cần thiết cho các trường hợp phân loại sai)
+    if is_table_needed and any(kw in current_line_lower for kw in table_kw):
+        # Nếu có từ khóa bảng nhưng không tìm thấy is_table=True, thử tìm is_table=False
+        # (trường hợp bảng bị phân loại sai thành hình ảnh)
+        for fig in figures_pool:
+            if not fig["is_table"]: # Tìm hình ảnh
+                # Có thể thêm logic phức tạp hơn ở đây nếu cần, ví dụ:
+                # - Kiểm tra kích thước/tỷ lệ khung hình có giống bảng không
+                # - Kiểm tra xem có phải là hình ảnh duy nhất còn lại không
+                return fig # Trả về hình ảnh đầu tiên chưa được chèn
+    
+    elif not is_table_needed and any(kw in current_line_lower for kw in keywords):
+        # Tương tự, nếu có từ khóa hình ảnh nhưng không tìm thấy is_table=False, thử tìm is_table=True
+        # (trường hợp hình ảnh bị phân loại sai thành bảng)
+        for fig in figures_pool:
+            if fig["is_table"]: # Tìm bảng
+                return fig # Trả về bảng đầu tiên chưa được chèn
             
     return None
 
