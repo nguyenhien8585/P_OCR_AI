@@ -398,7 +398,6 @@ def gemini_generate_text(image_bytes, api_key):
  res = r.json()
  text = res["candidates"][0]["content"]["parts"][0]["text"]
  return text
-
 # ========== Giao diện ==========
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
 st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & bảng (bảng giá trị, bảng tần số, biến thiên) ✨")
@@ -406,54 +405,52 @@ tab_pdf, tab_img = st.tabs(["📄 PDF Toán", "🖼️ Ảnh → Markdown + Minh
 
 # =================== TAB ẢNH ===================
 with tab_img:
- uploaded_images = st.file_uploader(
-     "Chọn nhiều ảnh (mỗi ảnh là một trang):",
-     type=["png", "jpg", "jpeg", "webp"],
-     accept_multiple_files=True,
-     help="Mỗi ảnh là 1 trang, minh hoạ & bảng sẽ được tách tự động."
- )
+    uploaded_images = st.file_uploader(
+        "Chọn nhiều ảnh (mỗi ảnh là một trang):",
+        type=["png", "jpg", "jpeg", "webp"],
+        accept_multiple_files=True,
+        help="Mỗi ảnh là 1 trang, minh hoạ & bảng sẽ được tách tự động."
+    )
 
- if uploaded_images:
-     for img_idx, img_file in enumerate(uploaded_images):
-         with st.expander("ℹ️ Thông tin file", expanded=True):
-             st.write(f"**🖼️ Tên file:** {img_file.name}")
-             st.write(f"**🟡 Loại file:** {img_file.type}")
-             st.write(f"**✏️ Kích thước:** {img_file.size/1024:.1f} KB")
+    if uploaded_images:
+        for img_idx, img_file in enumerate(uploaded_images):
+            with st.expander("ℹ️ Thông tin file", expanded=True):
+                st.write(f"**🖼️ Tên file:** {img_file.name}")
+                st.write(f"**🟡 Loại file:** {img_file.type}")
+                st.write(f"**✏️ Kích thước:** {img_file.size/1024:.1f} KB")
 
-         ocr_key = f"ocr_{img_file.name}_{img_idx}"
-         text_key = f"text_{img_file.name}_{img_idx}"
-         fig_key = f"fig_{img_file.name}_{img_idx}"
+            ocr_key = f"ocr_{img_file.name}_{img_idx}"
+            text_key = f"text_{img_file.name}_{img_idx}"
+            fig_key = f"fig_{img_file.name}_{img_idx}"
 
-         # Nút xử lý OCR Image cho từng ảnh
-         if st.button(f"🚀 Xử lý OCR Image ({img_file.name})", key=ocr_key):
-             img_bytes = img_file.read()
-             # Thay đổi cách gọi hàm extract_figures_and_tables để nhận cả h và w
-             figures, img_h, img_w = extract_figures_and_tables(img_bytes) 
-             api_key = get_next_api_key()
-             with st.spinner("Đang nhận diện..."):
-                 try:
-                     text = gemini_generate_text(img_bytes, api_key)
-                 except Exception as e:
-                     text = f"[Lỗi Gemini: {e}]"
-             
-             text = remove_all_figure_markdown(text) 
-             # Truyền img_h và img_w vào hàm join_paragraphs_and_insert_figures_tables
-             text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
-             
-             st.session_state[text_key] = text
-             st.session_state[fig_key] = figures
+            # Nút xử lý OCR Image cho từng ảnh
+            if st.button(f"🚀 Xử lý OCR Image ({img_file.name})", key=ocr_key):
+                img_bytes = img_file.read()
+                figures, img_h, img_w = extract_figures_and_tables(img_bytes)
+                api_key = get_next_api_key()
+                with st.spinner("Đang nhận diện..."):
+                    try:
+                        text = gemini_generate_text(img_bytes, api_key)
+                    except Exception as e:
+                        text = f"[Lỗi Gemini: {e}]"
 
-         if text_key in st.session_state and fig_key in st.session_state:
-             st.markdown("### 📋 Kết quả mapping nâng cao:")
-             
-             # --- Giao diện mới cho tab "Ảnh" ---
-             tab_text_img, tab_figures_img = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
+                text = remove_all_figure_markdown(text)
+                text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
 
-             with tab_text_img:
-                 st.code(st.session_state[text_key], language="markdown")
-                 figures = st.session_state[fig_key] # Lấy lại figures để dùng trong nút tải Word
-                 if figures: # Chỉ hiển thị nút tải Word nếu có hình ảnh
-                                             if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", use_container_width=True, key=f"word-{img_file.name}-{img_idx}"):
+                st.session_state[text_key] = text
+                st.session_state[fig_key] = figures
+
+            if text_key in st.session_state and fig_key in st.session_state:
+                st.markdown("### 📋 Kết quả mapping nâng cao:")
+
+                # --- Giao diện mới cho tab "Ảnh" ---
+                tab_text_img, tab_figures_img = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
+
+                with tab_text_img:
+                    st.code(st.session_state[text_key], language="markdown")
+                    figures = st.session_state[fig_key]
+                    if figures:  # Chỉ hiển thị nút tải Word nếu có hình ảnh
+                        if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", use_container_width=True, key=f"word-{img_file.name}-{img_idx}"):
                             with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
                                 insert_images_to_word_from_markdown(
                                     st.session_state[text_key],
@@ -476,28 +473,20 @@ with tab_img:
 
                 with tab_figures_img:
                     figures = st.session_state[fig_key]
-                    if figures: # Chỉ hiển thị nút tải Word nếu có hình ảnh
-                        if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", use_container_width=True, key=f"word-{img_file.name}-{img_idx}"):
-                            with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                                insert_images_to_word_from_markdown(
-                                    st.session_state[text_key],
-                                    figures,
-                                    tmp_word.name
-                                )
-                            with open(tmp_word.name, "rb") as f:
-                                word_data = f.read()
-                            st.success("✅ Đã tạo file Word thành công!")
+                    if figures:
+                        for fig in figures:
+                            img_bytes_fig = base64.b64decode(fig["base64"])
+                            st.image(img_bytes_fig, caption=fig["name"], use_container_width=True)
                             st.download_button(
-                                "⬇️ Tải về file Word",
-                                word_data,
-                                file_name=f"ket_qua_{img_file.name}.docx",
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                use_container_width=True
+                                f"Tải {fig['name']}",
+                                img_bytes_fig,
+                                file_name=fig["name"],
+                                mime="image/jpeg",
+                                use_container_width=True,
+                                key=f"img-download-{img_file.name}-{img_idx}-{fig['name']}"
                             )
-                            os.remove(tmp_word.name)
                     else:
-                        st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh để xuất Word.")
-                # --- Kết thúc giao diện mới ---
+                        st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh.")
 
     else:
         st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
@@ -532,7 +521,7 @@ with tab_pdf:
                 client = EnhancedSmartOCRClient(API_URL, API_KEY)
                 uploaded_file.seek(0)
                 pdf_bytes = uploaded_file.read()
-                images = extract_images_from_pdf(pdf_bytes) # extract_images_from_pdf không trả về h, w
+                images = extract_images_from_pdf(pdf_bytes)
                 result = client.convert(pdf_bytes, file_name, mime_type)
             if not result.get("success"):
                 st.error("❌ Xử lý OCR PDF thất bại: " + str(result.get("error")))
@@ -541,7 +530,7 @@ with tab_pdf:
             st.session_state["ocr_images"] = images
             st.session_state["ocr_done"] = True
             st.success("✅ Đã nhận diện PDF thành công!")
-    
+
     if st.session_state.get("ocr_done"):
         def dollar_to_mathptn(s):
             return re.sub(r'\$(.+?)\$', r'${\1}$', s)
