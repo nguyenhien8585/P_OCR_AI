@@ -22,9 +22,9 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     
     # Tách bảng bằng morphology line horizontal + vertical
     # Tăng kích thước kernel để nhận diện bảng tốt hơn
-    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.3),1)) # Tăng từ 0.25 lên 0.3
+    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.3),1)) 
     detected_lines = cv2.morphologyEx(th, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
-    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.15))) # Tăng từ 0.12 lên 0.15
+    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.15))) 
     detected_columns = cv2.morphologyEx(th, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
     table_mask = cv2.addWeighted(detected_lines, 0.5, detected_columns, 0.5, 0.0)
     
@@ -117,9 +117,6 @@ def find_best_matching_figure(figures_pool, is_table_needed, current_line_lower,
         # (trường hợp bảng bị phân loại sai thành hình ảnh)
         for fig in figures_pool:
             if not fig["is_table"]: # Tìm hình ảnh
-                # Có thể thêm logic phức tạp hơn ở đây nếu cần, ví dụ:
-                # - Kiểm tra kích thước/tỷ lệ khung hình có giống bảng không
-                # - Kiểm tra xem có phải là hình ảnh duy nhất còn lại không
                 return fig # Trả về hình ảnh đầu tiên chưa được chèn
     
     elif not is_table_needed and any(kw in current_line_lower for kw in keywords):
@@ -155,21 +152,13 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
     
     buffer = "" 
     
-    # st.write("--- Debugging join_paragraphs_and_insert_figures_tables ---")
-    # st.write(f"Initial figures: {[f['name'] for f in figures]}")
-    # st.write(f"Figures with is_table: {[f['name'] + ' (is_table=' + str(f['is_table']) + ')' for f in figures]}")
-
-
     for idx, line in enumerate(lines):
         line_strip = line.strip()
-        # st.write(f"Processing line {idx}: '{line_strip}'")
 
         # --- Xử lý Placeholder từ Gemini ---
         if "[HÌNH_PLACEHOLDER]" in line_strip or "[BẢNG_PLACEHOLDER]" in line_strip:
-            # st.write(f"  Found placeholder in line: '{line_strip}'")
             if buffer: 
                 processed_lines.append(buffer.strip())
-                # st.write(f"  Flushing buffer: '{buffer.strip()}'")
                 buffer = ""
             
             figures_pool = [f for f in figures if f["name"] not in inserted_figures_names]
@@ -183,24 +172,19 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
             if found_fig:
                 if found_fig["is_table"]:
                     processed_lines.append(line_strip.replace("[BẢNG_PLACEHOLDER]", f"[BẢNG: {found_fig['name']}]"))
-                    # st.write(f"  Inserted BẢNG: {found_fig['name']} via placeholder.")
                 else:
                     processed_lines.append(line_strip.replace("[HÌNH_PLACEHOLDER]", f"[HÌNH: {found_fig['name']}]"))
-                    # st.write(f"  Inserted HÌNH: {found_fig['name']} via placeholder.")
                 inserted_figures_names.add(found_fig["name"])
             else: 
                 processed_lines.append(line_strip.replace("[HÌNH_PLACEHOLDER]", "").replace("[BẢNG_PLACEHOLDER]", "").strip())
-                # st.write(f"  Could not find matching figure for placeholder. Removed placeholder.")
             continue 
 
         # --- Xử lý các dòng văn bản thông thường ---
         if not line_strip or re.match(r"^(HẾT|Trang|Mã đề|----+)$", line_strip):
             if buffer:
                 processed_lines.append(buffer.strip())
-                # st.write(f"  Flushing buffer (separator/empty line): '{buffer.strip()}'")
                 buffer = ""
             processed_lines.append(line_strip)
-            # st.write(f"  Added separator/empty line: '{line_strip}'")
             continue
 
         is_new_question = re.match(r"^Câu\s*\d+\.?", line_strip)
@@ -208,7 +192,6 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
         # Flush buffer nếu kết thúc câu hoặc là câu hỏi mới
         if buffer and (re.search(r"[.!?…:]$", buffer) or is_new_question):
             processed_lines.append(buffer.strip())
-            # st.write(f"  Flushing buffer (sentence end/new question): '{buffer.strip()}'")
             buffer = "" 
 
         # Thêm dòng hiện tại vào buffer
@@ -216,7 +199,6 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
             buffer += " " + line_strip
         else:
             buffer = line_strip
-        # st.write(f"  Current buffer: '{buffer}'")
 
         lower_buffer = buffer.lower()
 
@@ -234,51 +216,38 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
             # Ưu tiên tìm bảng nếu có từ khóa bảng
             if any(kw in lower_buffer for kw in table_kw):
                 found_fig_to_insert = find_best_matching_figure(figures_pool, True, lower_buffer, keywords, table_kw)
-                # if found_fig_to_insert:
-                    # st.write(f"  Found table keyword, trying to insert table: {found_fig_to_insert['name']} (is_table={found_fig_to_insert['is_table']})")
             
             # Nếu chưa tìm thấy và có từ khóa hình ảnh, tìm hình ảnh
             if not found_fig_to_insert and any(kw in lower_buffer for kw in keywords):
                 found_fig_to_insert = find_best_matching_figure(figures_pool, False, lower_buffer, keywords, table_kw)
-                # if found_fig_to_insert:
-                    # st.write(f"  Found image keyword, trying to insert image: {found_fig_to_insert['name']} (is_table={found_fig_to_insert['is_table']})")
             
             # Nếu tìm thấy hình ảnh/bảng phù hợp, chèn nó
             if found_fig_to_insert:
                 # Flush buffer trước khi chèn hình ảnh/bảng
                 if buffer:
                     processed_lines.append(buffer.strip())
-                    # st.write(f"  Flushing buffer before keyword insert: '{buffer.strip()}'")
                     buffer = "" 
 
                 if found_fig_to_insert["is_table"]:
                     processed_lines.append(f"[BẢNG: {found_fig_to_insert['name']}]")
-                    # st.write(f"  Inserted BẢNG: {found_fig_to_insert['name']} via keyword.")
                 else:
                     processed_lines.append(f"[HÌNH: {found_fig_to_insert['name']}]")
-                    # st.write(f"  Inserted HÌNH: {found_fig_to_insert['name']} via keyword.")
                 inserted_figures_names.add(found_fig_to_insert["name"])
                 buffer = "" 
-        # st.write(f"  Inserted figures so far: {inserted_figures_names}")
 
     # --- Xử lý buffer cuối cùng và các hình/bảng còn lại ---
     if buffer:
         processed_lines.append(buffer.strip())
-        # st.write(f"Flushing final buffer: '{buffer.strip()}'")
 
     # Chèn các hình/bảng còn lại ở cuối tài liệu nếu chưa được chèn
-    # st.write("--- Inserting remaining figures ---")
     for fig in figures:
         if fig["name"] not in inserted_figures_names:
             if fig["is_table"]:
                 processed_lines.append(f"[BẢNG: {fig['name']}]")
-                # st.write(f"  Inserted remaining BẢNG: {fig['name']} at end.")
             else:
                 processed_lines.append(f"[HÌNH: {fig['name']}]")
-                # st.write(f"  Inserted remaining HÌNH: {fig['name']} at end.")
             inserted_figures_names.add(fig["name"]) 
     
-    # st.write("--- End Debugging ---")
     return '\n'.join([l for l in processed_lines if l.strip()])
 
 # --------- Key Gemini -----------
@@ -374,7 +343,7 @@ with tab_img:
                 figures = st.session_state[fig_key]
 
                 if figures:
-                    if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", key=f"word-{img_file.name}-{img_idx}"):
+                    if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", use_container_width=True, key=f"word-{img_file.name}-{img_idx}"):
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
                             insert_images_to_word_from_markdown(
                                 st.session_state[text_key],
