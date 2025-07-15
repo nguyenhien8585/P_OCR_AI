@@ -448,3 +448,4 @@ with tab_pdf:
     st.markdown("---")
 
 st.caption("✨ Mapping bảng/tách hình tự động, chuẩn layout, tách đúng bảng giá trị, bảng tần số, bảng biến thiên. Xuất Word mapping đúng vị trí minh hoạ & bảng.")
+
