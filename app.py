@@ -18,20 +18,20 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.008, min_area_abs=250
     h, w = img.shape[:2] 
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     
-    # Áp dụng GaussianBlur để làm mịn nhiễu (kernel nhỏ hơn để giữ chi tiết)
+    # Áp dụng GaussianBlur để làm mịn nhiễu
     gray = cv2.GaussianBlur(gray, (3,3), 0) 
     
     # Áp dụng CLAHE để tăng cường độ tương phản cục bộ
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
     gray = clahe.apply(gray)
     
-    # Adaptive Thresholding (tham số cân bằng)
+    # Adaptive Thresholding
     thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
                                    cv2.THRESH_BINARY_INV, 25, 10) 
     
-    # Dilate để làm dày các đường nét và kết nối các phần bị đứt gãy
+    # Dilate để làm dày các đường nét
     kernel = np.ones((3,3),np.uint8)
-    thresh = cv2.dilate(thresh, kernel, iterations=1) # Giảm iterations để tránh làm dính các đối tượng
+    thresh = cv2.dilate(thresh, kernel, iterations=1)
     
     # Tìm contours
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -55,19 +55,19 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.008, min_area_abs=250
         if not (0.2 < aspect < 8.0): 
             continue
 
-        # Không lấy vùng quá sát mép giấy (chừa 3% mép)
+        # Không lấy vùng quá sát mép giấy
         if x < 0.03*w or y < 0.03*h or (x+ww) > 0.97*w or (y+hh) > 0.97*h:
             continue
         
-        # Thêm lọc dựa trên solidity (độ đặc của contour)
+        # Thêm lọc dựa trên solidity
         hull = cv2.convexHull(cnt)
         hull_area = cv2.contourArea(hull)
-        if hull_area == 0: continue # Tránh chia cho 0
+        if hull_area == 0: continue
         solidity = float(area)/hull_area
         if solidity < 0.4: 
             continue
 
-        # Logic nhận dạng bảng: chiều rộng lớn, tỷ lệ khung hình rộng
+        # Logic nhận dạng bảng
         is_table = (ww > 0.25*w and hh > 0.05*h and aspect > 2.0 and aspect < 10.0) 
         
         candidates.append({
@@ -75,13 +75,13 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.008, min_area_abs=250
             "is_table": is_table, "bbox": (x, y, ww, hh) 
         })
     
-    # Sắp xếp các ứng cử viên theo diện tích giảm dần để ưu tiên các hình lớn
+    # Sắp xếp các ứng cử viên theo diện tích giảm dần
     candidates = sorted(candidates, key=lambda f: f['area'], reverse=True)
     
-    # Giới hạn cứng số lượng đối tượng trả về là 2
+    # Giới hạn cứng số lượng đối tượng trả về
     candidates = candidates[:2] 
 
-    # Sắp xếp lại theo vị trí trên trang (y, x) để đảm bảo thứ tự logic
+    # Sắp xếp lại theo vị trí trên trang
     candidates = sorted(candidates, key=lambda box: (box["y0"], box["x0"]))
 
     final_figures_list = []
@@ -221,8 +221,8 @@ GEMINI_API_KEYS = [
     "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
     "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
     "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
-   "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
-  "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
+    "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
+    "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
 ]
 api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
@@ -308,7 +308,10 @@ def gemini_generate_text(image_bytes, api_key):
 # ========== Giao diện ==========
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
 st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & bảng (bảng giá trị, bảng tần số, biến thiên) ✨")
+
 # =================== TAB ẢNH ===================
+tab_img, tab_pdf = st.tabs(["🖼️ Ảnh", "📄 PDF"])
+
 with tab_img:
     uploaded_images = st.file_uploader(
         "Chọn nhiều ảnh (mỗi ảnh là một trang):",
@@ -325,7 +328,7 @@ with tab_img:
                 st.write(f"**✏️ Kích thước:** {img_file.size/1024:.1f} KB")
 
             ocr_key = f"ocr_{img_file.name}_{img_idx}"
-            text_key = f"text_{img_file.name}_{img_idx}"
+                        text_key = f"text_{img_file.name}_{img_idx}"
             fig_key = f"fig_{img_file.name}_{img_idx}"
 
             if st.button(f"🚀 Xử lý OCR Image ({img_file.name})", key=ocr_key):
