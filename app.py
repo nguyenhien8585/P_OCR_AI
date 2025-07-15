@@ -29,8 +29,7 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     
     # Find table contours
     contours, _ = cv2.findContours(table_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    tables = []
-    table_count = 0 
+    temp_tables = [] # Use temp_tables to store detected tables
     for cnt in contours: 
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
@@ -39,20 +38,18 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
             buf = io.BytesIO()
             Image.fromarray(crop).save(buf, format="JPEG")
             b64 = base64.b64encode(buf.getvalue()).decode()
-            tables.append({"name": f"table-{table_count}.jpeg", "base64": b64, "is_table": True, "bbox": (x, y, ww, hh)})
-            table_count += 1 
+            temp_tables.append({"base64": b64, "is_table": True, "bbox": (x, y, ww, hh)})
 
     # Tách hình minh hoạ (contour không phải bảng)
     contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    figures = []
-    figure_count = 0 
+    temp_figures = [] # Use temp_figures to store detected figures
     for cnt in contours: 
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
         if area > min_area_abs and ww > 50 and hh > 50:
             # Loại bỏ vùng bảng đã nhận phía trên
             overlapped = False
-            for t in tables:
+            for t in temp_tables: # Check against temp_tables
                 tb_x, tb_y, tb_w, tb_h = t['bbox'] 
                 if abs(tb_x-x)<12 and abs(tb_y-y)<12 and abs(tb_w-ww)<25 and abs(tb_h-hh)<25:
                     overlapped = True
@@ -62,32 +59,28 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
                 buf = io.BytesIO()
                 Image.fromarray(crop).save(buf, format="JPEG")
                 b64 = base64.b64encode(buf.getvalue()).decode()
-                figures.append({"name": f"img-{figure_count}.jpeg", "base64": b64, "is_table": False})
-                figure_count += 1 
+                temp_figures.append({"base64": b64, "is_table": False, "bbox": (x, y, ww, hh)})
     
-    # Sắp xếp lại figures để đảm bảo thứ tự hợp lý (ví dụ: theo tọa độ y, sau đó x)
-    # Điều này giúp img-0.jpeg và img-1.jpeg có thứ tự đúng nếu chúng nằm trên cùng một dòng
-    # hoặc nếu bảng biến thiên (img-1.jpeg) thực sự nằm dưới hình lăng trụ (img-0.jpeg)
-    # trong ảnh gốc. Nếu không, thứ tự này có thể cần được điều chỉnh.
-    all_figures = tables + figures
-    # Giả định bbox là (x, y, w, h)
-    # Sắp xếp theo tọa độ y (hàng), sau đó theo x (cột)
-    all_figures_sorted = sorted(all_figures, key=lambda f: f['bbox'][1] if 'bbox' in f else 0) # Sort by y-coordinate
+    # Gộp và sắp xếp tất cả các đối tượng đã tìm thấy
+    all_detected_objects = temp_tables + temp_figures
     
-    # Cập nhật lại tên img-X.jpeg và table-X.jpeg sau khi sắp xếp
-    final_figures = []
+    # Sắp xếp theo tọa độ y (hàng), sau đó theo x (cột) để có thứ tự logic trên trang
+    all_detected_objects_sorted = sorted(all_detected_objects, key=lambda f: (f['bbox'][1], f['bbox'][0]))
+    
+    # Gán lại tên img-X.jpeg và table-X.jpeg sau khi sắp xếp, giữ nguyên is_table
+    final_figures_list = []
     img_idx = 0
     table_idx = 0
-    for fig in all_figures_sorted:
+    for fig in all_detected_objects_sorted:
         if fig["is_table"]:
             fig["name"] = f"table-{table_idx}.jpeg"
             table_idx += 1
         else:
             fig["name"] = f"img-{img_idx}.jpeg"
             img_idx += 1
-        final_figures.append(fig)
+        final_figures_list.append(fig)
 
-    return final_figures
+    return final_figures_list
 
 def remove_all_figure_markdown(text):
     """
@@ -115,8 +108,6 @@ def find_best_matching_figure(figures_pool, is_table_needed, current_line_lower,
                 return fig
     
     # Nếu không tìm thấy khớp chính xác, thử tìm theo loại thôi (nếu có)
-    # Điều này có thể gây chèn sai nếu có nhiều hình cùng loại không có từ khóa
-    # Nhưng cần thiết nếu từ khóa không đủ mạnh
     for fig in figures_pool:
         if fig["is_table"] == is_table_needed:
             return fig 
@@ -149,6 +140,8 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
     
     st.write("--- Debugging join_paragraphs_and_insert_figures_tables ---")
     st.write(f"Initial figures: {[f['name'] for f in figures]}")
+    st.write(f"Figures with is_table: {[f['name'] + ' (is_table=' + str(f['is_table']) + ')' for f in figures]}")
+
 
     for idx, line in enumerate(lines):
         line_strip = line.strip()
@@ -225,13 +218,13 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
             if any(kw in lower_buffer for kw in table_kw):
                 found_fig_to_insert = find_best_matching_figure(figures_pool, True, lower_buffer, keywords, table_kw)
                 if found_fig_to_insert:
-                    st.write(f"  Found table keyword, trying to insert table: {found_fig_to_insert['name']}")
+                    st.write(f"  Found table keyword, trying to insert table: {found_fig_to_insert['name']} (is_table={found_fig_to_insert['is_table']})")
             
             # Nếu chưa tìm thấy và có từ khóa hình ảnh, tìm hình ảnh
             if not found_fig_to_insert and any(kw in lower_buffer for kw in keywords):
                 found_fig_to_insert = find_best_matching_figure(figures_pool, False, lower_buffer, keywords, table_kw)
                 if found_fig_to_insert:
-                    st.write(f"  Found image keyword, trying to insert image: {found_fig_to_insert['name']}")
+                    st.write(f"  Found image keyword, trying to insert image: {found_fig_to_insert['name']} (is_table={found_fig_to_insert['is_table']})")
             
             # Nếu tìm thấy hình ảnh/bảng phù hợp, chèn nó
             if found_fig_to_insert:
