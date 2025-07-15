@@ -12,22 +12,23 @@ from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
 # ----------- Hàm tách bảng giá trị/bảng biến thiên và hình minh hoạ (chuẩn nâng cao) ----------
-def extract_figures_and_tables(img_bytes, min_area_ratio=0.005, min_area_abs=1500, min_w=50, min_h=50, max_figures=8):
+def extract_figures_and_tables(img_bytes, min_area_ratio=0.008, min_area_abs=2000, min_w=60, min_h=60, max_figures=8):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
     h, w = img.shape[:2]
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     
     # Áp dụng GaussianBlur để làm mịn nhiễu
-    gray = cv2.GaussianBlur(gray, (3,3), 0)
+    gray = cv2.GaussianBlur(gray, (5,5), 0) # Tăng kernel size để làm mịn mạnh hơn
     
     # Áp dụng CLAHE để tăng cường độ tương phản cục bộ
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
     gray = clahe.apply(gray)
     
     # Adaptive Thresholding
+    # Tăng blockSize và C để ít nhạy cảm với nhiễu nhỏ
     thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
-                                   cv2.THRESH_BINARY_INV, 25, 10)
+                                   cv2.THRESH_BINARY_INV, 41, 15) 
     
     # Dilate để làm dày các đường nét và kết nối các phần bị đứt gãy
     kernel = np.ones((3,3),np.uint8)
@@ -44,7 +45,8 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.005, min_area_abs=150
         aspect = ww / (hh + 1e-6)
         
         # Lọc các vùng quá nhỏ hoặc quá lớn (có thể là toàn bộ trang)
-        if area < min_area_abs or area_ratio < min_area_ratio or area_ratio > 0.8:
+        # Tăng min_area_ratio và min_area_abs để loại bỏ nhiễu nhỏ hơn
+        if area < min_area_abs or area_ratio < min_area_ratio or area_ratio > 0.7: # Giảm max area_ratio
             continue
         
         # Lọc theo kích thước tối thiểu
@@ -52,19 +54,20 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.005, min_area_abs=150
             continue
 
         # Lọc theo tỷ lệ khung hình hợp lý cho hình ảnh/bảng
-        if not (0.1 < aspect < 15.0):
+        if not (0.15 < aspect < 10.0): # Thắt chặt hơn một chút
             continue
 
-        # Không lấy vùng quá sát mép giấy (chừa 1% mép)
-        if x < 0.01*w or y < 0.01*h or (x+ww) > 0.99*w or (y+hh) > 0.99*h:
+        # Không lấy vùng quá sát mép giấy (chừa 2% mép)
+        if x < 0.02*w or y < 0.02*h or (x+ww) > 0.98*w or (y+hh) > 0.98*h:
             continue
         
         # Logic nhận dạng bảng: chiều rộng lớn, tỷ lệ khung hình rộng
-        is_table = (ww > 0.25*w and hh > 0.05*h and aspect > 2.0 and aspect < 10.0)
+        # Điều chỉnh ngưỡng cho phù hợp với bảng trong tài liệu của bạn
+        is_table = (ww > 0.3*w and hh > 0.06*h and aspect > 2.5 and aspect < 8.0) # Thắt chặt hơn cho bảng
         
         candidates.append({
             "area": area, "x0": x, "y0": y, "x1": x+ww, "y1": y+hh,
-            "is_table": is_table, "bbox": (x, y, ww, hh) # Giữ lại bbox ở đây
+            "is_table": is_table, "bbox": (x, y, ww, hh) 
         })
     
     # Sắp xếp các ứng cử viên theo diện tích giảm dần để ưu tiên các hình lớn
@@ -99,7 +102,7 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.005, min_area_abs=150
             "name": name,
             "base64": b64,
             "is_table": fig_data["is_table"],
-            "bbox": fig_data["bbox"] # QUAN TRỌNG: Giữ lại bbox ở đây
+            "bbox": fig_data["bbox"] 
         })
 
     return final_figures_list
@@ -156,9 +159,11 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
     buffer = "" 
     
     # Tạo một bản sao của danh sách figures để dễ dàng quản lý các hình đã được chèn
-    # available_figures sẽ chứa các dictionary đầy đủ, bao gồm 'bbox'
     available_figures = list(figures) 
     
+    # Sắp xếp lại available_figures theo vị trí để xử lý tuần tự
+    available_figures.sort(key=lambda f: (f['bbox'][1], f['bbox'][0]))
+
     for idx, line in enumerate(lines):
         line_strip = line.strip()
 
@@ -226,18 +231,31 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
             found_fig_to_insert = None
             
             # Tìm hình ảnh/bảng phù hợp nhất từ các hình chưa được chèn
+            # Ưu tiên hình ảnh có bbox gần với vị trí hiện tại của văn bản
+            current_line_y_center = idx * (h / len(lines)) # Ước tính vị trí y của dòng hiện tại
+            
+            best_match_dist = float('inf')
+            best_match_fig_idx = -1
+
             for i, fig in enumerate(available_figures):
                 if fig is None: continue # Bỏ qua các hình đã được chèn
 
+                fig_y_center = fig['bbox'][1] + fig['bbox'][3] / 2 # Tâm y của hình ảnh
+                dist = abs(fig_y_center - current_line_y_center)
+
                 if fig["is_table"] and any(kw in lower_buffer for kw in table_kw):
-                    found_fig_to_insert = fig
-                    available_figures[i] = None # Đánh dấu là đã sử dụng
-                    break
+                    if dist < best_match_dist:
+                        best_match_dist = dist
+                        best_match_fig_idx = i
                 elif not fig["is_table"] and any(kw in lower_buffer for kw in keywords):
-                    found_fig_to_insert = fig
-                    available_figures[i] = None # Đánh dấu là đã sử dụng
-                    break
+                    if dist < best_match_dist:
+                        best_match_dist = dist
+                        best_match_fig_idx = i
             
+            if best_match_fig_idx != -1:
+                found_fig_to_insert = available_figures[best_match_fig_idx]
+                available_figures[best_match_fig_idx] = None # Đánh dấu là đã sử dụng
+
             # Nếu tìm thấy hình ảnh/bảng phù hợp, chèn nó
             if found_fig_to_insert:
                 # Flush buffer trước khi chèn hình ảnh/bảng
@@ -258,7 +276,6 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
 
     # Chèn các hình/bảng còn lại ở cuối tài liệu nếu chưa được chèn
     # Sắp xếp lại các hình còn lại theo thứ tự ban đầu để chèn
-    # Đảm bảo chỉ sắp xếp các dictionary có chứa 'bbox'
     remaining_figures = sorted([f for f in available_figures if f is not None and 'bbox' in f], key=lambda f: (f['bbox'][1], f['bbox'][0]))
     for fig in remaining_figures:
         if fig["name"] not in inserted_figures_names: # Kiểm tra lại để tránh trùng lặp
@@ -292,7 +309,6 @@ YÊU CẦU:
 5. Công thức toán học: tất cả ở dạng ${...}$ (inline, hệ, ký hiệu ... như hướng dẫn chi tiết).
 6. Bảng biểu: dùng markdown nếu có thể.
 7. Dạng bài: Trắc nghiệm, Đúng/Sai, Tự luận: đúng định dạng như ví dụ.
-8. nhận dạng đúng hình minh hoạ đúng vị trí câu hỏi.
 '''
 def gemini_generate_text(image_bytes, api_key):
     api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
