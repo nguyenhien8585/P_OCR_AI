@@ -11,6 +11,8 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
+
+
 # ----------- Hàm tách bảng giá trị/bảng biến thiên và hình minh hoạ (chuẩn nâng cao) ----------
 def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -87,7 +89,14 @@ def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, tabl
     processed_lines = []
     fig_idx = 0 # Chỉ số cho danh sách figures đã tách
     n_fig = len(figures)
-    
+
+    def remove_all_figure_markdown(text):
+        if not isinstance(text, str): return ""
+        # Dòng này đã được comment out trong các phiên bản trước để không loại bỏ markdown cũ
+        # text = re.sub(r'!\[img-\d+\.jpeg\]\(img-\d+\.jpeg\)', '', text)
+        text = re.sub(r'\[HÌNH:.*?\]', '', text) # Loại bỏ placeholder cũ nếu có
+        text = re.sub(r'\[BẢNG:.*?\]', '', text) # Loại bỏ placeholder cũ nếu có
+        return text
     buffer = "" # Buffer để xây dựng các đoạn văn bản
     
     for idx, line in enumerate(lines):
