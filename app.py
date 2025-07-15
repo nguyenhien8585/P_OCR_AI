@@ -12,121 +12,96 @@ from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
 # ----------- Hàm tách bảng giá trị/bảng biến thiên và hình minh hoạ (chuẩn nâng cao) ----------
-def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
+def extract_figures_and_tables(img_bytes, min_area_ratio=0.005, min_area_abs=1500, min_w=50, min_h=50, max_figures=8):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
     h, w = img.shape[:2]
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     
-    # Tăng cường làm mờ để loại bỏ nhiễu nhỏ và làm mịn các cạnh
-    # Kernel size (7,7) là một lựa chọn cân bằng tốt hơn cho ảnh có thể có nhiễu
-    blur = cv2.GaussianBlur(gray, (7,7), 0) 
+    # Áp dụng GaussianBlur để làm mịn nhiễu
+    gray = cv2.GaussianBlur(gray, (3,3), 0)
     
-    # Tinh chỉnh adaptiveThreshold:
-    # blockSize: 61, C: 20 thường cho kết quả tốt trên nhiều loại tài liệu, làm cho ngưỡng ít nhạy cảm hơn với chi tiết nhỏ
-    th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 61, 20) 
+    # Áp dụng CLAHE để tăng cường độ tương phản cục bộ
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)) # Giảm clipLimit một chút
+    gray = clahe.apply(gray)
     
-    # Tách bảng bằng morphology line horizontal + vertical
-    # Kernel size được điều chỉnh để bắt các đường kẻ bảng rõ ràng
-    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.25),1)) # Kernel cho đường ngang
-    detected_lines = cv2.morphologyEx(th, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
+    # Adaptive Thresholding
+    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+                                   cv2.THRESH_BINARY_INV, 25, 10)
     
-    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.12))) # Kernel cho đường dọc
-    detected_columns = cv2.morphologyEx(th, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
+    # Dilate để làm dày các đường nét và kết nối các phần bị đứt gãy
+    kernel = np.ones((3,3),np.uint8)
+    thresh = cv2.dilate(thresh, kernel, iterations=2) # Giữ iterations=2
     
-    table_mask = cv2.addWeighted(detected_lines, 0.5, detected_columns, 0.5, 0.0)
+    # Tìm contours
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    # Find table contours
-    contours, _ = cv2.findContours(table_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    temp_tables = [] 
-    
-    # Thắt chặt lại min_table_area
-    min_table_area = max(min_area_abs, 10000) # Giảm xuống 10000 để bắt các bảng nhỏ hơn
-    
-    for cnt in contours: 
+    candidates = []
+    for cnt in contours:
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
-        aspect_ratio = ww / (hh + 1e-5)
+        area_ratio = area / (w * h)
+        aspect = ww / (hh + 1e-6)
         
-        contour_area = cv2.contourArea(cnt)
-        solidity = float(contour_area) / (ww * hh + 1e-5)
+        # Lọc các vùng quá nhỏ hoặc quá lớn (có thể là toàn bộ trang)
+        if area < min_area_abs or area_ratio < min_area_ratio or area_ratio > 0.8: # Thêm lọc area_ratio > 0.8
+            continue
         
-        if (area > min_table_area and 
-            ww > 60 and hh > 40 and # Kích thước tối thiểu hợp lý cho bảng
-            0.02 < aspect_ratio < 50.0 and # Tỷ lệ khung hình rộng cho bảng
-            solidity > 0.3 and # Độ đầy đủ (giảm nhẹ)
-            x > 0.01 * w and x + ww < 0.99 * w and y > 0.01 * h and y + hh < 0.99 * h): # Không quá sát mép ảnh
-            
-            crop = img[y:y+hh, x:x+ww]
-            buf = io.BytesIO()
-            Image.fromarray(crop).save(buf, format="JPEG")
-            b64 = base64.b64encode(buf.getvalue()).decode()
-            temp_tables.append({"base64": b64, "is_table": True, "bbox": (x, y, ww, hh)})
+        # Lọc theo kích thước tối thiểu
+        if ww < min_w or hh < min_h:
+            continue
 
-    # Tách hình minh hoạ (contour không phải bảng)
-    # Sử dụng th (ảnh nhị phân gốc) để tìm contours cho hình ảnh
-    contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    temp_figures = [] 
-    
-    # Thắt chặt lại min_figure_area
-    min_figure_area = max(min_area_abs, 3000) # Giảm xuống 3000 để bắt các hình ảnh nhỏ hơn
-    
-    for cnt in contours: 
-        x, y, ww, hh = cv2.boundingRect(cnt)
-        area = ww * hh
-        aspect_ratio = ww / (hh + 1e-5)
-        
-        contour_area = cv2.contourArea(cnt)
-        solidity = float(contour_area) / (ww * hh + 1e-5)
+        # Lọc theo tỷ lệ khung hình hợp lý cho hình ảnh/bảng
+        if not (0.1 < aspect < 15.0): # Phạm vi rộng cho cả hình ảnh và bảng
+            continue
 
-        # Các ngưỡng này cần được điều chỉnh dựa trên kích thước và hình dạng thực tế của ảnh lớp học
-        if (area > min_figure_area and 
-            ww > 50 and hh > 50 and # Kích thước tối thiểu hợp lý cho hình ảnh
-            0.1 < aspect_ratio < 10.0 and # Tỷ lệ khung hình rộng hơn
-            solidity > 0.2 and # Độ đầy đủ (giảm nhẹ)
-            x > 0.01 * w and x + ww < 0.99 * w and y > 0.01 * h and y + hh < 0.99 * h): # Không quá sát mép ảnh
-            
-            # Loại bỏ vùng bảng đã nhận phía trên
-            overlapped = False
-            for t in temp_tables: 
-                tb_x, tb_y, tb_w, tb_h = t['bbox'] 
-                # Kiểm tra chồng lấn một cách linh hoạt hơn
-                if x >= tb_x and y >= tb_y and (x + ww) <= (tb_x + tb_w) and (y + hh) <= (tb_y + tb_h):
-                    overlapped = True
-                    break
-            if not overlapped:
-                crop = img[y:y+hh, x:x+ww]
-                buf = io.BytesIO()
-                Image.fromarray(crop).save(buf, format="JPEG")
-                b64 = base64.b64encode(buf.getvalue()).decode()
-                temp_figures.append({"base64": b64, "is_table": False, "bbox": (x, y, ww, hh)})
+        # Không lấy vùng quá sát mép giấy (chừa 1% mép)
+        if x < 0.01*w or y < 0.01*h or (x+ww) > 0.99*w or (y+hh) > 0.99*h:
+            continue
+        
+        # Logic nhận dạng bảng: chiều rộng lớn, tỷ lệ khung hình rộng
+        # Điều chỉnh ngưỡng cho phù hợp với bảng trong tài liệu của bạn
+        is_table = (ww > 0.25*w and hh > 0.05*h and aspect > 2.0 and aspect < 10.0) # Điều chỉnh ngưỡng
+        
+        candidates.append({
+            "area": area, "x0": x, "y0": y, "x1": x+ww, "y1": y+hh,
+            "is_table": is_table, "bbox": (x, y, ww, hh) # Thêm bbox để sắp xếp
+        })
     
-    # Gộp tất cả các đối tượng đã tìm thấy
-    all_detected_objects = temp_tables + temp_figures
-    
-    # Sắp xếp theo tọa độ y (hàng), sau đó theo x (cột) để có thứ tự logic trên trang
-    all_detected_objects_sorted = sorted(all_detected_objects, key=lambda f: (f['bbox'][1], f['bbox'][0]))
+    # Sắp xếp các ứng cử viên theo tọa độ y (hàng), sau đó theo x (cột)
+    candidates = sorted(candidates, key=lambda box: (box["y0"], box["x0"]))
     
     final_figures_list = []
     img_idx = 0
     table_idx = 0
     
-    # Lọc cuối cùng: Sắp xếp theo diện tích giảm dần và chỉ lấy 2 cái lớn nhất
-    # Đây là biện pháp mạnh mẽ nhất để đảm bảo chỉ có 2 hình ảnh được trả về.
-    all_detected_objects_sorted = sorted(all_detected_objects_sorted, key=lambda f: f['bbox'][2] * f['bbox'][3], reverse=True)
+    # Lọc cuối cùng: Sắp xếp theo diện tích giảm dần và chỉ lấy N cái lớn nhất
+    # Đây là biện pháp mạnh mẽ nhất để đảm bảo chỉ có số lượng hình ảnh mong muốn được trả về.
+    # Nếu bạn muốn chỉ 2 hình ảnh, hãy giới hạn cứng ở đây.
+    candidates = sorted(candidates, key=lambda f: f['area'], reverse=True)
     
     # Giới hạn cứng số lượng đối tượng trả về là 2
-    all_detected_objects_sorted = all_detected_objects_sorted[:2] 
-    
-    # Sau khi lọc, gán lại tên
-    for fig in all_detected_objects_sorted: 
-        if fig["is_table"]:
-            fig["name"] = f"table-{table_idx}.jpeg"
+    candidates = candidates[:2] 
+
+    # Sau khi lọc, gán lại tên và tạo base64
+    for fig_data in candidates: 
+        crop = img[fig_data["y0"]:fig_data["y1"], fig_data["x0"]:fig_data["x1"]]
+        buf = io.BytesIO()
+        Image.fromarray(crop).save(buf, format="JPEG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        
+        if fig_data["is_table"]:
+            name = f"table-{table_idx}.jpeg"
             table_idx += 1
         else:
-            fig["name"] = f"img-{img_idx}.jpeg"
+            name = f"img-{img_idx}.jpeg"
             img_idx += 1
-        final_figures_list.append(fig)
+        
+        final_figures_list.append({
+            "name": name,
+            "base64": b64,
+            "is_table": fig_data["is_table"]
+        })
 
     return final_figures_list
 
@@ -452,7 +427,7 @@ with tab_pdf:
         except:
             num_pages = "?"
         with st.expander("ℹ️ Thông tin file", expanded=True):
-            st.write(f"**Tên file:** {file_name}")
+            st.write(f"**Tên file:** {file_file.name}")
             st.write(f"**Loại file:** {mime_type}")
             st.write(f"**Kích thước:** {size_mb:.1f} MB")
             st.write(f"**Số trang:** {num_pages}")
