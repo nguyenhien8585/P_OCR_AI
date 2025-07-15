@@ -22,7 +22,7 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.005, min_area_abs=150
     gray = cv2.GaussianBlur(gray, (3,3), 0)
     
     # Áp dụng CLAHE để tăng cường độ tương phản cục bộ
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)) # Giảm clipLimit một chút
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
     gray = clahe.apply(gray)
     
     # Adaptive Thresholding
@@ -31,7 +31,7 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.005, min_area_abs=150
     
     # Dilate để làm dày các đường nét và kết nối các phần bị đứt gãy
     kernel = np.ones((3,3),np.uint8)
-    thresh = cv2.dilate(thresh, kernel, iterations=2) # Giữ iterations=2
+    thresh = cv2.dilate(thresh, kernel, iterations=2)
     
     # Tìm contours
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -44,7 +44,7 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.005, min_area_abs=150
         aspect = ww / (hh + 1e-6)
         
         # Lọc các vùng quá nhỏ hoặc quá lớn (có thể là toàn bộ trang)
-        if area < min_area_abs or area_ratio < min_area_ratio or area_ratio > 0.8: # Thêm lọc area_ratio > 0.8
+        if area < min_area_abs or area_ratio < min_area_ratio or area_ratio > 0.8:
             continue
         
         # Lọc theo kích thước tối thiểu
@@ -52,7 +52,7 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.005, min_area_abs=150
             continue
 
         # Lọc theo tỷ lệ khung hình hợp lý cho hình ảnh/bảng
-        if not (0.1 < aspect < 15.0): # Phạm vi rộng cho cả hình ảnh và bảng
+        if not (0.1 < aspect < 15.0):
             continue
 
         # Không lấy vùng quá sát mép giấy (chừa 1% mép)
@@ -60,29 +60,27 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.005, min_area_abs=150
             continue
         
         # Logic nhận dạng bảng: chiều rộng lớn, tỷ lệ khung hình rộng
-        # Điều chỉnh ngưỡng cho phù hợp với bảng trong tài liệu của bạn
-        is_table = (ww > 0.25*w and hh > 0.05*h and aspect > 2.0 and aspect < 10.0) # Điều chỉnh ngưỡng
+        is_table = (ww > 0.25*w and hh > 0.05*h and aspect > 2.0 and aspect < 10.0)
         
         candidates.append({
             "area": area, "x0": x, "y0": y, "x1": x+ww, "y1": y+hh,
             "is_table": is_table, "bbox": (x, y, ww, hh) # Thêm bbox để sắp xếp
         })
     
-    # Sắp xếp các ứng cử viên theo tọa độ y (hàng), sau đó theo x (cột)
-    candidates = sorted(candidates, key=lambda box: (box["y0"], box["x0"]))
+    # Sắp xếp các ứng cử viên theo diện tích giảm dần để ưu tiên các hình lớn
+    candidates = sorted(candidates, key=lambda f: f['area'], reverse=True)
     
+    # Giới hạn cứng số lượng đối tượng trả về là 2 (hoặc max_figures nếu bạn muốn linh hoạt)
+    # Nếu bạn chắc chắn chỉ có 2 ảnh minh họa, giữ nguyên [:2]
+    candidates = candidates[:2] 
+
+    # Sắp xếp lại theo vị trí trên trang (y, x) để đảm bảo thứ tự logic
+    candidates = sorted(candidates, key=lambda box: (box["y0"], box["x0"]))
+
     final_figures_list = []
     img_idx = 0
     table_idx = 0
     
-    # Lọc cuối cùng: Sắp xếp theo diện tích giảm dần và chỉ lấy N cái lớn nhất
-    # Đây là biện pháp mạnh mẽ nhất để đảm bảo chỉ có số lượng hình ảnh mong muốn được trả về.
-    # Nếu bạn muốn chỉ 2 hình ảnh, hãy giới hạn cứng ở đây.
-    candidates = sorted(candidates, key=lambda f: f['area'], reverse=True)
-    
-    # Giới hạn cứng số lượng đối tượng trả về là 2
-    candidates = candidates[:2] 
-
     # Sau khi lọc, gán lại tên và tạo base64
     for fig_data in candidates: 
         crop = img[fig_data["y0"]:fig_data["y1"], fig_data["x0"]:fig_data["x1"]]
@@ -90,11 +88,12 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.005, min_area_abs=150
         Image.fromarray(crop).save(buf, format="JPEG")
         b64 = base64.b64encode(buf.getvalue()).decode()
         
+        # Đảm bảo tên file là duy nhất và có định dạng img-x.jpeg hoặc table-x.jpeg
         if fig_data["is_table"]:
-            name = f"table-{table_idx}.jpeg"
+            name = f"table-{table_idx+1}.jpeg" # Bắt đầu từ 1
             table_idx += 1
         else:
-            name = f"img-{img_idx}.jpeg"
+            name = f"img-{img_idx+1}.jpeg" # Bắt đầu từ 1
             img_idx += 1
         
         final_figures_list.append({
@@ -427,7 +426,7 @@ with tab_pdf:
         except:
             num_pages = "?"
         with st.expander("ℹ️ Thông tin file", expanded=True):
-            st.write(f"**Tên file:** {file_file.name}")
+            st.write(f"**Tên file:** {file_name}")
             st.write(f"**Loại file:** {mime_type}")
             st.write(f"**Kích thước:** {size_mb:.1f} MB")
             st.write(f"**Số trang:** {num_pages}")
