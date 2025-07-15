@@ -29,7 +29,10 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     # Kernel size có thể cần điều chỉnh tùy thuộc vào kích thước bảng trong ảnh
     horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.4),1)) # Tăng nhẹ
     detected_lines = cv2.morphologyEx(th, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
+    
     vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.25))) # Tăng nhẹ
+    detected_columns = cv2.morphologyEx(th, cv2.MORPH_OPEN, vertical_kernel, iterations=2) # Đã di chuyển lên trên
+    
     table_mask = cv2.addWeighted(detected_lines, 0.5, detected_columns, 0.5, 0.0)
     
     # Find table contours
@@ -45,8 +48,7 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
         area = ww * hh
         aspect_ratio = ww / (hh + 1e-5)
         
-        # Lọc theo độ đầy đủ (solidity) để loại bỏ các contour rỗng hoặc có hình dạng bất thường
-        # Solidity = Contour Area / Bounding Box Area
+        # Lọc theo độ đầy đủ (solidity) của contour
         contour_area = cv2.contourArea(cnt)
         solidity = float(contour_area) / (ww * hh + 1e-5)
         
@@ -113,10 +115,6 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     # Lọc cuối cùng: Chỉ lấy các đối tượng lớn nhất và có vẻ hợp lý nhất
     # Nếu bạn biết số lượng ảnh minh họa chính xác (ví dụ: 2), hãy thay đổi max_figures
     # hoặc thêm một bước lọc cứng ở đây.
-    
-    # Ví dụ: Nếu bạn chỉ muốn 2 hình ảnh lớn nhất (không phân biệt bảng/hình)
-    # all_detected_objects_sorted = sorted(all_detected_objects_sorted, key=lambda f: f['bbox'][2] * f['bbox'][3], reverse=True)
-    # all_detected_objects_sorted = all_detected_objects_sorted[:2] # Chỉ lấy 2 cái lớn nhất
     
     final_figures_list = []
     img_idx = 0
@@ -535,3 +533,4 @@ with tab_pdf:
     st.markdown("---")
 
 st.caption("✨ Mapping bảng/tách hình tự động, chuẩn layout, tách đúng bảng giá trị, bảng tần số, bảng biến thiên. Xuất Word mapping đúng vị trí minh hoạ & bảng.")
+
