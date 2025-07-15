@@ -19,18 +19,18 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     
     # Giảm làm mờ một chút để giữ lại chi tiết
-    blur = cv2.GaussianBlur(gray, (7,7), 0) # Giảm kernel size xuống (7,7)
+    blur = cv2.GaussianBlur(gray, (5,5), 0) # Giảm kernel size xuống (5,5) để giữ chi tiết hơn nữa
     
     # Nới lỏng adaptiveThreshold một chút
-    th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 41, 20) # Giảm blockSize và C
+    th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 31, 15) # Giảm blockSize và C hơn nữa
     
     # Tách bảng bằng morphology line horizontal + vertical
     # Giảm kích thước kernel để không làm mất các đường kẻ nhỏ
-    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.3),1)) 
-    detected_lines = cv2.morphologyEx(th, cv2.MORPH_OPEN, horizontal_kernel, iterations=1) # Giảm iterations
+    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(w*0.25),1)) # Giảm nhẹ kernel
+    detected_lines = cv2.morphologyEx(th, cv2.MORPH_OPEN, horizontal_kernel, iterations=1) 
     
-    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.2))) 
-    detected_columns = cv2.morphologyEx(th, cv2.MORPH_OPEN, vertical_kernel, iterations=1) # Giảm iterations
+    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1,int(h*0.15))) # Giảm nhẹ kernel
+    detected_columns = cv2.morphologyEx(th, cv2.MORPH_OPEN, vertical_kernel, iterations=1) 
     
     table_mask = cv2.addWeighted(detected_lines, 0.5, detected_columns, 0.5, 0.0)
     
@@ -39,7 +39,7 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     temp_tables = [] 
     
     # Nới lỏng min_table_area một chút
-    min_table_area = max(min_area_abs, 10000) # Giảm xuống 10000
+    min_table_area = max(min_area_abs, 8000) # Giảm xuống 8000
     
     for cnt in contours: 
         x, y, ww, hh = cv2.boundingRect(cnt)
@@ -50,10 +50,10 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
         solidity = float(contour_area) / (ww * hh + 1e-5)
         
         if (area > min_table_area and 
-            ww > 80 and hh > 50 and # Kích thước tối thiểu (giảm)
-            0.05 < aspect_ratio < 20.0 and # Tỷ lệ khung hình (rộng hơn)
-            solidity > 0.4 and # Độ đầy đủ (giảm)
-            x > 0.02 * w and x + ww < 0.98 * w and y > 0.02 * h and y + hh < 0.98 * h): # Nới lỏng mép ảnh (chừa 2% mép)
+            ww > 60 and hh > 40 and # Kích thước tối thiểu (giảm)
+            0.02 < aspect_ratio < 50.0 and # Tỷ lệ khung hình (rộng hơn nhiều cho bảng)
+            solidity > 0.3 and # Độ đầy đủ (giảm)
+            x > 0.01 * w and x + ww < 0.99 * w and y > 0.01 * h and y + hh < 0.99 * h): # Nới lỏng mép ảnh (chừa 1% mép)
             
             crop = img[y:y+hh, x:x+ww]
             buf = io.BytesIO()
@@ -66,7 +66,7 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     temp_figures = [] 
     
     # Nới lỏng min_figure_area đáng kể
-    min_figure_area = max(min_area_abs, 3000) # Giảm xuống 3000
+    min_figure_area = max(min_area_abs, 2000) # Giảm xuống 2000
     
     for cnt in contours: 
         x, y, ww, hh = cv2.boundingRect(cnt)
@@ -77,10 +77,10 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
         solidity = float(contour_area) / (ww * hh + 1e-5)
 
         if (area > min_figure_area and 
-            ww > 50 and hh > 50 and # Kích thước tối thiểu (giảm đáng kể)
-            0.2 < aspect_ratio < 5.0 and # Tỷ lệ khung hình (rộng hơn)
-            solidity > 0.3 and # Độ đầy đủ (giảm đáng kể)
-            x > 0.02 * w and x + ww < 0.98 * w and y > 0.02 * h and y + hh < 0.98 * h): # Nới lỏng mép ảnh (chừa 2% mép)
+            ww > 40 and hh > 40 and # Kích thước tối thiểu (giảm đáng kể)
+            0.1 < aspect_ratio < 10.0 and # Tỷ lệ khung hình (rộng hơn)
+            solidity > 0.2 and # Độ đầy đủ (giảm đáng kể cho ảnh lớp học)
+            x > 0.01 * w and x + ww < 0.99 * w and y > 0.01 * h and y + hh < 0.99 * h): # Nới lỏng mép ảnh (chừa 1% mép)
             
             # Loại bỏ vùng bảng đã nhận phía trên
             overlapped = False
@@ -113,7 +113,6 @@ def extract_figures_and_tables(img_bytes, min_area_abs=1400, max_figures=10):
     
     # Giới hạn số lượng đối tượng trả về (ví dụ: chỉ 2 đối tượng lớn nhất)
     # Bạn có thể thay đổi số 2 này tùy theo số lượng ảnh minh họa thực tế bạn mong đợi
-    # Nếu bạn muốn linh hoạt, hãy bỏ dòng này và dựa vào max_figures
     all_detected_objects_sorted = all_detected_objects_sorted[:2] 
     
     # Sau khi lọc, gán lại tên
