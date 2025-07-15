@@ -423,7 +423,6 @@ with tab_img:
             text_key = f"text_{img_file.name}_{img_idx}"
             fig_key = f"fig_{img_file.name}_{img_idx}"
 
-            # Nút xử lý OCR Image cho từng ảnh
             if st.button(f"🚀 Xử lý OCR Image ({img_file.name})", key=ocr_key):
                 img_bytes = img_file.read()
                 figures, img_h, img_w = extract_figures_and_tables(img_bytes)
@@ -440,17 +439,19 @@ with tab_img:
                 st.session_state[text_key] = text
                 st.session_state[fig_key] = figures
 
-                        if text_key in st.session_state and fig_key in st.session_state:
+            if text_key in st.session_state and fig_key in st.session_state:
                 st.markdown("### 📋 Kết quả mapping nâng cao:")
-
+                
                 # --- Giao diện mới cho tab "Ảnh" ---
                 tab_text_img, tab_figures_img = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
 
                 with tab_text_img:
                     st.code(st.session_state[text_key], language="markdown")
                     figures = st.session_state[fig_key]
-                    if figures:  # Chỉ hiển thị nút tải Word nếu có hình ảnh
-                        if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", use_container_width=True, key=f"word-{img_file.name}-{img_idx}"):
+                    if figures:
+                        if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí", 
+                                   use_container_width=True, 
+                                   key=f"word-{img_file.name}-{img_idx}"):
                             with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
                                 insert_images_to_word_from_markdown(
                                     st.session_state[text_key],
@@ -474,22 +475,17 @@ with tab_img:
                 with tab_figures_img:
                     figures = st.session_state[fig_key]
                     if figures:
-                        # Hiển thị hình ảnh với annotation rõ ràng hơn
-                        col1, col2 = st.columns(2)
-                        col1.metric("Tổng hình ảnh", len([f for f in figures if not f['is_table']]))
-                        col2.metric("Tổng bảng biểu", len([f for f in figures if f['is_table']]))
-                        
                         for fig in figures:
                             img_bytes_fig = base64.b64decode(fig["base64"])
-                            with st.expander(f"🔍 {fig['name']} - {'Bảng' if fig['is_table'] else 'Hình minh họa'}"):
-                                st.image(img_bytes_fig, use_container_width=True)
-                                st.download_button(
-                                    f"⬇️ Tải {fig['name']}",
-                                    img_bytes_fig,
-                                    file_name=fig["name"],
-                                    mime="image/jpeg",
-                                    key=f"img-download-{fig['name']}-{img_idx}"
-                                )
+                            st.image(img_bytes_fig, caption=fig["name"], use_container_width=True)
+                            st.download_button(
+                                f"Tải {fig['name']}",
+                                img_bytes_fig,
+                                file_name=fig["name"],
+                                mime="image/jpeg",
+                                use_container_width=True,
+                                key=f"img-download-{img_file.name}-{img_idx}-{fig['name']}"
+                            )
                     else:
                         st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh.")
 
