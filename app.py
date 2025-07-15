@@ -60,7 +60,7 @@ def remove_all_figure_markdown(text):
     text = re.sub(r'\[BẢNG: table-\d+\.jpeg\]', '', text)
     return text
 # -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
-    def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, table_kw=None):
+def join_paragraphs_and_insert_figures_tables(text, figures, keywords=None, table_kw=None):
         if keywords is None:
             keywords = [
                 "xem hình", "hình dưới", "hình vẽ", "biểu đồ", "minh hoạ",
