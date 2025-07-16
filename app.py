@@ -14,18 +14,27 @@ from word_export import insert_images_to_word_from_markdown
 # ======================== CHUẨN HÓA TOÁN HỌC ========================
 def normalize_math_latex(text):
     """
-    Chuyển toàn bộ $...$ và \( ... \) thành ${...}$ cho đúng chuẩn LaTeX inline
-    Không động vào cái đã là ${...}$
+    Chuyển toàn bộ $...$ hoặc \( ... \) thành ${...}$, loại bỏ ký tự thừa như }$ hoặc ${ nếu OCR sinh ra.
     """
+    # Bước 1: Loại bỏ các ký tự thừa }$ hoặc ${ quanh công thức
+    text = re.sub(r'\}\$(.+?)\$\{', lambda m: f"${{{m.group(1).strip()}}}$", text)
+    text = re.sub(r'\}\$(.+?)\$', lambda m: f"${{{m.group(1).strip()}}}$", text)
+    text = re.sub(r'\$(.+?)\$\{', lambda m: f"${{{m.group(1).strip()}}}$", text)
+    # Bước 2: Loại bỏ các ký tự thừa lẻ
+    text = re.sub(r'\}\$(.+?)\$', lambda m: f"${{{m.group(1).strip()}}}$", text)
+    text = re.sub(r'\$(.+?)\$\{', lambda m: f"${{{m.group(1).strip()}}}$", text)
+    # Bước 3: Đổi tất cả $...$ mà chưa phải ${...}$ thành ${...}$
     def repl(m):
         content = m.group(1)
+        # Nếu đã có { ở đầu và } ở cuối thì để nguyên
         if content.strip().startswith("{") and content.strip().endswith("}"):
             return f"${content}$"
-        return f"${{{content}}}$"
-    # Đổi $...$ chỉ khi chưa có dấu {...}
-    text = re.sub(r"\$(?!\{)([^\$]+?)\$", repl, text)
-    # Đổi \( ... \) sang ${...}$
+        return f"${{{content.strip()}}}$"
+    text = re.sub(r'\$(?!\{)([^\$]+?)\$', repl, text)
+    # Bước 4: Đổi \( ... \) sang ${...}$
     text = re.sub(r"\\\((.+?)\\\)", lambda m: "${" + m.group(1).strip() + "}$", text)
+    # Loại bỏ dấu }{ thừa nếu còn
+    text = re.sub(r'\}\{', '', text)
     return text
 
 # ======================= ĐỊNH DẠNG ĐỀ THI CHUẨN GIÁO VIÊN =======================
