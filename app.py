@@ -11,104 +11,68 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
-# ----------- Hàm tách bảng giá trị/bảng biến thiên và hình minh hoạ (chuẩn nâng cao) ----------
+# ----------- Hàm tách bảng giá trị/bảng biến thiên và hình minh hoạ ----------
 def extract_figures_and_tables(img_bytes, min_area_ratio=0.008, min_area_abs=2500, min_w=70, min_h=70, max_figures=8):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
-    h, w = img.shape[:2] 
+    h, w = img.shape[:2]
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    
-    # Áp dụng GaussianBlur để làm mịn nhiễu
-    gray = cv2.GaussianBlur(gray, (3,3), 0) 
-    
-    # Áp dụng CLAHE để tăng cường độ tương phản cục bộ
+    gray = cv2.GaussianBlur(gray, (3,3), 0)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
     gray = clahe.apply(gray)
-    
-    # Adaptive Thresholding
     thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
-                                   cv2.THRESH_BINARY_INV, 25, 10) 
-    
-    # Dilate để làm dày các đường nét
+                                   cv2.THRESH_BINARY_INV, 25, 10)
     kernel = np.ones((3,3),np.uint8)
     thresh = cv2.dilate(thresh, kernel, iterations=1)
-    
-    # Tìm contours
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
     candidates = []
     for cnt in contours:
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
         area_ratio = area / (w * h)
         aspect = ww / (hh + 1e-6)
-        
-        # Lọc các vùng quá nhỏ hoặc quá lớn
-        if area < min_area_abs or area_ratio < min_area_ratio or area_ratio > 0.6: 
+        if area < min_area_abs or area_ratio < min_area_ratio or area_ratio > 0.6:
             continue
-        
-        # Lọc theo kích thước tối thiểu
         if ww < min_w or hh < min_h:
             continue
-
-        # Lọc theo tỷ lệ khung hình hợp lý cho hình ảnh/bảng
-        if not (0.2 < aspect < 8.0): 
+        if not (0.2 < aspect < 8.0):
             continue
-
-        # Không lấy vùng quá sát mép giấy
         if x < 0.03*w or y < 0.03*h or (x+ww) > 0.97*w or (y+hh) > 0.97*h:
             continue
-        
-        # Thêm lọc dựa trên solidity
         hull = cv2.convexHull(cnt)
         hull_area = cv2.contourArea(hull)
         if hull_area == 0: continue
         solidity = float(area)/hull_area
-        if solidity < 0.4: 
+        if solidity < 0.4:
             continue
-
-        # Logic nhận dạng bảng
-        is_table = (ww > 0.25*w and hh > 0.05*h and aspect > 2.0 and aspect < 10.0) 
-        
+        is_table = (ww > 0.25*w and hh > 0.05*h and aspect > 2.0 and aspect < 10.0)
         candidates.append({
             "area": area, "x0": x, "y0": y, "x1": x+ww, "y1": y+hh,
-            "is_table": is_table, "bbox": (x, y, ww, hh) 
+            "is_table": is_table, "bbox": (x, y, ww, hh)
         })
-    
-    # Sắp xếp các ứng cử viên theo diện tích giảm dần
     candidates = sorted(candidates, key=lambda f: f['area'], reverse=True)
-    
-    # Giới hạn cứng số lượng đối tượng trả về
-    candidates = candidates[:2] 
-
-    # Sắp xếp lại theo vị trí trên trang
+    candidates = candidates[:max_figures]
     candidates = sorted(candidates, key=lambda box: (box["y0"], box["x0"]))
-
     final_figures_list = []
     img_idx = 0
     table_idx = 0
-    
-    # Sau khi lọc, gán lại tên và tạo base64
-    for fig_data in candidates: 
+    for fig_data in candidates:
         crop = img[fig_data["y0"]:fig_data["y1"], fig_data["x0"]:fig_data["x1"]]
         buf = io.BytesIO()
         Image.fromarray(crop).save(buf, format="JPEG")
         b64 = base64.b64encode(buf.getvalue()).decode()
-        
         if fig_data["is_table"]:
-            name = f"table-{table_idx+1}.jpeg" 
+            name = f"table-{table_idx+1}.jpeg"
             table_idx += 1
         else:
-            name = f"img-{img_idx+1}.jpeg" 
+            name = f"img-{img_idx+1}.jpeg"
             img_idx += 1
-        
         final_figures_list.append({
             "name": name,
             "base64": b64,
             "is_table": fig_data["is_table"],
-            "bbox": fig_data["bbox"] 
+            "bbox": fig_data["bbox"]
         })
-
     return final_figures_list, h, w
 
 def remove_all_figure_markdown(text):
@@ -120,7 +84,57 @@ def remove_all_figure_markdown(text):
     text = re.sub(r'\[BẢNG_PLACEHOLDER\]', '', text)
     return text
 
-# --- Hàm format chuẩn Markdown Toán học/Trắc nghiệm/Đúng Sai ---
+# --- Hàm mapping hình ảnh thông minh ---
+def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
+    import re
+    lines = []
+    buffer = ""
+    for line in text.split('\n'):
+        stripped_line = line.strip()
+        if stripped_line:
+            buffer = buffer + " " + stripped_line if buffer else stripped_line
+        else:
+            if buffer:
+                lines.append(buffer)
+                buffer = ""
+            lines.append('')
+    if buffer:
+        lines.append(buffer)
+    figures_sorted = sorted(
+        [fig for fig in figures if fig.get('bbox')],
+        key=lambda f: (f['bbox'][1], f['bbox'][0])
+    )
+    used_figures = set()
+    processed_lines = []
+    for idx, line in enumerate(lines):
+        processed_lines.append(line)
+        if any(x in line.lower() for x in ["hình vẽ", "(hình", "hình bên", "xem hình", "đồ thị", "biểu đồ", "minh họa"]):
+            for fig in figures_sorted:
+                if fig['name'] not in used_figures:
+                    tag = f"[BẢNG: {fig['name']}]" if fig['is_table'] else f"[HÌNH: {fig['name']}]"
+                    processed_lines.append(tag)
+                    used_figures.add(fig['name'])
+                    break
+    for qnum in range(1, 50):
+        mline = [i for i,l in enumerate(processed_lines) if re.match(fr"Câu\s*{qnum}[\.\:]", l)]
+        if mline:
+            for fig in figures_sorted:
+                if fig['name'] not in used_figures:
+                    tag = f"[BẢNG: {fig['name']}]" if fig['is_table'] else f"[HÌNH: {fig['name']}]"
+                    if mline[0]+1 >= len(processed_lines) or not processed_lines[mline[0]+1].startswith("[HÌNH:"):
+                        processed_lines.insert(mline[0]+1, tag)
+                        used_figures.add(fig['name'])
+                    break
+    for fig in figures_sorted:
+        if fig['name'] not in used_figures:
+            tag = f"[BẢNG: {fig['name']}]" if fig['is_table'] else f"[HÌNH: {fig['name']}]"
+            insert_pos = len(processed_lines) - 1
+            while insert_pos > 0 and not processed_lines[insert_pos].strip():
+                insert_pos -= 1
+            processed_lines.insert(insert_pos + 1, tag)
+    return '\n'.join(processed_lines)
+
+# --- Format Markdown trắc nghiệm, đúng/sai, giữ latex ---
 def format_exam_markdown(text):
     import re
     def format_choices(block):
@@ -177,8 +191,8 @@ def get_next_api_key():
 
 GEMINI_PROMPT = '''
 YÊU CẦU QUAN TRỌNG:
-1.  GÕ LẠI CHÍNH XÁC TẤT CẢ VĂN BẢN TRONG ẢNH...
-2.  ĐÁNH DẤU VỊ TRÍ HÌNH ẢNH/BẢNG: ...
+1. GÕ LẠI CHÍNH XÁC TẤT CẢ VĂN BẢN TRONG ẢNH...
+2. ĐÁNH DẤU VỊ TRÍ HÌNH ẢNH/BẢNG: ...
 ...
 Hãy xuất ra văn bản theo đúng định dạng trên!
 '''
