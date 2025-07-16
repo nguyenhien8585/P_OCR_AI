@@ -50,7 +50,7 @@ def fix_log_base_brace(text):
 
     # Hoặc fix cho các trường hợp log_{...x} (chưa chuẩn) thành log_{...} x
     text = re.sub(
-        r'\\(log|sin|cos|tan|cot|sec|csc)_\{([^\{\}]+)\s+([a-zA-Z0-9]+)\}',
+        r'\(log|sin|cos|tan|cot|sec|csc)_\{([^\{\}]+)\s+([a-zA-Z0-9]+)\}',
         r'\\\1_{\2} \3',
         text
     )
