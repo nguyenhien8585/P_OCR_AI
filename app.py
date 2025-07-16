@@ -13,6 +13,35 @@ from word_export import insert_images_to_word_from_markdown
 
 import re
 
+def clean_latex_blocks(text):
+    # 1. Ghép các block kiểu }$}${ thành 1: }$}{
+    text = re.sub(r'\}\$\s*\$\{', ' ', text)
+    # 2. Xoá thừa ngoặc ở cuối block: }}}$ -> }$
+    text = re.sub(r'\}{2,}\$', '}$', text)
+    # 3. Nếu vẫn còn $} ở giữa dòng (do block bị kết thúc sớm) => nối lại
+    text = re.sub(r'\$\}(\w)', r'} \1', text)
+    # 4. Xoá ngoặc lẻ đứng riêng ${ và }$, $}{
+    text = re.sub(r'\$\{[ \t\r\n]*\}\$', '', text)
+    # 5. Vá những block `${...$` thiếu ngoặc và `$...}$` thiếu `${`
+    #    (Cái này đã làm ở các hàm trước, giờ chỉ cần vá lần cuối)
+    def fix_block(m):
+        s = m.group(1)
+        # Đếm số ngoặc { và }
+        opens = s.count('{')
+        closes = s.count('}')
+        if opens > closes:
+            s += '}' * (opens - closes)
+        elif closes > opens:
+            s = s.rstrip('}' * (closes - opens))
+        if not s.endswith('}'):
+            s += '}'
+        return '${' + s + '}$'
+    # Chỉ fix các block kiểu ${...$ thiếu ngoặc, hoặc có thừa 1 ngoặc ở cuối
+    text = re.sub(r'\$\{([^}$\n]+)\$?', fix_block, text)
+    # 6. Xoá các dấu } dư lặp lại (nếu còn)
+    text = re.sub(r'\}{2,}\$', '}$', text)
+    return text
+
 def fix_all_unclosed_latex_blocks(text):
     """
     Vá mọi block LaTeX ${...$ thiếu } hoặc }$
@@ -722,6 +751,7 @@ with tab_pdf:
         text_content = fix_latex_block_errors(text_content)           # 8. Sửa lỗi đặc biệt cuối cùng cho block phức tạp
         text_content = fix_missing_closing_brace_in_latex(text_content)
         text_content = fix_all_unclosed_latex_blocks(text_content)
+        text_content = clean_latex_blocks(text_content)
         images = st.session_state.get("ocr_images", [])
         tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
         with tab1:
