@@ -11,6 +11,46 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
+import re
+
+def fix_latex_block_errors(text):
+    # 1. Sửa ${A^{\prime B \perp D^{\prime C}}}$ => ${A^{\prime} B \perp D^{\prime} C}$
+    def fix_mixed_prime(match):
+        expr = match.group(1)
+        # Thêm dấu } cho mỗi ^{\prime} nếu thiếu
+        expr = re.sub(r'([A-Za-z])\^\{\\prime\b', r'\1^{\prime}', expr)
+        # Sửa các \perp, \parallel nếu dính vào giữa các nhóm
+        expr = re.sub(r'\}\s*([A-Za-z])', r'} \1', expr)
+        # Đảm bảo mỗi ^{\prime} đều có ký tự trước và sau là chữ
+        return '${' + expr + '}$'
+    # Xử lý các block thiếu dấu đóng }
+    text = re.sub(r'\$\{([^}$]+?(\^\{\\prime)? [^}$]+?(\^\{\\prime)? [^}$]+?)\}\$', fix_mixed_prime, text)
+    
+    # 2. Sửa các block thiếu $ ở cuối: ...}$ -> ...}$
+    text = re.sub(r'(\$\{[^\$}]+\})\n', r'\1$\n', text)
+    text = re.sub(r'(\$\{[^\$}]+\})$', r'\1$', text)
+
+    # 3. Sửa các block thiếu } ở cuối: ...$ -> ...}$
+    text = re.sub(r'(\$\{[^\$}]+)\$', lambda m: m.group(1) + '}$', text)
+
+    # 4. Sửa block có \left( ... \right)=... nhưng bị thiếu ngoặc, ví dụ: 
+    # ${\left(A D^{\prime}, B^{\prime C\right)=90^{\circ}}}$ => ${\left(A D^{\prime}, B^{\prime} C\right)=90^{\circ}}$
+    def fix_left_right(match):
+        inner = match.group(1)
+        # Tách các thành phần bị dính
+        inner = re.sub(r'([A-Za-z])\^\{\\prime ([A-Za-z])', r'\1^{\prime} \2', inner)
+        inner = re.sub(r'([A-Za-z])\^\{\\prime\}', r'\1^{\prime}', inner)
+        return '${\\left(' + inner + '\\right)=90^{\\circ}}$'
+    text = re.sub(
+        r'\$\{\\left\(([A-Za-z0-9\s\^\{\}\\,\']+?)\\right\)=90\^\{\\circ\}\}\$', 
+        fix_left_right, text
+    )
+
+    # 5. Sửa block thiếu } cuối cùng
+    text = re.sub(r'(\$\{[^\$}]+)\$', lambda m: m.group(1) + '}$', text)
+
+    return text
+
 
 def fix_latex_block_parentheses(text):
     import re
@@ -635,6 +675,7 @@ with tab_pdf:
         text_content = markdown_image_to_hinh_tag(text_content)  # <-- CHUYỂN MARKDOWN ẢNH thành TAG [HÌNH: ...]
         text_content = fix_unbalanced_brackets_in_latex(text_content)
         text_content = fix_latex_super_sub_blocks(text_content)
+        text_content = fix_latex_block_errors(text_content)  
         images = st.session_state.get("ocr_images", [])
         tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
         with tab1:
