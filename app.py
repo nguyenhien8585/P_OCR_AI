@@ -15,42 +15,36 @@ import re
 
 def fix_braces_and_parens_latex(text):
     """
-    Sửa triệt để mọi lỗi thiếu/thừa dấu } trong ${...}$ và lỗi thừa ngoặc tròn, kể cả lồng nhau.
-    - Tự động đếm { và } để bổ sung dấu thiếu, loại bỏ thừa ngoặc tròn nếu cần.
-    - Đảm bảo luôn kết thúc bằng ...}$
+    Sửa triệt để mọi lỗi thiếu/thừa dấu } và ) trong các biểu thức LaTeX dạng ${...}$.
+    Đảm bảo mỗi block luôn đóng đủ } và ) nếu xuất hiện thiếu.
     """
     def fix_block(m):
         formula = m.group(1)
-        # 1. Loại bỏ ngoặc tròn lồng dư: ((...)) -> (...)
-        formula = re.sub(r'\(\(([^()]*)\)\)', r'(\1)', formula)
-        formula = re.sub(r'\(\(([^()]*)\)', r'(\1', formula)
-        formula = re.sub(r'\(([^()]*)\)\)', r'(\1)', formula)
-        # 2. Bổ sung ngoặc nhọn nếu thiếu
+        # Fix dấu ngoặc nhọn ({}):
         open_brace = formula.count('{')
         close_brace = formula.count('}')
         if open_brace > close_brace:
             formula += '}' * (open_brace - close_brace)
         elif close_brace > open_brace:
             formula = '{' * (close_brace - open_brace) + formula
-        # 3. Nếu còn trường hợp log_{...x} (thiếu ngoặc cho base)
+        # Fix dấu ngoặc tròn ():
+        open_paren = formula.count('(')
+        close_paren = formula.count(')')
+        if open_paren > close_paren:
+            formula += ')' * (open_paren - close_paren)
+        elif close_paren > open_paren:
+            formula = '(' * (close_paren - open_paren) + formula
+        # Xử lý đặc biệt cho các lỗi như log_{\sqrt{2}-1 x} (log base bị thiếu })
         formula = re.sub(
             r'(log|sin|cos|tan|cot|sec|csc)_\{([^\{\}]+) ([a-zA-Z0-9\\\^\_\(\)\[\]\s]+)\}',
             lambda m: f'{m.group(1)}_{{{m.group(2)}}} {m.group(3)}',
             formula
         )
-        # 4. Sửa tích phân: \int_{1}^{2 (2+f} (x))\, dx -> \int_{1}^{2} (2+f(x))\, dx
-        formula = re.sub(
-            r'(\\int\s*_\{[^\}]+\}\^\{[^\}\)]+)\s*\(([^)]+)\)\)\,',
-            lambda m: re.sub(r'\(.*', '', m.group(1)) + '} (' + m.group(2).replace('{', '').replace('}', '') + ')\,',
-            formula
-        )
-        # 5. Đảm bảo không kết thúc thiếu } trước $
-        return '${' + formula.rstrip('}') + '}$'
-
-    # Sửa TẤT CẢ các block ${...}$
+        return '${' + formula + '}$'
+    # Chỉ xử lý bên trong ${...}$
     text = re.sub(r'\$\{([^\$]+?)\}\$', fix_block, text)
     return text
-
+    
 def fix_log_base_brace(text):
     # Sửa log_{\sqrt{2}-1 x} thành log_{\sqrt{2}-1} x cho mọi trường hợp log, sin, cos, tan, ...
     def replacer(m):
