@@ -11,6 +11,33 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
+def fix_latex_super_sub_blocks(text):
+    # Sửa lỗi phổ biến với các chỉ số mũ, chỉ số dưới và các ký hiệu
+    # Ví dụ: ${B C^{\prime \perp A^{\prime D}}}$ -> ${B C^{\prime} \perp A^{\prime} D}$
+    def replace_func(m):
+        content = m.group(1)
+        # Tách các thành phần có mũ hoặc chỉ số ra thành từng cụm đúng
+        # Sửa mũ bị lẫn vào giữa như C^{\prime \perp A^{\prime D}} -> C^{\prime} \perp A^{\prime} D
+        # Bước 1: Tìm mọi cụm tên biến có mũ, tách riêng
+        # VD: C^{\prime \perp A^{\prime D}} => C^{\prime}, \perp, A^{\prime}, D
+        # Sửa: tìm các ...^{...} và tách ra, phần còn lại giữ nguyên
+        content = re.sub(
+            r"([A-Za-z])\^\{([^\}]+)\s",  # tìm mũ có thêm ký tự sau đó
+            lambda mm: f"{mm.group(1)}^{{{mm.group(2).strip()}}} ", content
+        )
+        # Tách lại: mọi C^{...}, A^{...} nằm liền nhau thì thêm } cách ra
+        # Sau đó xóa dư ngoặc đóng ở cuối
+        content = re.sub(r"([A-Za-z])\^\{([^\}]+)\}([A-Za-z])", r"\1^{\2} \3", content)
+        # Nếu vẫn còn nội dung } cuối cùng và không có { mở thì xóa
+        if content.count('{') < content.count('}'):
+            content = content.rstrip('}')
+        return "${" + content.strip() + "}$"
+
+    # Chỉ áp dụng với block dài có quá nhiều từ và dấu ^
+    pattern = re.compile(r"\$\{([A-Za-z0-9\s\\\^\{\}']+)\}$")
+    text = pattern.sub(replace_func, text)
+    return text
+
 def merge_latex_blocks_multiline(text):
     # Ghép các block trên nhiều dòng về cùng một dòng
     lines = text.split('\n')
@@ -525,6 +552,7 @@ with tab_pdf:
         text_content = merge_latex_blocks_multiline(text_content)
         text_content = markdown_image_to_hinh_tag(text_content)  # <-- CHUYỂN MARKDOWN ẢNH thành TAG [HÌNH: ...]
         text_content = fix_unbalanced_brackets_in_latex(text_content)
+        text_content = fix_latex_super_sub_blocks(text_content)
         images = st.session_state.get("ocr_images", [])
         tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
         with tab1:
