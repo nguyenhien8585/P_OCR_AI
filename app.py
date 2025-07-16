@@ -11,8 +11,16 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
-# ==================== CHUẨN HÓA LaTeX TOÁN ====================
+def fix_cases_brace(text):
+    # Bổ sung dấu } bị thiếu cho \begin{cases}
+    # Sửa \begin{cases ... thành \begin{cases} ...
+    # Kể cả khi dính dấu {cases ... hoặc {cases ...}
+    text = re.sub(r'(\\begin\{cases)(\s*[^\}])', r'\1}\2', text)
+    # Nếu bị OCR thành \begin{cases x ...} thiếu }, cũng sửa lại
+    text = re.sub(r'(\\begin\{cases)([^\}])', r'\1}\2', text)
+    return text
 
+# ==================== CHUẨN HÓA LaTeX TOÁN ====================
 def fix_missing_backslash_cases(text):
     # Thêm \ vào begincases, endcases nếu thiếu (cho hệ phương trình)
     text = re.sub(r'\$\{\s*begincases', r'${\\begin{cases}', text)
@@ -345,7 +353,9 @@ with tab_img:
                         text = gemini_generate_text(img_bytes, api_key)
                     except Exception as e:
                         text = f"[Lỗi Gemini: {e}]"
+                text = fix_missing_backslash_cases(text)
                 text = normalize_math_latex(text)  # CHUẨN HÓA TOÁN
+                text = fix_cases_brace(text)
                 text = remove_all_figure_markdown(text)
                 text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
                 formatted_text = format_exam_markdown(text)
