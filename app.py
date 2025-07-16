@@ -176,7 +176,6 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
                     used_figures.add(fig['name'])
                     fig_idx += 1
 
-    # Không chèn ảnh thừa ở cuối nữa!
     return '\n'.join(processed_lines)
 
 # --------- Định dạng Markdown cho câu hỏi ---------
