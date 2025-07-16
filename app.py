@@ -15,12 +15,10 @@ import re
 
 def fix_all_unclosed_latex_blocks(text):
     """
-    Tự động thêm ngoặc }$ ở cuối các block LaTeX đang thiếu ngoặc hoặc thiếu $.
-    Dùng cho trường hợp bị thiếu sau cùng, hoặc các hàm trước vẫn còn sót.
+    Vá mọi block LaTeX ${...$ thiếu } hoặc }$
     """
     def replacer(match):
         content = match.group(1)
-        # Đếm số lượng ngoặc mở/đóng trong content
         open_braces = content.count('{')
         close_braces = content.count('}')
         missing = open_braces - close_braces
@@ -30,11 +28,10 @@ def fix_all_unclosed_latex_blocks(text):
         if not content.rstrip().endswith('}'):
             content = content.rstrip() + '}'
         return '${' + content + '}$'
-    # Vá block LaTeX bắt đầu bằng ${ nhưng không kết thúc bằng }$
-    # (dừng lại trước dấu xuống dòng hoặc hết văn bản)
-    pattern = r'\$\{([^\}$\n]+)(?:\n|$)'
-    fixed_text = re.sub(pattern, lambda m: replacer(m) + '\n', text)
-    return fixed_text
+    # Vá mọi block: bắt đầu bằng ${ ... KHÔNG có kết thúc bằng }$
+    pattern = r'\$\{([^\}$\n]+)\$?'
+    text = re.sub(pattern, replacer, text)
+    return text
 
 def fix_missing_closing_brace_in_latex(text):
     """
