@@ -12,11 +12,16 @@ from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
 # ==== Hàm ĐỊNH DẠNG ĐỀ ĐẸP CHUẨN GIÁO VIÊN ====
+import re
+
 def format_exam_markdown(text):
+    # Đưa các tag [BẢNG: ...], [HÌNH: ...] về dòng riêng
     text = re.sub(r'([^\n])(\[BẢNG: [^\]]+\])', r'\1\n\2', text)
     text = re.sub(r'(\[BẢNG: [^\]]+\])([^\n])', r'\1\n\2', text)
     text = re.sub(r'([^\n])(\[HÌNH: [^\]]+\])', r'\1\n\2', text)
     text = re.sub(r'(\[HÌNH: [^\]]+\])([^\n])', r'\1\n\2', text)
+
+    # Tách block cho mỗi câu hỏi (Câu X.)
     pattern = re.compile(r'(Câu\s*\d+[\.|:])')
     splits = pattern.split(text)
     blocks = []
@@ -24,15 +29,28 @@ def format_exam_markdown(text):
     if header:
         blocks.append(header)
     for i in range(1, len(splits), 2):
-        ques = splits[i].strip()
-        content = splits[i+1].strip() if i+1 < len(splits) else ''
-        block = f"{ques} {content}".strip()
-        block = re.sub(r'\s*A\.', '\nA.', block)
-        block = re.sub(r'\s*B\.', '\nB.', block)
-        block = re.sub(r'\s*C\.', '\nC.', block)
-        block = re.sub(r'\s*D\.', '\nD.', block)
-        block = re.sub(r'(\n)?(A\.)', r'\nA.', block)
+        ques = splits[i].strip() # "Câu X."
+        content = splits[i+1] if i+1 < len(splits) else ''
+        # Tìm vị trí bắt đầu đáp án (A. B. C. D. đều trên dòng riêng hoặc liền mạch)
+        answer_match = re.search(r'(\n|^)\s*A\.', content)
+        if answer_match:
+            idx = answer_match.start()
+            main_content = content[:idx].strip()
+            rest = content[idx:].strip()
+        else:
+            main_content = content.strip()
+            rest = ''
+        # Đảm bảo mỗi đáp án xuống dòng riêng
+        rest = re.sub(r'\s*A\.', '\nA.', rest)
+        rest = re.sub(r'\s*B\.', '\nB.', rest)
+        rest = re.sub(r'\s*C\.', '\nC.', rest)
+        rest = re.sub(r'\s*D\.', '\nD.', rest)
+        block = f"{ques} {main_content}".strip()
+        if rest:
+            block += "\n" + rest
         blocks.append(block.strip())
+
+    # Cách nhau 1 dòng trống
     result = '\n\n'.join(blocks).strip()
     result = re.sub(r'(Trang\s*\d+\/\d+\s*-\s*Mã đề\s*\d+)', r'\n\n---\n\1\n---\n', result)
     return result
