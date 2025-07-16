@@ -11,7 +11,28 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
-# ========== Hàm tách bảng/hình minh hoạ ==========
+# ----------------- Lọc các box lồng nhau -----------------
+def filter_nested_boxes(candidates):
+    """
+    Loại bỏ các box bị bao hoàn toàn bên trong box khác (loại dư contour lồng nhau)
+    """
+    filtered = []
+    for i, box in enumerate(candidates):
+        x0, y0, x1, y1 = box['x0'], box['y0'], box['x1'], box['y1']
+        is_nested = False
+        for j, other in enumerate(candidates):
+            if i == j:
+                continue
+            ox0, oy0, ox1, oy1 = other['x0'], other['y0'], other['x1'], other['y1']
+            # Nếu box nằm hoàn toàn trong other
+            if x0 >= ox0 and y0 >= oy0 and x1 <= ox1 and y1 <= oy1:
+                is_nested = True
+                break
+        if not is_nested:
+            filtered.append(box)
+    return filtered
+
+# ----------- Hàm tách bảng/hình minh hoạ (chuẩn nâng cao, lọc lồng nhau) ----------
 def extract_figures_and_tables(img_bytes, min_area_ratio=0.008, min_area_abs=2500, min_w=70, min_h=70, max_figures=8):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
@@ -50,9 +71,12 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.008, min_area_abs=250
             "area": area, "x0": x, "y0": y, "x1": x+ww, "y1": y+hh,
             "is_table": is_table, "bbox": (x, y, ww, hh)
         })
+    # ----------- LỌC LỒNG NHAU -----------
     candidates = sorted(candidates, key=lambda f: f['area'], reverse=True)
+    candidates = filter_nested_boxes(candidates)
     candidates = candidates[:max_figures]
     candidates = sorted(candidates, key=lambda box: (box["y0"], box["x0"]))
+
     final_figures_list = []
     img_idx = 0
     table_idx = 0
@@ -84,7 +108,6 @@ def remove_all_figure_markdown(text):
     text = re.sub(r'\[BẢNG_PLACEHOLDER\]', '', text)
     return text
 
-# ---- Mapping hình minh hoạ vào đúng vị trí ----
 def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
     import re
     lines = []
@@ -123,11 +146,8 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
                 used_figures.add(fig['name'])
                 fig_idx += 1
 
-    # Bước 2: Map các hình chưa gán vào đúng sau các dòng "Câu X." chưa có hình minh hoạ ngay sau
-    # Chỉ map nếu chưa dùng, theo thứ tự
     for i, line in enumerate(processed_lines):
         if re.match(r"^Câu\s*\d+[\.\:]", line) and fig_idx < len(figures_sorted):
-            # Nếu dòng tiếp theo KHÔNG PHẢI là hình minh hoạ
             next_line = processed_lines[i+1] if i+1 < len(processed_lines) else ""
             if not re.match(r"\[HÌNH:.*\]", next_line) and not re.match(r"\[BẢNG:.*\]", next_line):
                 while fig_idx < len(figures_sorted) and figures_sorted[fig_idx]['name'] in used_figures:
