@@ -11,6 +11,63 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
+
+def fix_latex_block_parentheses(text):
+    # Sửa lỗi khối ngoặc trái/phải không khớp và gộp lại thành đúng block
+    # 1. Các trường hợp ...B^{\prime C\right)... => B^{\prime} C\right)
+    text = re.sub(
+        r'([A-Za-z])\^\{\\prime ([A-Za-z])\\right\)', 
+        r'\1^{\prime} \2\\right)', text
+    )
+    # 2. Trường hợp chỉ số mũ chưa đóng ngoặc: B^{\prime C  => B^{\prime} C
+    text = re.sub(
+        r'([A-Za-z])\^\{\\prime ([A-Za-z])', 
+        r'\1^{\prime} \2', text
+    )
+    # 3. Trường hợp thiếu ngoặc { ... }: A^{\prime C^{\prime ... => A^{\prime} C^{\prime} ...
+    text = re.sub(
+        r'([A-Za-z])\^\{\\prime ([A-Za-z])\^\{\\prime', 
+        r'\1^{\prime} \2^{\prime}', text
+    )
+    # 4. Trường hợp bị chèn toán tử vào trong block:  ...C^{\prime \perp B D} => C^{\prime} \perp B D
+    text = re.sub(
+        r'([A-Za-z])\^\{\\prime \\perp ([A-Za-z]) ([A-Za-z])\}', 
+        r'\1^{\prime} \\perp \2 \3', text
+    )
+    # 5. Trường hợp ...C^{\prime \perp B D\} => C^{\prime} \perp B D
+    text = re.sub(
+        r'([A-Za-z])\^\{\\prime \\perp ([A-Za-z]) ([A-Za-z])\\\}', 
+        r'\1^{\prime} \\perp \2 \3', text
+    )
+    # 6. Gộp lại các block bị lỗi }$
+    text = re.sub(
+        r'\}\}\$\$', '}}$', text
+    )
+    # 7. Gộp lại các block ${...}}$ thành ${...}$
+    text = re.sub(
+        r'\}\}\$', '}$', text
+    )
+    # 8. Sửa lỗi \left(... B^{\prime} C\right) ... = ... thành đúng block
+    text = re.sub(
+        r'\\left\(([A-Za-z] [A-Za-z]\^\{\\prime\}, [A-Za-z]\^\{\\prime\} [A-Za-z])\\right\)=90\^\{\\circ\}\}\}', 
+        r'\\left(\1\\right)=90^{\circ}}', text
+    )
+    # 9. Sửa các block }}}$ dư ngoặc
+    text = re.sub(
+        r'\}{2,}\$', '}$', text
+    )
+    # 10. Sửa lại các block ${A^{\prime C^{\prime \perp B D}}}$ => ${A^{\prime} C^{\prime} \perp B D}$
+    text = re.sub(
+        r'\$\{([A-Za-z])\^\{\\prime ([A-Za-z])\^\{\\prime \\perp ([A-Za-z]) ([A-Za-z])\}\}\$', 
+        r'${\1^{\prime} \2^{\prime} \perp \3 \4}$', text
+    )
+    # 11. Sửa các block kiểu ${B C^{\prime \perp A^{\prime D}}}$ thành ${B C^{\prime} \perp A^{\prime} D}$
+    text = re.sub(
+        r'\$\{([A-Za-z]) ([A-Za-z])\^\{\\prime \\perp ([A-Za-z])\^\{\\prime ([A-Za-z])\}\}\$', 
+        r'${\1 \2^{\prime} \perp \3^{\prime} \4}$', text
+    )
+    return text
+
 def fix_latex_super_sub_blocks(text):
     # Sửa lỗi phổ biến với các chỉ số mũ, chỉ số dưới và các ký hiệu
     # Ví dụ: ${B C^{\prime \perp A^{\prime D}}}$ -> ${B C^{\prime} \perp A^{\prime} D}$
@@ -591,6 +648,7 @@ with tab_pdf:
     if st.session_state.get("ocr_done"):
         raw_text = st.session_state.get("ocr_text_raw", "")
         text_content = normalize_math_latex(raw_text)
+        text_content = fix_latex_block_parentheses(text_content)
         text_content = merge_split_latex_blocks(text_content)
         text_content = merge_latex_blocks_multiline(text_content)
         text_content = markdown_image_to_hinh_tag(text_content)  # <-- CHUYỂN MARKDOWN ẢNH thành TAG [HÌNH: ...]
