@@ -13,6 +13,23 @@ from word_export import insert_images_to_word_from_markdown
 
 import re
 
+def fix_missing_closing_brace_in_latex(text):
+    """
+    Bổ sung ngoặc } cho bất kỳ block LaTeX ${...$ bị thiếu } ở cuối.
+    Chỉ thêm nếu block không có đủ số lượng } so với {.
+    """
+    def fix_block(match):
+        content = match.group(1)
+        n_open = content.count('{')
+        n_close = content.count('}')
+        # Nếu số } thiếu, bổ sung vào
+        if n_close < n_open:
+            content = content + '}' * (n_open - n_close)
+        return '${' + content + '}$'
+    # Chỉ xét các block ${...$ mà phía sau không phải là }
+    text = re.sub(r'\$\{([^\}$]+)\$', fix_block, text)
+    return text
+
 def fix_unbalanced_brackets_in_latex(text):
     """
     Kiểm tra các block ${...$ thiếu ngoặc đóng } và tự động thêm vào trước dấu $
@@ -684,6 +701,7 @@ with tab_pdf:
         text_content = fix_unbalanced_brackets_in_latex(text_content) # 6. Sửa các block thiếu/thừa dấu ngoặc
         text_content = fix_latex_super_sub_blocks(text_content)       # 7. Sửa các lỗi ^, _ đặc biệt trong block
         text_content = fix_latex_block_errors(text_content)           # 8. Sửa lỗi đặc biệt cuối cùng cho block phức tạp
+        text_content = fix_missing_closing_brace_in_latex(text_content)
         images = st.session_state.get("ocr_images", [])
         tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
         with tab1:
