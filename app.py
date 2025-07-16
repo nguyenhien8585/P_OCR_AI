@@ -460,21 +460,21 @@ with tab_pdf:
         st.session_state["ocr_done"] = True
         st.success("✅ Đã nhận diện PDF thành công!")
     if st.session_state.get("ocr_done"):
-    raw_text = st.session_state.get("ocr_text_raw", "")
-    text_content = normalize_math_latex(raw_text)   # CHUẨN HÓA TOÁN
-    images = st.session_state.get("ocr_images", [])
+       raw_text = st.session_state.get("ocr_text_raw", "")
+       text_content = normalize_math_latex(raw_text)   # CHUẨN HÓA TOÁN
+       images = st.session_state.get("ocr_images", [])
     
-    # Đặt lại tên img-X bắt đầu từ 0
-    img_idx = 0
-    for img in images:
-        if not img.get("is_table", False):
-            img["name"] = f"img-{img_idx}.jpeg"
-            img_idx += 1
-    table_idx = 0
-    for img in images:
-        if img.get("is_table", False):
-            img["name"] = f"table-{table_idx}.jpeg"
-            table_idx += 1
+       # Đặt lại tên img-X bắt đầu từ 0
+       img_idx = 0
+       for img in images:
+           if not img.get("is_table", False):
+               img["name"] = f"img-{img_idx}.jpeg"
+               img_idx += 1
+       table_idx = 0
+       for img in images:
+           if img.get("is_table", False):
+               img["name"] = f"table-{table_idx}.jpeg"
+               table_idx += 1
 
     # mapping lại tag [HÌNH: ...] trong text, lần lượt thay thế thành [HÌNH: img-0.jpeg], ...
     def map_figure_tags(text, images):
