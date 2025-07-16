@@ -12,15 +12,11 @@ from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
 # ==== Hàm ĐỊNH DẠNG ĐỀ ĐẸP CHUẨN GIÁO VIÊN ====
-import re
-
 def format_exam_markdown(text):
-    # Đưa các tag [BẢNG: ...], [HÌNH: ...] về dòng riêng
     text = re.sub(r'([^\n])(\[BẢNG: [^\]]+\])', r'\1\n\2', text)
     text = re.sub(r'(\[BẢNG: [^\]]+\])([^\n])', r'\1\n\2', text)
     text = re.sub(r'([^\n])(\[HÌNH: [^\]]+\])', r'\1\n\2', text)
     text = re.sub(r'(\[HÌNH: [^\]]+\])([^\n])', r'\1\n\2', text)
-
     # Tách block cho mỗi câu hỏi (Câu X.)
     pattern = re.compile(r'(Câu\s*\d+[\.|:])')
     splits = pattern.split(text)
@@ -49,13 +45,10 @@ def format_exam_markdown(text):
         if rest:
             block += "\n" + rest
         blocks.append(block.strip())
-
-    # Cách nhau 1 dòng trống
     result = '\n\n'.join(blocks).strip()
     result = re.sub(r'(Trang\s*\d+\/\d+\s*-\s*Mã đề\s*\d+)', r'\n\n---\n\1\n---\n', result)
     return result
 
-# ==== Hàm cắt hình minh hoạ chuẩn, không lồng nhau ====
 def filter_nested_boxes(candidates):
     filtered = []
     for i, box in enumerate(candidates):
@@ -200,7 +193,8 @@ api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
     return next(api_key_cycle)
 
-GEMINI_PROMPT = '''...'''  # Giữ nguyên như bản của bạn!
+GEMINI_PROMPT = '''YÊU CẦU QUAN TRỌNG:
+1.  ... ''' # Giữ prompt gốc của bạn!
 
 def gemini_generate_text(image_bytes, api_key):
     api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
@@ -357,12 +351,12 @@ with tab_pdf:
             return re.sub(r'\$(.+?)\$', r'$\1$', s)
         raw_text = st.session_state.get("ocr_text_raw", "")
         text_content = enhance_text_visibility(raw_text)
-        formatted_text = format_exam_markdown(text_content)
         images = st.session_state.get("ocr_images", [])
-        st.markdown("### 📋 Kết quả OCR PDF:")
-        tab1, tab2 = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh trích xuất"])
+        tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
         with tab1:
-            st.text_area("Nội dung đã được định dạng:", formatted_text, height=350, label_visibility="collapsed")
+            st.markdown("#### 📋 Kết quả OCR PDF:")
+            formatted_text = format_exam_markdown(text_content)
+            st.text_area("Nội dung đã được phân tích:", formatted_text, height=350, label_visibility="collapsed")
             st.download_button(
                 "📄 Tải văn bản (TXT)",
                 formatted_text,
