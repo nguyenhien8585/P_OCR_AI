@@ -11,7 +11,32 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
-# ----------- Hàm tách bảng giá trị/bảng biến thiên và hình minh hoạ ----------
+# ---- Hàm lọc loại bỏ vùng lồng nhau/trùng lặp khi tách hình ----
+def filter_nested_candidates(candidates, iou_thresh=0.85):
+    keep = []
+    for i, cand_i in enumerate(candidates):
+        xi0, yi0, xi1, yi1 = cand_i['x0'], cand_i['y0'], cand_i['x1'], cand_i['y1']
+        area_i = (xi1 - xi0) * (yi1 - yi0)
+        is_nested = False
+        for j, cand_j in enumerate(candidates):
+            if i == j: continue
+            xj0, yj0, xj1, yj1 = cand_j['x0'], cand_j['y0'], cand_j['x1'], cand_j['y1']
+            area_j = (xj1 - xj0) * (yj1 - yj0)
+            # Intersection
+            xx0, yy0 = max(xi0, xj0), max(yi0, yj0)
+            xx1, yy1 = min(xi1, xj1), min(yi1, yj1)
+            iw, ih = max(0, xx1-xx0), max(0, yy1-yy0)
+            intersection = iw*ih
+            if min(area_i, area_j) == 0: continue
+            iou = intersection / min(area_i, area_j)
+            if iou > iou_thresh and area_i < area_j:
+                is_nested = True
+                break
+        if not is_nested:
+            keep.append(cand_i)
+    return keep
+
+# ----------- Hàm tách bảng giá trị/bảng biến thiên và hình minh hoạ (chuẩn nâng cao) ----------
 def extract_figures_and_tables(img_bytes, min_area_ratio=0.008, min_area_abs=2500, min_w=70, min_h=70, max_figures=8):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
@@ -50,8 +75,13 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.008, min_area_abs=250
             "area": area, "x0": x, "y0": y, "x1": x+ww, "y1": y+hh,
             "is_table": is_table, "bbox": (x, y, ww, hh)
         })
+    # Bổ sung lọc vùng lồng nhau/trùng lặp
+    candidates = filter_nested_candidates(candidates, iou_thresh=0.85)
+    # Sắp xếp các ứng cử viên theo diện tích giảm dần
     candidates = sorted(candidates, key=lambda f: f['area'], reverse=True)
+    # Giới hạn cứng số lượng đối tượng trả về
     candidates = candidates[:max_figures]
+    # Sắp xếp lại theo vị trí trên trang
     candidates = sorted(candidates, key=lambda box: (box["y0"], box["x0"]))
     final_figures_list = []
     img_idx = 0
@@ -84,7 +114,7 @@ def remove_all_figure_markdown(text):
     text = re.sub(r'\[BẢNG_PLACEHOLDER\]', '', text)
     return text
 
-# --- Hàm mapping hình ảnh thông minh ---
+# --- Mapping hình vào đúng đoạn ---
 def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
     import re
     lines = []
@@ -134,7 +164,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
             processed_lines.insert(insert_pos + 1, tag)
     return '\n'.join(processed_lines)
 
-# --- Format Markdown trắc nghiệm, đúng/sai, giữ latex ---
+# --- Định dạng markdown chuẩn Toán/Trắc nghiệm/Đúng Sai ---
 def format_exam_markdown(text):
     import re
     def format_choices(block):
