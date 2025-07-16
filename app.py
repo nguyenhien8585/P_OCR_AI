@@ -13,45 +13,78 @@ from word_export import insert_images_to_word_from_markdown
 
 # ======================== CHUẨN HÓA TOÁN HỌC ========================
 def normalize_math_latex(text):
-    # Gom các đoạn bị chia nhỏ thành dạng ${...}$ (loại }${ hoặc }$ {)
-    text = re.sub(r'\}\$\s*\$\{', '', text)
-    # Xóa cặp thừa kiểu }${ và }${ 
-    text = re.sub(r'\}\$\{', '', text)
+    # B1: Gom các đoạn bị chia nhỏ thành dạng ${...}$
+    text = re.sub(r'\}\$\{', '', text)     # Xóa cặp thừa
+    text = re.sub(r'\$\{', '${', text)     # Giữ lại mở chuẩn
+    text = re.sub(r'\}\$', '}$', text)     # Giữ lại đóng chuẩn
 
-    # Gom lại các công thức bị tách rời thành 1 ${...}$ duy nhất
-    # Loại thừa ${...}${...}$ -> ${... ...}$
-    while True:
-        new_text = re.sub(r'\$\{([^$}]*)\}\$\{([^$}]*)\}\$', lambda m: '${' + m.group(1).strip() + ' ' + m.group(2).strip() + '}$', text)
-        if new_text == text:
-            break
-        text = new_text
+    # B2: Gom nhiều dấu ${...}${...}$ về thành ${...}$
+    text = re.sub(r'\$\{([^\$]*)\}\$\{([^\$]*)\}\$', lambda m: '${' + m.group(1) + m.group(2) + '}$', text)
 
-    # Đảm bảo mọi xuất hiện của $...$ → ${...}$
-    text = re.sub(r'(?<!\$)\$([^\$]+?)\$(?!\$)', lambda m: '${' + m.group(1).strip() + '}$', text)
+    # B3: Với trường hợp ...${abc${def} ghi thành ${abcdef}$
+    def merge_nested(match):
+        g = match.group(0)
+        g = g.replace('${', '').replace('}$', '')
+        return '${' + g.replace('}{', '') + '}$'
+    text = re.sub(r'(\$\{[^\$]*\}\$)+', merge_nested, text)
 
-    # Loại bỏ ${ hoặc }$ đơn lẻ không có nội dung
-    text = re.sub(r'\$\{\s*\}\$', '', text)
+    # B4: Đổi mọi xuất hiện của log${...}${x hoặc sin${...}${x... về ${\log_{...} x}$
+    text = re.sub(
+        r'([a-zA-Z]+)\$\{([^\}]*)\}\$\{?([a-zA-Z0-9\\\^\_\{\}\(\)\[\]\s]+)\}?', 
+        lambda m: '${\\' + m.group(1) + '_{' + m.group(2) + '} ' + m.group(3).strip() + '}$', 
+        text
+    )
 
-    # Sửa các lỗi nhiều dấu ngoặc: ${{...}$ hoặc ${{{...}$ thành ${...}$
+    # B5: Sửa lỗi ${{{...}$ hoặc ${{...}$ thành ${...}$ (xóa ngoặc thừa)
     text = re.sub(r'\$\{{2,}', '${', text)
     text = re.sub(r'\}{2,}\$', '}$', text)
 
-    # Đảm bảo dạng hệ phương trình nằm trọn trong ${...}$, không có $...$ bên ngoài
-    # Sửa trường hợp $ \begin{cases} ... \end{cases} $ → ${\begin{cases} ... \end{cases}}$
-    text = re.sub(
-        r'\$\\begin\{cases\}(.*?)\\end\{cases\}\$',
-        lambda m: '${\\begin{cases}' + m.group(1) + '\\end{cases}}$',
-        text, flags=re.DOTALL
-    )
-    # Nếu gặp ${\begin{cases}...\end{cases}}$ rồi, thì giữ nguyên
+    # B6: Với các đoạn bị tách: ...}$...${..., nối lại thành ${...}$
+    text = re.sub(r'\}\$[\.\s]*\$\{', '', text)
 
-    # Loại các dấu cách, dấu . không hợp lý giữa ${...}$, ví dụ: ${ ... }$
-    text = re.sub(r'\$\{\s+', '${', text)
-    text = re.sub(r'\s+\}\$', '}$', text)
+    # B7: Đảm bảo chỉ còn đúng cú pháp ${...}$ cho tất cả
+    # Đổi các $...$ còn sót thành ${...}$
+    text = re.sub(r'\$(?!\{)([^\$]+?)\$', lambda m: '${' + m.group(1).strip() + '}$', text)
 
-    # Loại dấu ngoặc lẻ đầu/ cuối (nếu có)
+    # Loại dấu ngoặc lẻ đầu/ cuối
     text = re.sub(r'(^|\s)[\}\{]+', r'\1', text)
     text = re.sub(r'[\}\{]+(\s|$)', r'\1', text)
+
+    # B8: Đổi các đoạn kiểu ...${abc}$...${def}$... thành ...${abc def}$...
+    def merge_multiple_formulae(text):
+        # Nối liền 2 công thức cạnh nhau
+        while True:
+            new_text = re.sub(r'\}\$\s*\$\{', ' ', text)
+            if new_text == text:
+                break
+            text = new_text
+        return text
+
+    text = merge_multiple_formulae(text)
+
+    # B9: Loại bỏ dấu thừa giữa chữ và ${ hoặc }$
+    text = re.sub(r'([a-zA-Z0-9])\s*\$\{', r' ${', text)
+    text = re.sub(r'\}\$\s*([a-zA-Z0-9])', r'}$ \1', text)
+
+    # B10: Loại bỏ mọi ${ hoặc }$ đơn lẻ không có nội dung (rất hiếm)
+    text = re.sub(r'\$\{\s*\}\$', '', text)
+
+    # === SỬA LỖI ĐẶC BIỆT \begin{cases x... -> \begin{cases} ... ===
+    text = re.sub(r'\\begin\{cases[^\}]*\}', r'\\begin{cases}', text)
+    # Đảm bảo các hệ phương trình nằm trọn trong ${ ... }$
+    text = re.sub(
+        r'\$\{\\begin{cases}(.*?)\\end{cases}\}\$',
+        r'${\\begin{cases}\1\\end{cases}}$',
+        text,
+        flags=re.DOTALL
+    )
+    # Nếu còn hệ phương trình bị tách, nối lại cho chắc chắn
+    text = re.sub(
+        r'\$\{\\begin{cases}(.*?)\\end{cases}',
+        r'${\\begin{cases}\1\\end{cases}}$',
+        text,
+        flags=re.DOTALL
+    )
 
     return text
 
