@@ -13,6 +13,30 @@ from word_export import insert_images_to_word_from_markdown
 
 import re
 
+def fix_broken_latex_blocks(text):
+    # Ghép block bị tách như: ${A^{\prime}$}$} C^{\prime} -> ${A^{\prime} C^{\prime}}$
+    # B1: Gom các chuỗi kiểu ${abc}$}$} def ghi thành ${abc def}$
+    # Tìm các chuỗi `${...}$}$}` hoặc `${...}$}$}$ ... [chữ/số hoặc lệnh LaTeX]
+    while True:
+        new_text = re.sub(
+            r'\$\{([^}$]+)\}\}\$\}\}?([^\$]+)\$',  # ghép block + phần thừa đến dấu $
+            lambda m: '${' + m.group(1).strip() + ' ' + m.group(2).strip() + '}$',
+            text
+        )
+        if new_text == text:
+            break
+        text = new_text
+
+    # Xử lý trường hợp còn lại: `${abc}$}$` hoặc `${abc}$}$}$`
+    text = re.sub(r'\$\{([^}$]+)\}\}\$+', r'${\1}$', text)
+
+    # Nếu vẫn còn trường hợp `${abc}$}$` [text không có $] ở cuối dòng
+    text = re.sub(r'\$\{([^}$]+)\}\}\$([^\n]+)', r'${\1 \2}$', text)
+
+    # Nếu có dấu }$}$}$ dư ở cuối, chỉ giữ 1 }
+    text = re.sub(r'\}\$\}+', '}$', text)
+    return text
+
 def clean_latex_blocks(text):
     # 1. Ghép các block kiểu }$}${ thành 1: }$}{
     text = re.sub(r'\}\$\s*\$\{', ' ', text)
@@ -749,6 +773,7 @@ with tab_pdf:
         text_content = fix_unbalanced_brackets_in_latex(text_content) # 6. Sửa các block thiếu/thừa dấu ngoặc
         text_content = fix_latex_super_sub_blocks(text_content)       # 7. Sửa các lỗi ^, _ đặc biệt trong block
         text_content = fix_latex_block_errors(text_content)           # 8. Sửa lỗi đặc biệt cuối cùng cho block phức tạp
+        text_content = fix_broken_latex_blocks(text_content)
         text_content = fix_missing_closing_brace_in_latex(text_content)
         text_content = fix_all_unclosed_latex_blocks(text_content)
         text_content = clean_latex_blocks(text_content)
