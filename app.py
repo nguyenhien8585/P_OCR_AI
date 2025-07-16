@@ -11,68 +11,71 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
-# ======================== CHUẨN HÓA TOÁN HỌC ========================
+# ==================== CHUẨN HÓA LaTeX TOÁN ====================
+
+def fix_missing_backslash_cases(text):
+    # Thêm \ vào begincases, endcases nếu thiếu (cho hệ phương trình)
+    text = re.sub(r'\$\{\s*begincases', r'${\\begin{cases}', text)
+    text = re.sub(r'(?<!\\)begincases', r'\\begin{cases}', text)
+    text = re.sub(r'(?<!\\)endcases', r'\\end{cases}', text)
+    return text
+
 def normalize_math_latex(text):
-    # 1. Gom công thức về dạng ${...}$ duy nhất (kể cả các đoạn bị split)
-    # Gom các đoạn ${...}${...}$ hoặc ${...}$...${...}$ liền nhau về một block
-    while True:
-        new_text = re.sub(r'\}\$\s*\$\{', '', text)
-        if new_text == text:
-            break
-        text = new_text
+    # Gom các đoạn bị tách nhỏ thành ${...}$
+    text = re.sub(r'\}\$\{', '', text)
+    text = re.sub(r'\$\{', '${', text)
+    text = re.sub(r'\}\$', '}$', text)
 
-    # 2. Đảm bảo ${...}$ luôn đủ cặp mở đóng
-    # Sửa ${...${...}$ về ${......}$
-    def merge_nested_formula(m):
-        content = ''.join(re.findall(r'\$\{([^$}]*)\}\$', m.group(0)))
-        return '${' + content.replace('}{', '') + '}$'
-    text = re.sub(r'(\$\{[^\$]*\}\$)+', merge_nested_formula, text)
+    # Gom nhiều dấu ${...}${...}$ về thành ${...}$
+    text = re.sub(r'\$\{([^\$]*)\}\$\{([^\$]*)\}\$', lambda m: '${' + m.group(1) + m.group(2) + '}$', text)
 
-    # 3. Bỏ mọi dấu ngoặc lẻ ${ hoặc }$ dư
-    text = re.sub(r'\$\{[ \t\r\n]*\}\$', '', text)
-    text = re.sub(r'[\{\}]+', '', text)
+    # Với trường hợp ...${abc${def} ghi thành ${abcdef}$
+    def merge_nested(match):
+        g = match.group(0)
+        g = g.replace('${', '').replace('}$', '')
+        return '${' + g.replace('}{', '') + '}$'
+    text = re.sub(r'(\$\{[^\$]*\}\$)+', merge_nested, text)
 
-    # 4. Sửa các đoạn như log${_{a}}${x} → ${\log_{a} x}$
+    # Đổi mọi xuất hiện của log${...}${x hoặc sin${...}${x... về ${\log_{...} x}$
     text = re.sub(
-        r'([a-zA-Z]+)\$\{_([^\}]*)\}\$\{?([a-zA-Z0-9\\\^\_\{\}\(\)\[\]\s]+)\}?',
-        lambda m: '${\\' + m.group(1) + '_{' + m.group(2) + '} ' + m.group(3).strip() + '}$',
-        text
-    )
-    # fix log_{a}x, sin_{a}x...
-    text = re.sub(
-        r'([a-zA-Z]+)\$\{([^\}]*)\}\$\{([a-zA-Z0-9\\\^\_\{\}\(\)\[\]\s]+)\}',
+        r'([a-zA-Z]+)\$\{([^\}]*)\}\$\{?([a-zA-Z0-9\\\^\_\{\}\(\)\[\]\s]+)\}?',
         lambda m: '${\\' + m.group(1) + '_{' + m.group(2) + '} ' + m.group(3).strip() + '}$',
         text
     )
 
-    # 5. Đổi mọi $...$ (nếu còn sót) về ${...}$
+    # Sửa lỗi ${{{...}$ hoặc ${{...}$ thành ${...}$ (xóa ngoặc thừa)
+    text = re.sub(r'\$\{{2,}', '${', text)
+    text = re.sub(r'\}{2,}\$', '}$', text)
+
+    # Nối lại các đoạn bị tách: ...}$...${... thành ${...}$
+    text = re.sub(r'\}\$[\.\s]*\$\{', '', text)
+
+    # Đổi các $...$ còn sót thành ${...}$
     text = re.sub(r'\$(?!\{)([^\$]+?)\$', lambda m: '${' + m.group(1).strip() + '}$', text)
 
-    # 6. Chuẩn hóa lại hệ phương trình/cases:
-    # Tìm tất cả các đoạn như \begin{cases... hoặc \begin{cases x... thành \begin{cases}
-    text = re.sub(r'\\begin\{cases[^}]*\}', r'\\begin{cases}', text)
-    # Đảm bảo các hệ nằm trọn trong ${ ... }$
-    text = re.sub(
-        r'\$\{\\begin{cases}(.*?)\\end{cases}\}\$',
-        r'${\\begin{cases}\1\\end{cases}}$',
-        text, flags=re.DOTALL
-    )
-    # Nếu còn hệ phương trình bị tách, nối lại cho chắc
-    text = re.sub(
-        r'\$\{\\begin{cases}(.*?)\\end{cases}',
-        r'${\\begin{cases}\1\\end{cases}}$',
-        text, flags=re.DOTALL
-    )
-    # Xóa mọi thừa \begin{cases x... do OCR/Gemini gây lỗi
-    text = re.sub(r'\\begin\{cases\s*[a-zA-Z0-9_ \.\,\;:\-]*\}', r'\\begin{cases}', text)
+    # Loại dấu ngoặc lẻ đầu/ cuối
+    text = re.sub(r'(^|\s)[\}\{]+', r'\1', text)
+    text = re.sub(r'[\}\{]+(\s|$)', r'\1', text)
 
-    # 7. Loại bỏ khoảng trắng đầu cuối
-    text = re.sub(r' +', ' ', text)
-    text = text.replace('\r', '')
-    text = text.replace('\t', '')
-    return text.strip()
+    # Nối liền 2 công thức cạnh nhau thành 1
+    def merge_multiple_formulae(text):
+        while True:
+            new_text = re.sub(r'\}\$\s*\$\{', ' ', text)
+            if new_text == text:
+                break
+            text = new_text
+        return text
+    text = merge_multiple_formulae(text)
 
-# ======================= ĐỊNH DẠNG ĐỀ THI CHUẨN GIÁO VIÊN =======================
+    # Loại bỏ dấu thừa giữa chữ và ${ hoặc }$
+    text = re.sub(r'([a-zA-Z0-9])\s*\$\{', r' ${', text)
+    text = re.sub(r'\}\$\s*([a-zA-Z0-9])', r'}$ \1', text)
+
+    # Loại bỏ mọi ${ hoặc }$ đơn lẻ không có nội dung
+    text = re.sub(r'\$\{\s*\}\$', '', text)
+    return text
+
+# ==================== ĐỊNH DẠNG ĐỀ CHUẨN GIÁO VIÊN ====================
 def format_exam_markdown(text):
     # 1. Đưa mỗi [BẢNG: ...], [HÌNH: ...] về dòng riêng
     text = re.sub(r'([^\n])(\[BẢNG: [^\]]+\])', r'\1\n\2', text)
@@ -81,7 +84,7 @@ def format_exam_markdown(text):
     text = re.sub(r'(\[HÌNH: [^\]]+\])([^\n])', r'\1\n\2', text)
     # 2. Đưa Trang .../Mã đề ... về block riêng
     text = re.sub(r'(Trang\s*\d+\/\d+\s*-\s*Mã\s*đề\s*\d+)', r'\n\n---\n\1\n---\n', text, flags=re.IGNORECASE)
-    # 3. Đưa mỗi "Câu X." hoặc "Câu X:" lên đầu dòng (kể cả nếu bị dính trước đó)
+    # 3. Đưa mỗi "Câu X." hoặc "Câu X:" lên đầu dòng
     text = re.sub(r'(?<!^)\s*(?=Câu\s*\d+[.:])', r'\n', text)
     # 4. Tách block từng câu hỏi
     blocks = re.split(r'(?=^Câu\s*\d+[.:])', text, flags=re.MULTILINE)
@@ -90,21 +93,19 @@ def format_exam_markdown(text):
         blk = blk.strip()
         if not blk:
             continue
-        # Đưa mỗi đáp án A. B. C. D. xuống dòng riêng (nếu bị dính)
         blk = re.sub(r'(?<!\n)[ ]*A\.', r'\nA.', blk)
         blk = re.sub(r'(?<!\n)[ ]*B\.', r'\nB.', blk)
         blk = re.sub(r'(?<!\n)[ ]*C\.', r'\nC.', blk)
         blk = re.sub(r'(?<!\n)[ ]*D\.', r'\nD.', blk)
-        # Loại bỏ dòng trống thừa
         lines = [l.strip() for l in blk.split('\n')]
         lines = [l for i, l in enumerate(lines) if l or (i > 0 and lines[i-1])]
         result_blocks.append('\n'.join(lines))
-    # Ghép lại, không để quá 2 dòng trống
     result = '\n\n'.join(result_blocks)
     result = re.sub(r'\n{3,}', '\n\n', result)
     return result.strip()
 
-# ================== TÁCH BẢNG, HÌNH MINH HỌA ==================
+# ================== XỬ LÝ ẢNH, TÁCH HÌNH/BẢNG ==================
+
 def filter_nested_boxes(candidates):
     filtered = []
     for i, box in enumerate(candidates):
@@ -209,7 +210,6 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
             lines.append('')
     if buffer:
         lines.append(buffer)
-    # Sắp xếp hình minh họa và bảng theo vị trí trên trang
     figures_sorted = sorted(
         [fig for fig in figures if fig.get('bbox')],
         key=lambda f: (f['bbox'][1], f['bbox'][0])
@@ -223,13 +223,10 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
         lower = line.lower()
         processed_lines.append(line)
         inserted = False
-
-        # 1. Nếu gặp dòng có từ "bảng" hoặc bảng markdown, chèn bảng vào luôn sau đó
         if (
             any(x in lower for x in ["bảng", "bảng giá trị", "bảng biến thiên", "bảng tần số"])
             or (line.strip().startswith("|") and "|" in line)
         ):
-            # Tìm bảng chưa dùng
             for j in range(fig_idx, len(figures_sorted)):
                 fig = figures_sorted[j]
                 if fig['is_table'] and fig['name'] not in used_figures:
@@ -239,8 +236,6 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
                     fig_idx = j + 1
                     inserted = True
                     break
-
-        # 2. Nếu gặp dòng có từ khóa hình thì chèn hình vào luôn sau đó
         if (
             not inserted
             and any(x in lower for x in ["hình vẽ", "hình bên", "(hình", "xem hình", "đồ thị", "biểu đồ", "minh họa"])
@@ -254,11 +249,8 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
                     fig_idx = j + 1
                     break
         i += 1
-
-    # 3. Map tiếp các ảnh/bảng còn dư vào sau các dòng "Câu X." chưa có hình/bảng phía sau
     for i, line in enumerate(processed_lines):
         if re.match(r"^Câu\s*\d+[\.\:]", line) and fig_idx < len(figures_sorted):
-            # Nếu dòng tiếp theo KHÔNG PHẢI là hình minh họa hay bảng
             next_line = processed_lines[i+1] if i+1 < len(processed_lines) else ""
             if not re.match(r"\[HÌNH:.*\]", next_line) and not re.match(r"\[BẢNG:.*\]", next_line):
                 while fig_idx < len(figures_sorted) and figures_sorted[fig_idx]['name'] in used_figures:
@@ -269,14 +261,12 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
                     processed_lines.insert(i+1, tag)
                     used_figures.add(fig['name'])
                     fig_idx += 1
-
-    # Ghép lại văn bản đã xử lý
     return '\n'.join(processed_lines)
 
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
-    "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
-    "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
+    "YOUR_GEMINI_KEY_1",
+    "YOUR_GEMINI_KEY_2"
 ]
 api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
@@ -284,20 +274,11 @@ def get_next_api_key():
 
 GEMINI_PROMPT = '''
 YÊU CẦU QUAN TRỌNG:
-1.  GÕ LẠI CHÍNH XÁC TẤT CẢ VĂN BẢN TRONG ẢNH: Đảm bảo không bỏ sót bất kỳ từ, câu, đoạn văn nào. Giữ nguyên cấu trúc đoạn văn, dấu xuống dòng, và định dạng gốc (ví dụ: in đậm, in nghiêng nếu có thể).
-2.  ĐÁNH DẤU VỊ TRÍ HÌNH ẢNH/BẢNG: Nếu phát hiện hình minh hoạ (hình vẽ, đồ thị, biểu đồ) hoặc bảng số liệu (bảng giá trị, bảng biến thiên, bảng tần số), hãy đánh dấu đúng vị trí của chúng bằng cú pháp placeholder:
-    *   [HÌNH_PLACEHOLDER] cho hình ảnh minh hoạ.
-    *   [BẢNG_PLACEHOLDER] cho bảng hoặc bảng số liệu.
-3.  CHÈN PLACEHOLDER ĐÚNG VỊ TRÍ: Với mỗi placeholder, hãy chèn ngay sau dòng mô tả có các cụm từ như: "xem hình dưới", "hình dưới đây", "bảng biến thiên", "bảng tần số", "bảng giá trị", "hình vẽ", "biểu đồ", "như hình vẽ", "thống kê lại ở bảng", hoặc ngay sau dòng câu hỏi liên quan trực tiếp tới hình/bảng/biểu đồ đó. Nếu không có từ khóa, hãy chèn vào vị trí logic nhất trong đoạn văn bản liên quan.
+1.  GÕ LẠI CHÍNH XÁC TẤT CẢ VĂN BẢN TRONG ẢNH: ...
+2.  ĐÁNH DẤU VỊ TRÍ HÌNH ẢNH/BẢNG ...
+3.  ...
 4.  ĐỊNH DẠNG CÔNG THỨC TOÁN HỌC: Mọi công thức toán học, biểu thức, hệ phương trình, ký hiệu toán học phải được định dạng bằng LaTeX inline: ${...}$, nếu có hệ phương trình, ghi đúng cú pháp ${\begin{cases} ... \end{cases}}$.
-5.  CHUYỂN BẢNG SỐ LIỆU SANG MARKDOWN: Nếu phát hiện bảng số liệu, hãy chuyển đổi chúng thành định dạng bảng Markdown nếu có thể.
-6.  ĐỊNH DẠNG CÂU HỎI: Tuân thủ nghiêm ngặt các định dạng sau cho từng loại câu hỏi:
-    1.  Trắc nghiệm 4 phương án: mỗi lựa chọn trên dòng riêng.
-    2.  Đúng/Sai: cuối cùng là 2 lựa chọn trên 2 dòng riêng.
-    3.  Trả lời ngắn: Trả lời: ________
-    4.  Tự luận: nguyên câu hỏi.
-
-LƯU Ý: KHÔNG BỎ SÓT NỘI DUNG, KHÔNG ĐƯỢC SỬA ĐỔI, CHỈ GÕ LẠI CHÍNH XÁC.
+5.  ...
 '''
 
 def gemini_generate_text(image_bytes, api_key):
@@ -323,6 +304,7 @@ def gemini_generate_text(image_bytes, api_key):
     return text
 
 # ========== Giao diện ==========
+
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
 st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & bảng (bảng giá trị, bảng tần số, biến thiên) ✨")
 
