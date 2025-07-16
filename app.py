@@ -188,6 +188,7 @@ def remove_all_figure_markdown(text):
     return text
 
 def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
+    import re
     lines = []
     buffer = ""
     for line in text.split('\n'):
@@ -201,6 +202,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
             lines.append('')
     if buffer:
         lines.append(buffer)
+
     figures_sorted = sorted(
         [fig for fig in figures if fig.get('bbox')],
         key=lambda f: (f['bbox'][1], f['bbox'][0])
@@ -208,17 +210,42 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
     used_figures = set()
     processed_lines = []
     fig_idx = 0
-    for idx, line in enumerate(lines):
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         processed_lines.append(line)
-        if any(x in line.lower() for x in ["hình vẽ", "hình bên", "(hình", "xem hình", "đồ thị", "biểu đồ", "minh họa"]):
-            while fig_idx < len(figures_sorted) and figures_sorted[fig_idx]['name'] in used_figures:
-                fig_idx += 1
-            if fig_idx < len(figures_sorted):
+        # Nếu dòng có từ khóa hình/bảng
+        lower = line.lower()
+        is_table = False
+        if any(x in lower for x in ["bảng", "bảng giá trị", "bảng biến thiên", "bảng tần số"]):
+            # Nếu ngay sau đó là một block bảng Markdown (| ...)
+            if (i + 1 < len(lines)) and lines[i + 1].strip().startswith("|"):
+                # tìm figure tiếp theo là bảng chưa dùng
+                while fig_idx < len(figures_sorted):
+                    fig = figures_sorted[fig_idx]
+                    if fig['is_table'] and fig['name'] not in used_figures:
+                        tag = f"[BẢNG: {fig['name']}]"
+                        processed_lines.append(tag)
+                        used_figures.add(fig['name'])
+                        fig_idx += 1
+                        is_table = True
+                        break
+                    fig_idx += 1
+        # Nếu dòng có từ khóa hình ảnh
+        if not is_table and any(x in lower for x in ["hình vẽ", "hình bên", "(hình", "xem hình", "đồ thị", "biểu đồ", "minh họa"]):
+            while fig_idx < len(figures_sorted):
                 fig = figures_sorted[fig_idx]
-                tag = f"[BẢNG: {fig['name']}]" if fig['is_table'] else f"[HÌNH: {fig['name']}]"
-                processed_lines.append(tag)
-                used_figures.add(fig['name'])
+                if not fig['is_table'] and fig['name'] not in used_figures:
+                    tag = f"[HÌNH: {fig['name']}]"
+                    processed_lines.append(tag)
+                    used_figures.add(fig['name'])
+                    fig_idx += 1
+                    break
                 fig_idx += 1
+        i += 1
+
+    # Bước 2: Map các hình/bảng chưa gán vào ngay sau các dòng "Câu X." chưa có hình/bảng minh hoạ ngay sau
     for i, line in enumerate(processed_lines):
         if re.match(r"^Câu\s*\d+[\.\:]", line) and fig_idx < len(figures_sorted):
             next_line = processed_lines[i+1] if i+1 < len(processed_lines) else ""
@@ -231,6 +258,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
                     processed_lines.insert(i+1, tag)
                     used_figures.add(fig['name'])
                     fig_idx += 1
+
     return '\n'.join(processed_lines)
 
 # --------- Key Gemini -----------
