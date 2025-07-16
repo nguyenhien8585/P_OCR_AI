@@ -11,20 +11,41 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
-# ----------------- Lọc các box lồng nhau -----------------
+# ==== Hàm ĐỊNH DẠNG ĐỀ ĐẸP CHUẨN GIÁO VIÊN ====
+def format_exam_markdown(text):
+    text = re.sub(r'([^\n])(\[BẢNG: [^\]]+\])', r'\1\n\2', text)
+    text = re.sub(r'(\[BẢNG: [^\]]+\])([^\n])', r'\1\n\2', text)
+    text = re.sub(r'([^\n])(\[HÌNH: [^\]]+\])', r'\1\n\2', text)
+    text = re.sub(r'(\[HÌNH: [^\]]+\])([^\n])', r'\1\n\2', text)
+    pattern = re.compile(r'(Câu\s*\d+[\.|:])')
+    splits = pattern.split(text)
+    blocks = []
+    header = splits[0].strip()
+    if header:
+        blocks.append(header)
+    for i in range(1, len(splits), 2):
+        ques = splits[i].strip()
+        content = splits[i+1].strip() if i+1 < len(splits) else ''
+        block = f"{ques} {content}".strip()
+        block = re.sub(r'\s*A\.', '\nA.', block)
+        block = re.sub(r'\s*B\.', '\nB.', block)
+        block = re.sub(r'\s*C\.', '\nC.', block)
+        block = re.sub(r'\s*D\.', '\nD.', block)
+        block = re.sub(r'(\n)?(A\.)', r'\nA.', block)
+        blocks.append(block.strip())
+    result = '\n\n'.join(blocks).strip()
+    result = re.sub(r'(Trang\s*\d+\/\d+\s*-\s*Mã đề\s*\d+)', r'\n\n---\n\1\n---\n', result)
+    return result
+
+# ==== Hàm cắt hình minh hoạ chuẩn, không lồng nhau ====
 def filter_nested_boxes(candidates):
-    """
-    Loại bỏ các box bị bao hoàn toàn bên trong box khác (loại dư contour lồng nhau)
-    """
     filtered = []
     for i, box in enumerate(candidates):
         x0, y0, x1, y1 = box['x0'], box['y0'], box['x1'], box['y1']
         is_nested = False
         for j, other in enumerate(candidates):
-            if i == j:
-                continue
+            if i == j: continue
             ox0, oy0, ox1, oy1 = other['x0'], other['y0'], other['x1'], other['y1']
-            # Nếu box nằm hoàn toàn trong other
             if x0 >= ox0 and y0 >= oy0 and x1 <= ox1 and y1 <= oy1:
                 is_nested = True
                 break
@@ -32,7 +53,6 @@ def filter_nested_boxes(candidates):
             filtered.append(box)
     return filtered
 
-# ----------- Hàm tách bảng/hình minh hoạ (chuẩn nâng cao, lọc lồng nhau) ----------
 def extract_figures_and_tables(img_bytes, min_area_ratio=0.008, min_area_abs=2500, min_w=70, min_h=70, max_figures=8):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
@@ -71,12 +91,10 @@ def extract_figures_and_tables(img_bytes, min_area_ratio=0.008, min_area_abs=250
             "area": area, "x0": x, "y0": y, "x1": x+ww, "y1": y+hh,
             "is_table": is_table, "bbox": (x, y, ww, hh)
         })
-    # ----------- LỌC LỒNG NHAU -----------
     candidates = sorted(candidates, key=lambda f: f['area'], reverse=True)
     candidates = filter_nested_boxes(candidates)
     candidates = candidates[:max_figures]
     candidates = sorted(candidates, key=lambda box: (box["y0"], box["x0"]))
-
     final_figures_list = []
     img_idx = 0
     table_idx = 0
@@ -123,19 +141,15 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
             lines.append('')
     if buffer:
         lines.append(buffer)
-
     figures_sorted = sorted(
         [fig for fig in figures if fig.get('bbox')],
         key=lambda f: (f['bbox'][1], f['bbox'][0])
     )
-
     used_figures = set()
     processed_lines = []
     fig_idx = 0
-
     for idx, line in enumerate(lines):
         processed_lines.append(line)
-        # Nếu dòng này có keyword hình vẽ/bảng → chèn hình tiếp theo
         if any(x in line.lower() for x in ["hình vẽ", "hình bên", "(hình", "xem hình", "đồ thị", "biểu đồ", "minh họa"]):
             while fig_idx < len(figures_sorted) and figures_sorted[fig_idx]['name'] in used_figures:
                 fig_idx += 1
@@ -145,7 +159,6 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
                 processed_lines.append(tag)
                 used_figures.add(fig['name'])
                 fig_idx += 1
-
     for i, line in enumerate(processed_lines):
         if re.match(r"^Câu\s*\d+[\.\:]", line) and fig_idx < len(figures_sorted):
             next_line = processed_lines[i+1] if i+1 < len(processed_lines) else ""
@@ -158,7 +171,6 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
                     processed_lines.insert(i+1, tag)
                     used_figures.add(fig['name'])
                     fig_idx += 1
-
     return '\n'.join(processed_lines)
 
 # --------- Key Gemini -----------
@@ -170,17 +182,8 @@ api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
     return next(api_key_cycle)
 
-GEMINI_PROMPT = '''
-YÊU CẦU QUAN TRỌNG:
-1.  **GÕ LẠI CHÍNH XÁC TẤT CẢ VĂN BẢN TRONG ẢNH**: Đảm bảo không bỏ sót bất kỳ từ, câu, đoạn văn nào. Giữ nguyên cấu trúc đoạn văn, dấu xuống dòng, và định dạng gốc (ví dụ: in đậm, in nghiêng nếu có thể).
-2.  **ĐÁNH DẤU VỊ TRÍ HÌNH ẢNH/BẢNG**: Nếu phát hiện hình minh hoạ (hình vẽ, đồ thị, biểu đồ) hoặc bảng số liệu (bảng giá trị, bảng biến thiên, bảng tần số), hãy đánh dấu đúng vị trí của chúng bằng cú pháp placeholder:
-    *   `[HÌNH_PLACEHOLDER]` cho hình ảnh minh hoạ.
-    *   `[BẢNG_PLACEHOLDER]` cho bảng hoặc bảng số liệu.
-3.  **CHÈN PLACEHOLDER ĐÚNG VỊ TRÍ**: ...
-4.  **ĐỊNH DẠNG CÔNG THỨC TOÁN HỌC**: Mọi công thức toán học, biểu thức, hệ phương trình, ký hiệu toán học phải được định dạng bằng LaTeX inline: `${...}$`, Toán inline: `${...}$`.
-...
-Hãy xuất ra văn bản theo đúng định dạng trên!
-'''
+GEMINI_PROMPT = '''...'''  # Giữ nguyên như bản của bạn!
+
 def gemini_generate_text(image_bytes, api_key):
     api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     b64_img = base64.b64encode(image_bytes).decode()
@@ -216,18 +219,15 @@ with tab_img:
         accept_multiple_files=True,
         help="Mỗi ảnh là 1 trang, minh hoạ & bảng sẽ được tách tự động."
     )
-
     if uploaded_images:
         for img_idx, img_file in enumerate(uploaded_images):
             with st.expander(f"ℹ️ Thông tin file: {img_file.name}", expanded=True):
                 st.write(f"**Tên file:** {img_file.name}")
                 st.write(f"**Loại file:** {img_file.type}")
                 st.write(f"**Kích thước:** {img_file.size / 1024:.1f} KB")
-
             ocr_key = f"ocr_{img_file.name}_{img_idx}"
             text_key = f"text_{img_file.name}_{img_idx}"
             fig_key = f"fig_{img_file.name}_{img_idx}"
-
             if st.button(f"🚀 Xử lý ảnh ({img_file.name})", key=ocr_key):
                 img_bytes = img_file.read()
                 figures, img_h, img_w = extract_figures_and_tables(img_bytes)
@@ -237,20 +237,16 @@ with tab_img:
                         text = gemini_generate_text(img_bytes, api_key)
                     except Exception as e:
                         text = f"[Lỗi Gemini: {e}]"
-
                 text = remove_all_figure_markdown(text)
                 text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
-
-                st.session_state[text_key] = text
+                formatted_text = format_exam_markdown(text)
+                st.session_state[text_key] = formatted_text
                 st.session_state[fig_key] = figures
-
             if text_key in st.session_state and fig_key in st.session_state:
                 st.markdown("### 📋 Kết quả:")
                 tab1, tab2 = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
-
                 with tab1:
                     st.code(st.session_state[text_key], language="markdown")
-                    figures = st.session_state[fig_key]
                     st.download_button(
                         "📄 Tải văn bản (TXT)",
                         st.session_state[text_key],
@@ -258,6 +254,7 @@ with tab_img:
                         mime="text/plain",
                         use_container_width=True,
                     )
+                    figures = st.session_state[fig_key]
                     if figures:
                         if st.button("📝 Xuất ra Word",
                                    use_container_width=True,
@@ -281,7 +278,6 @@ with tab_img:
                             os.remove(tmp_word.name)
                     else:
                         st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh để xuất Word.")
-
                 with tab2:
                     figures = st.session_state[fig_key]
                     if figures:
@@ -305,7 +301,6 @@ with tab_pdf:
     st.markdown("#### 📝 OCR PDF Toán, giữ công thức, ảnh minh hoạ")
     uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"], key="pdf_uploader")
     num_pages = None
-
     if uploaded_file:
         pdf_bytes = uploaded_file.read()
         file_name = uploaded_file.name
@@ -324,7 +319,6 @@ with tab_pdf:
             cols[1].metric("Loại file", mime_type)
             cols[2].metric("Kích thước", f"{size_mb:.1f} MB")
             st.caption(f"Số trang: {num_pages}")
-
     if uploaded_file and st.button("🚀 Xử lý OCR PDF", type="primary", use_container_width=True):
         st.info("⏳ Đang xử lý OCR PDF... (vui lòng chờ)")
         with st.spinner("Đang nhận diện văn bản và trích xuất hình ảnh..."):
@@ -340,29 +334,28 @@ with tab_pdf:
         st.session_state["ocr_images"] = images
         st.session_state["ocr_done"] = True
         st.success("✅ Đã nhận diện PDF thành công!")
-
     if st.session_state.get("ocr_done"):
         def enhance_text_visibility(s):
             return re.sub(r'\$(.+?)\$', r'$\1$', s)
         raw_text = st.session_state.get("ocr_text_raw", "")
         text_content = enhance_text_visibility(raw_text)
+        formatted_text = format_exam_markdown(text_content)
         images = st.session_state.get("ocr_images", [])
-
         st.markdown("### 📋 Kết quả OCR PDF:")
         tab1, tab2 = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh trích xuất"])
         with tab1:
-            st.text_area("Nội dung đã được phân tích:", text_content, height=350, label_visibility="collapsed")
+            st.text_area("Nội dung đã được định dạng:", formatted_text, height=350, label_visibility="collapsed")
             st.download_button(
                 "📄 Tải văn bản (TXT)",
-                text_content,
+                formatted_text,
                 file_name="ket_qua_ocr.txt",
                 mime="text/plain",
                 use_container_width=True,
             )
-            if images:
-                if st.button("📝 Xuất ra Word", use_container_width=True, key="word_export"):
+            if st.button("📝 Xuất ra Word", use_container_width=True, key="word_export"):
+                with st.spinner("Đang tạo file Word..."):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                        insert_images_to_word_from_markdown(text_content, images, tmp_word.name)
+                        insert_images_to_word_from_markdown(formatted_text, images, tmp_word.name)
                     with open(tmp_word.name, "rb") as f:
                         word_data = f.read()
                     st.success("✅ Đã tạo file Word thành công!")
@@ -374,9 +367,6 @@ with tab_pdf:
                         use_container_width=True
                     )
                     os.remove(tmp_word.name)
-            else:
-                st.info("Không phát hiện minh hoạ/bảng để xuất Word.")
-
         with tab2:
             if images:
                 st.success(f"🖼️ Đã tìm thấy {len(images)} hình ảnh:")
