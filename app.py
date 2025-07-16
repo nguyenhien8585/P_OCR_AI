@@ -30,15 +30,37 @@ def merge_latex_blocks_multiline(text):
     return '\n'.join(new_lines)
 
 def merge_split_latex_blocks(text):
-    # Gom lại các block ${...}${...}$ liền nhau thành một block duy nhất nếu cùng dòng
+    """
+    Gộp các block ${...}${...}${...}$ liền nhau thành ${... ... ...}$
+    và xử lý cân bằng ngoặc cho các trường hợp bị thiếu.
+    """
+    # Gộp các block LaTeX bị chia nhỏ trên cùng một dòng
     def merge(match):
         g = match.group(0)
-        # loại bỏ dấu ${ và }$ giữa các block, chỉ giữ ${ ở đầu và }$ ở cuối
+        # loại bỏ tất cả ${ và }$ giữa các block
         inside = re.sub(r'(\$\{|\}\$)', '', g)
         return '${' + inside + '}$'
+    # Gộp mọi trường hợp từ 2 block trở lên liền kề thành 1 block
     text = re.sub(r'(\$\{[^\$]*\}\$){2,}', merge, text)
-
-    # Đặc biệt: Gom các block kiểu ${...}${...}${...}$ thành ${... ... ...}$
+    return text
+    
+def fix_unbalanced_brackets_in_latex(text):
+    """
+    Tự động bổ sung dấu ngoặc nhọn và ngoặc tròn còn thiếu trong các block ${...}$
+    """
+    def balance_block(match):
+        content = match.group(1)
+        # Đếm số ngoặc mở/đóng
+        count_curly_open = content.count('{')
+        count_curly_close = content.count('}')
+        count_paren_open = content.count('(')
+        count_paren_close = content.count(')')
+        # Bổ sung cho đủ
+        content += '}' * (count_curly_open - count_curly_close)
+        content += ')' * (count_paren_open - count_paren_close)
+        return '${' + content + '}$'
+    # Chỉ xử lý các block ${...}$
+    text = re.sub(r'\$\{([^$]+?)\}\$', balance_block, text)
     return text
 
 def markdown_image_to_hinh_tag(text):
@@ -502,6 +524,7 @@ with tab_pdf:
         text_content = merge_split_latex_blocks(text_content)
         text_content = merge_latex_blocks_multiline(text_content)
         text_content = markdown_image_to_hinh_tag(text_content)  # <-- CHUYỂN MARKDOWN ẢNH thành TAG [HÌNH: ...]
+        text_content = fix_unbalanced_brackets_in_latex(text_content)
         images = st.session_state.get("ocr_images", [])
         tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
         with tab1:
