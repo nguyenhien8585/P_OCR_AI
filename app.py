@@ -13,28 +13,57 @@ from word_export import insert_images_to_word_from_markdown
 
 # ======================== CHUẨN HÓA TOÁN HỌC ========================
 def normalize_math_latex(text):
-    """
-    Chuyển toàn bộ $...$ hoặc \( ... \) thành ${...}$, loại bỏ ký tự thừa như }$ hoặc ${ nếu OCR sinh ra.
-    """
-    # Bước 1: Loại bỏ các ký tự thừa }$ hoặc ${ quanh công thức
-    text = re.sub(r'\}\$(.+?)\$\{', lambda m: f"${{{m.group(1).strip()}}}$", text)
-    text = re.sub(r'\}\$(.+?)\$', lambda m: f"${{{m.group(1).strip()}}}$", text)
-    text = re.sub(r'\$(.+?)\$\{', lambda m: f"${{{m.group(1).strip()}}}$", text)
-    # Bước 2: Loại bỏ các ký tự thừa lẻ
-    text = re.sub(r'\}\$(.+?)\$', lambda m: f"${{{m.group(1).strip()}}}$", text)
-    text = re.sub(r'\$(.+?)\$\{', lambda m: f"${{{m.group(1).strip()}}}$", text)
-    # Bước 3: Đổi tất cả $...$ mà chưa phải ${...}$ thành ${...}$
-    def repl(m):
-        content = m.group(1)
-        # Nếu đã có { ở đầu và } ở cuối thì để nguyên
-        if content.strip().startswith("{") and content.strip().endswith("}"):
-            return f"${content}$"
-        return f"${{{content.strip()}}}$"
-    text = re.sub(r'\$(?!\{)([^\$]+?)\$', repl, text)
-    # Bước 4: Đổi \( ... \) sang ${...}$
-    text = re.sub(r"\\\((.+?)\\\)", lambda m: "${" + m.group(1).strip() + "}$", text)
-    # Loại bỏ dấu }{ thừa nếu còn
-    text = re.sub(r'\}\{', '', text)
+    # B1: Gom các đoạn bị chia nhỏ thành dạng ${...}$
+    text = re.sub(r'\}\$\{', '', text)     # Xóa cặp thừa
+    text = re.sub(r'\$\{', '${', text)     # Giữ lại mở chuẩn
+    text = re.sub(r'\}\$', '}$', text)     # Giữ lại đóng chuẩn
+
+    # B2: Gom nhiều dấu ${...}${...}$ về thành ${...}$
+    text = re.sub(r'\$\{([^\$]*)\}\$\{([^\$]*)\}\$', lambda m: '${' + m.group(1) + m.group(2) + '}$', text)
+
+    # B3: Với trường hợp ...${abc${def} ghi thành ${abcdef}$
+    def merge_nested(match):
+        g = match.group(0)
+        g = g.replace('${', '').replace('}$', '')
+        return '${' + g.replace('}{', '') + '}$'
+    text = re.sub(r'(\$\{[^\$]*\}\$)+', merge_nested, text)
+
+    # B4: Đổi mọi xuất hiện của log${...}${x hoặc sin${...}${x... về ${\log_{...} x}$
+    text = re.sub(r'([a-zA-Z]+)\$\{([^\}]*)\}\$\{?([a-zA-Z0-9\\\^\_\{\}\(\)\[\]\s]+)\}?', lambda m: '${\\' + m.group(1) + '_{' + m.group(2) + '} ' + m.group(3).strip() + '}$', text)
+
+    # B5: Sửa lỗi ${{{...}$ hoặc ${{...}$ thành ${...}$ (xóa ngoặc thừa)
+    text = re.sub(r'\$\{{2,}', '${', text)
+    text = re.sub(r'\}{2,}\$', '}$', text)
+
+    # B6: Với các đoạn bị tách: ...}$...${..., nối lại thành ${...}$
+    text = re.sub(r'\}\$[\.\s]*\$\{', '', text)
+
+    # B7: Đảm bảo chỉ còn đúng cú pháp ${...}$ cho tất cả
+    # Đổi các $...$ còn sót thành ${...}$
+    text = re.sub(r'\$(?!\{)([^\$]+?)\$', lambda m: '${' + m.group(1).strip() + '}$', text)
+
+    # Loại dấu ngoặc lẻ đầu/ cuối
+    text = re.sub(r'(^|\s)[\}\{]+', r'\1', text)
+    text = re.sub(r'[\}\{]+(\s|$)', r'\1', text)
+
+    # B8: Đổi các đoạn kiểu ...${abc}$...${def}$... thành ...${abc def}$...
+    def merge_multiple_formulae(text):
+        # Nối liền 2 công thức cạnh nhau
+        while True:
+            new_text = re.sub(r'\}\$\s*\$\{', ' ', text)
+            if new_text == text:
+                break
+            text = new_text
+        return text
+
+    text = merge_multiple_formulae(text)
+
+    # B9: Loại bỏ dấu thừa giữa chữ và ${ hoặc }$
+    text = re.sub(r'([a-zA-Z0-9])\s*\$\{', r' ${', text)
+    text = re.sub(r'\}\$\s*([a-zA-Z0-9])', r'}$ \1', text)
+
+    # B10: Loại bỏ mọi ${ hoặc }$ đơn lẻ không có nội dung (rất hiếm)
+    text = re.sub(r'\$\{\s*\}\$', '', text)
     return text
 
 # ======================= ĐỊNH DẠNG ĐỀ THI CHUẨN GIÁO VIÊN =======================
