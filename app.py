@@ -265,8 +265,9 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
 
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
-    "YOUR_GEMINI_KEY_1",
-    "YOUR_GEMINI_KEY_2"
+    "AIzaSyDzaTupNVfuFEQ0l6eAavUBkSbEpDL-vN4",
+    "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
+    "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
 ]
 api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
@@ -274,11 +275,20 @@ def get_next_api_key():
 
 GEMINI_PROMPT = '''
 YÊU CẦU QUAN TRỌNG:
-1.  GÕ LẠI CHÍNH XÁC TẤT CẢ VĂN BẢN TRONG ẢNH: ...
-2.  ĐÁNH DẤU VỊ TRÍ HÌNH ẢNH/BẢNG ...
-3.  ...
+1.  GÕ LẠI CHÍNH XÁC TẤT CẢ VĂN BẢN TRONG ẢNH: Đảm bảo không bỏ sót bất kỳ từ, câu, đoạn văn nào. Giữ nguyên cấu trúc đoạn văn, dấu xuống dòng, và định dạng gốc (ví dụ: in đậm, in nghiêng nếu có thể).
+2.  ĐÁNH DẤU VỊ TRÍ HÌNH ẢNH/BẢNG: Nếu phát hiện hình minh hoạ (hình vẽ, đồ thị, biểu đồ) hoặc bảng số liệu (bảng giá trị, bảng biến thiên, bảng tần số), hãy đánh dấu đúng vị trí của chúng bằng cú pháp placeholder:
+    *   [HÌNH_PLACEHOLDER] cho hình ảnh minh hoạ.
+    *   [BẢNG_PLACEHOLDER] cho bảng hoặc bảng số liệu.
+3.  CHÈN PLACEHOLDER ĐÚNG VỊ TRÍ: Với mỗi placeholder, hãy chèn ngay sau dòng mô tả có các cụm từ như: "xem hình dưới", "hình dưới đây", "bảng biến thiên", "bảng tần số", "bảng giá trị", "hình vẽ", "biểu đồ", "như hình vẽ", "thống kê lại ở bảng", hoặc ngay sau dòng câu hỏi liên quan trực tiếp tới hình/bảng/biểu đồ đó. Nếu không có từ khóa, hãy chèn vào vị trí logic nhất trong đoạn văn bản liên quan.
 4.  ĐỊNH DẠNG CÔNG THỨC TOÁN HỌC: Mọi công thức toán học, biểu thức, hệ phương trình, ký hiệu toán học phải được định dạng bằng LaTeX inline: ${...}$, nếu có hệ phương trình, ghi đúng cú pháp ${\begin{cases} ... \end{cases}}$.
-5.  ...
+5.  CHUYỂN BẢNG SỐ LIỆU SANG MARKDOWN: Nếu phát hiện bảng số liệu, hãy chuyển đổi chúng thành định dạng bảng Markdown nếu có thể.
+6.  ĐỊNH DẠNG CÂU HỎI: Tuân thủ nghiêm ngặt các định dạng sau cho từng loại câu hỏi:
+    1.  Trắc nghiệm 4 phương án: mỗi lựa chọn trên dòng riêng.
+    2.  Đúng/Sai: cuối cùng là 2 lựa chọn trên 2 dòng riêng.
+    3.  Trả lời ngắn: Trả lời: ________
+    4.  Tự luận: nguyên câu hỏi.
+
+LƯU Ý: KHÔNG BỎ SÓT NỘI DUNG, KHÔNG ĐƯỢC SỬA ĐỔI, CHỈ GÕ LẠI CHÍNH XÁC.
 '''
 
 def gemini_generate_text(image_bytes, api_key):
