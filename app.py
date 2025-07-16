@@ -13,32 +13,42 @@ from word_export import insert_images_to_word_from_markdown
 
 import re
 
-def fix_close_brace_latex(text):
-    # 1. Thêm dấu } bị thiếu cho các biểu thức kiểu ${...$ hoặc ${...}$
-    # a. Tìm công thức có dạng thiếu dấu } cuối (như log_{\sqrt{2}-1 x}$)
-    text = re.sub(
-        r'(\$\{[^{}]*_[^{}]*[a-zA-Z0-9\\]+)\}\$',
-        lambda m: m.group(1) + '}' + '}$' if m.group(1).count('{') > m.group(1).count('}') else m.group(0),
-        text
-    )
-    # b. Với trường hợp ${...$ thiếu } tận cuối dòng hoặc trước dấu chấm
-    text = re.sub(
-        r'(\$\{[^{}]+)(\$\s*[\.\,\?\!\)]*)',
-        lambda m: m.group(1) + '}' + m.group(2) if m.group(1).count('{') > m.group(1).count('}') else m.group(0),
-        text
-    )
-    # 2. Sửa lỗi thừa dấu ngoặc tròn
-    # ${\overrightarrow{n} = ((1;-1;0)}$ => ${\overrightarrow{n} = (1;-1;0)}$
-    text = re.sub(
-        r'\\overrightarrow\{([a-zA-Z])\}\s*=\s*\(\(([^\)]*)\)\)',  # 2 ngoặc (
-        r'\\overrightarrow{\1} = (\2)',
-        text
-    )
-    text = re.sub(
-        r'\\overrightarrow\{([a-zA-Z])\}\s*=\s*\((\([^\)]*\))\)',  # 1 ngoặc ( dư trong
-        r'\\overrightarrow{\1} = \2',
-        text
-    )
+def fix_braces_and_parens_latex(text):
+    """
+    Sửa triệt để mọi lỗi thiếu/thừa dấu } trong ${...}$ và lỗi thừa ngoặc tròn, kể cả lồng nhau.
+    - Tự động đếm { và } để bổ sung dấu thiếu, loại bỏ thừa ngoặc tròn nếu cần.
+    - Đảm bảo luôn kết thúc bằng ...}$
+    """
+    def fix_block(m):
+        formula = m.group(1)
+        # 1. Loại bỏ ngoặc tròn lồng dư: ((...)) -> (...)
+        formula = re.sub(r'\(\(([^()]*)\)\)', r'(\1)', formula)
+        formula = re.sub(r'\(\(([^()]*)\)', r'(\1', formula)
+        formula = re.sub(r'\(([^()]*)\)\)', r'(\1)', formula)
+        # 2. Bổ sung ngoặc nhọn nếu thiếu
+        open_brace = formula.count('{')
+        close_brace = formula.count('}')
+        if open_brace > close_brace:
+            formula += '}' * (open_brace - close_brace)
+        elif close_brace > open_brace:
+            formula = '{' * (close_brace - open_brace) + formula
+        # 3. Nếu còn trường hợp log_{...x} (thiếu ngoặc cho base)
+        formula = re.sub(
+            r'(log|sin|cos|tan|cot|sec|csc)_\{([^\{\}]+) ([a-zA-Z0-9\\\^\_\(\)\[\]\s]+)\}',
+            lambda m: f'{m.group(1)}_{{{m.group(2)}}} {m.group(3)}',
+            formula
+        )
+        # 4. Sửa tích phân: \int_{1}^{2 (2+f} (x))\, dx -> \int_{1}^{2} (2+f(x))\, dx
+        formula = re.sub(
+            r'(\\int\s*_\{[^\}]+\}\^\{[^\}\)]+)\s*\(([^)]+)\)\)\,',
+            lambda m: re.sub(r'\(.*', '', m.group(1)) + '} (' + m.group(2).replace('{', '').replace('}', '') + ')\,',
+            formula
+        )
+        # 5. Đảm bảo không kết thúc thiếu } trước $
+        return '${' + formula.rstrip('}') + '}$'
+
+    # Sửa TẤT CẢ các block ${...}$
+    text = re.sub(r'\$\{([^\$]+?)\}\$', fix_block, text)
     return text
 
 def fix_log_base_brace(text):
@@ -492,7 +502,7 @@ with tab_img:
                 text = fix_vector_notation(text)
                 text = fix_log_base_brace(text) 
                 text = fix_integral_brace(text)
-                text = fix_close_brace_latex(text) 
+                text = fix_braces_and_parens_latex(text)
                 text = remove_all_figure_markdown(text)
                 text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
                 formatted_text = format_exam_markdown(text)
