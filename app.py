@@ -426,7 +426,7 @@ def get_next_api_key():
 
 GEMINI_PROMPT = '''
 YÊU CẦU QUAN TRỌNG:
-1.  GÕ LẠI CHÍNH XÁC TẤT CẢ VĂN BẢN TRONG ẢNH: Đảm bảo không bỏ sót bất kỳ từ, câu, đoạn văn nào. Giữ nguyên cấu trúc đoạn văn, dấu xuống dòng, và định dạng gốc (ví dụ: in đậm, in nghiêng nếu có thể).
+1.  GÕ LẠI CHÍNH XÁC TẤT CẢ VĂN BẢN TRONG ẢNH: Tuyệt đối không bỏ sót bất kỳ từ, câu, đoạn văn nào. Giữ nguyên cấu trúc đoạn văn, dấu xuống dòng, và định dạng gốc (ví dụ: in đậm, in nghiêng nếu có thể).
 2.  ĐÁNH DẤU VỊ TRÍ HÌNH ẢNH/BẢNG: Nếu phát hiện hình minh hoạ (hình vẽ, đồ thị, biểu đồ) hoặc bảng số liệu (bảng giá trị, bảng biến thiên, bảng tần số), hãy đánh dấu đúng vị trí của chúng bằng cú pháp placeholder:
     *   [HÌNH_PLACEHOLDER] cho hình ảnh minh hoạ.
     *   [BẢNG_PLACEHOLDER] cho bảng hoặc bảng số liệu.
