@@ -200,6 +200,7 @@ def find_best_insert_position(lines, is_table):
     return None
 
 
+
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
     "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
