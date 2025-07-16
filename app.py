@@ -12,35 +12,9 @@ from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
 
-def replace_placeholders(text, images):
-    img_idx = 0
-    table_idx = 0
-    def repl(match):
-        nonlocal img_idx, table_idx
-        if match.group(0) == "[HÌNH_PLACEHOLDER]":
-            # Dò đến ảnh chưa dùng
-            while img_idx < len(images):
-                if not images[img_idx]["is_table"]:
-                    name = f"img-{img_idx}.jpeg"
-                    img_idx += 1
-                    return f"[HÌNH: {name}]"
-                img_idx += 1
-            name = f"img-{img_idx}.jpeg"
-            img_idx += 1
-            return f"[HÌNH: {name}]"
-        elif match.group(0) == "[BẢNG_PLACEHOLDER]":
-            while table_idx < len(images):
-                if images[table_idx]["is_table"]:
-                    name = f"table-{table_idx}.jpeg"
-                    table_idx += 1
-                    return f"[BẢNG: {name}]"
-                table_idx += 1
-            name = f"table-{table_idx}.jpeg"
-            table_idx += 1
-            return f"[BẢNG: {name}]"
-        else:
-            return match.group(0)
-    return re.sub(r"\[HÌNH_PLACEHOLDER\]|\[BẢNG_PLACEHOLDER\]", repl, text)
+def markdown_image_to_hinh_tag(text):
+    # Chuyển ![img-0.jpeg](img-0.jpeg) thành [HÌNH: img-0.jpeg]
+    return re.sub(r'!\[.*?\]\((img-\d+\.jpeg)\)', r'[HÌNH: \1]', text)
 # ==================== CHUẨN HÓA LaTeX TOÁN ====================
 def fix_missing_backslash_cases(text):
     # Thêm \ vào begincases, endcases nếu thiếu (cho hệ phương trình)
@@ -474,6 +448,7 @@ with tab_pdf:
             cols[1].metric("Loại file", mime_type)
             cols[2].metric("Kích thước", f"{size_mb:.1f} MB")
             st.caption(f"Số trang: {num_pages}")
+
     if uploaded_file and st.button("🚀 Xử lý OCR PDF", type="primary", use_container_width=True):
         st.info("⏳ Đang xử lý OCR PDF... (vui lòng chờ)")
         with st.spinner("Đang nhận diện văn bản và trích xuất hình ảnh..."):
@@ -489,14 +464,12 @@ with tab_pdf:
         st.session_state["ocr_images"] = images
         st.session_state["ocr_done"] = True
         st.success("✅ Đã nhận diện PDF thành công!")
+
     if st.session_state.get("ocr_done"):
         raw_text = st.session_state.get("ocr_text_raw", "")
+        text_content = normalize_math_latex(raw_text)
+        text_content = markdown_image_to_hinh_tag(text_content)  # <-- CHUYỂN MARKDOWN ẢNH thành TAG [HÌNH: ...]
         images = st.session_state.get("ocr_images", [])
-
-        # -- Chèn đúng placeholder hình và bảng --
-        replaced_text = replace_placeholders(raw_text, images)
-        text_content = normalize_math_latex(replaced_text)   # CHUẨN HÓA TOÁN
-
         tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
         with tab1:
             st.markdown("#### 📋 Kết quả OCR PDF:")
@@ -548,6 +521,7 @@ with tab_pdf:
                 st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
     st.markdown("---")
     st.caption("✨ Hệ thống sử dụng AI nâng cao để nhận diện chính xác văn bản toán học và tự động mapping hình ảnh/bảng vào đúng vị trí")
+
 
 if st.sidebar.checkbox("ℹ️ Hiển thị thông tin kỹ thuật"):
     st.sidebar.write("**Phiên bản:** 1.5.0")
