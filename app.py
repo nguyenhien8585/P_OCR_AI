@@ -13,59 +13,40 @@ from word_export import insert_images_to_word_from_markdown
 
 
 def fix_latex_block_parentheses(text):
-    # Sửa lỗi khối ngoặc trái/phải không khớp và gộp lại thành đúng block
-    # 1. Các trường hợp ...B^{\prime C\right)... => B^{\prime} C\right)
+    import re
+    # 1. Sửa các block có ^{prime ... bị thiếu ngoặc hoặc toán tử bị dính vào
+    # Trường hợp ${A^{\prime C^{\prime \perp B D}}}$ => ${A^{\prime} C^{\prime} \perp B D}$
     text = re.sub(
-        r'([A-Za-z])\^\{\\prime ([A-Za-z])\\right\)', 
-        r'\1^{\prime} \2\\right)', text
+        r'([A-Za-z])\^\{\\prime ([A-Za-z])\^\{\\prime \\perp ([A-Za-z]) ([A-Za-z])\}',
+        lambda m: f"{m.group(1)}^{{\\prime}} {m.group(2)}^{{\\prime}} \\perp {m.group(3)} {m.group(4)}", text
     )
-    # 2. Trường hợp chỉ số mũ chưa đóng ngoặc: B^{\prime C  => B^{\prime} C
+    # Trường hợp ${A^{\prime C^{\prime ...}$ => ${A^{\prime} C^{\prime} ...}$
     text = re.sub(
-        r'([A-Za-z])\^\{\\prime ([A-Za-z])', 
-        r'\1^{\prime} \2', text
+        r'([A-Za-z])\^\{\\prime ([A-Za-z])\^\{\\prime',
+        lambda m: f"{m.group(1)}^{{\\prime}} {m.group(2)}^{{\\prime}}", text
     )
-    # 3. Trường hợp thiếu ngoặc { ... }: A^{\prime C^{\prime ... => A^{\prime} C^{\prime} ...
+    # Trường hợp ${B C^{\prime \perp A^{\prime D}}}$ => ${B C^{\prime} \perp A^{\prime} D}$
     text = re.sub(
-        r'([A-Za-z])\^\{\\prime ([A-Za-z])\^\{\\prime', 
-        r'\1^{\prime} \2^{\prime}', text
+        r'([A-Za-z]) ([A-Za-z])\^\{\\prime \\perp ([A-Za-z])\^\{\\prime ([A-Za-z])\}',
+        lambda m: f"{m.group(1)} {m.group(2)}^{{\\prime}} \\perp {m.group(3)}^{{\\prime}} {m.group(4)}", text
     )
-    # 4. Trường hợp bị chèn toán tử vào trong block:  ...C^{\prime \perp B D} => C^{\prime} \perp B D
+    # Trường hợp ${A^{\prime C^{\prime \perp B D}}}$ => ${A^{\prime} C^{\prime} \perp B D}$
     text = re.sub(
-        r'([A-Za-z])\^\{\\prime \\perp ([A-Za-z]) ([A-Za-z])\}', 
-        r'\1^{\prime} \\perp \2 \3', text
+        r'([A-Za-z])\^\{\\prime ([A-Za-z])\^\{\\prime \\perp ([A-Za-z]) ([A-Za-z])\}',
+        lambda m: f"{m.group(1)}^{{\\prime}} {m.group(2)}^{{\\prime}} \\perp {m.group(3)} {m.group(4)}", text
     )
-    # 5. Trường hợp ...C^{\prime \perp B D\} => C^{\prime} \perp B D
+    # Trường hợp ${A^{\prime C^{\prime}}}$ => ${A^{\prime} C^{\prime}}$
     text = re.sub(
-        r'([A-Za-z])\^\{\\prime \\perp ([A-Za-z]) ([A-Za-z])\\\}', 
-        r'\1^{\prime} \\perp \2 \3', text
+        r'([A-Za-z])\^\{\\prime ([A-Za-z])\^\{\\prime\}',
+        lambda m: f"{m.group(1)}^{{\\prime}} {m.group(2)}^{{\\prime}}", text
     )
-    # 6. Gộp lại các block bị lỗi }$
+    # Trường hợp \left(... B^{\prime} C\right)
     text = re.sub(
-        r'\}\}\$\$', '}}$', text
+        r'\\left\(([A-Za-z] [A-Za-z]\^\{\\prime\}, [A-Za-z]\^\{\\prime\} [A-Za-z])\\right\)=90\^\{\\circ\}',
+        lambda m: f"\\left({m.group(1)}\\right)=90^{{\\circ}}", text
     )
-    # 7. Gộp lại các block ${...}}$ thành ${...}$
-    text = re.sub(
-        r'\}\}\$', '}$', text
-    )
-    # 8. Sửa lỗi \left(... B^{\prime} C\right) ... = ... thành đúng block
-    text = re.sub(
-        r'\\left\(([A-Za-z] [A-Za-z]\^\{\\prime\}, [A-Za-z]\^\{\\prime\} [A-Za-z])\\right\)=90\^\{\\circ\}\}\}', 
-        r'\\left(\1\\right)=90^{\circ}}', text
-    )
-    # 9. Sửa các block }}}$ dư ngoặc
-    text = re.sub(
-        r'\}{2,}\$', '}$', text
-    )
-    # 10. Sửa lại các block ${A^{\prime C^{\prime \perp B D}}}$ => ${A^{\prime} C^{\prime} \perp B D}$
-    text = re.sub(
-        r'\$\{([A-Za-z])\^\{\\prime ([A-Za-z])\^\{\\prime \\perp ([A-Za-z]) ([A-Za-z])\}\}\$', 
-        r'${\1^{\prime} \2^{\prime} \perp \3 \4}$', text
-    )
-    # 11. Sửa các block kiểu ${B C^{\prime \perp A^{\prime D}}}$ thành ${B C^{\prime} \perp A^{\prime} D}$
-    text = re.sub(
-        r'\$\{([A-Za-z]) ([A-Za-z])\^\{\\prime \\perp ([A-Za-z])\^\{\\prime ([A-Za-z])\}\}\$', 
-        r'${\1 \2^{\prime} \perp \3^{\prime} \4}$', text
-    )
+    # Bỏ các ngoặc thừa }}$
+    text = re.sub(r'\}{2,}\$', '}$', text)
     return text
 
 def fix_latex_super_sub_blocks(text):
