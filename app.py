@@ -122,21 +122,19 @@ def remove_all_figure_markdown(text):
 
 # -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
 def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
-    # Từ khóa cho hình ảnh và bảng
+    # Từ khóa
     MATH_IMAGE_KEYWORDS = [
         "hình vẽ", "như hình", "theo hình", "hình bên", 
         "đồ thị", "biểu đồ", "sơ đồ", "hình minh họa"
     ]
-    
     MATH_TABLE_KEYWORDS = [
         "bảng biến thiên", "bảng giá trị", "bảng tần số", 
         "bảng xét dấu", "bảng số liệu"
     ]
-    
     lines = []
     buffer = ""
-    
-    # Bước 1: Phân đoạn văn bản
+
+    # Phân đoạn
     for line in text.split('\n'):
         stripped_line = line.strip()
         if stripped_line:
@@ -145,58 +143,63 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
             if buffer:
                 lines.append(buffer)
                 buffer = ""
-            lines.append('')  # Giữ lại dòng trống
-            
+            lines.append('')  # giữ dòng trống
     if buffer:
         lines.append(buffer)
-    
-    # Bước 2: Sắp xếp hình ảnh theo vị trí từ trên xuống
+
+    # Sắp xếp hình/bảng
     figures_sorted = sorted(
         [fig for fig in figures if fig.get('bbox')],
         key=lambda f: (f['bbox'][1], f['bbox'][0])
     )
-    
-    # Bước 3: Ánh xạ hình ảnh vào các đoạn văn phù hợp
+
     processed_lines = []
     used_figures = set()
-    
+
+    # Helper: kiểm tra dòng có chứa bảng markdown/công thức hay không
+    def is_markdown_table_or_formula(line):
+        return "|" in line or "$" in line
+
     for i, para in enumerate(lines):
-        if not para:  # Dòng trống
+        if not para:
             processed_lines.append('')
             continue
-            
+
+        # Kiểm tra từ khóa, ưu tiên đoạn chỉ chứa từ khóa hoặc kết thúc bằng từ khóa
+        para_lower = para.lower()
+        is_shape = any(keyword in para_lower for keyword in MATH_IMAGE_KEYWORDS)
+        is_table = any(keyword in para_lower for keyword in MATH_TABLE_KEYWORDS)
+        is_good_position = False
+
+        # Ưu tiên: từ khóa ở cuối dòng hoặc là cả dòng
+        for kw in MATH_IMAGE_KEYWORDS + MATH_TABLE_KEYWORDS:
+            if para_lower.rstrip().endswith(kw) or para_lower == kw:
+                is_good_position = True
+                break
+
         processed_lines.append(para)
-        
-        # Kiểm tra xem đoạn này có chứa từ khóa không
-        is_shape = any(keyword in para.lower() for keyword in MATH_IMAGE_KEYWORDS)
-        is_table = any(keyword in para.lower() for keyword in MATH_TABLE_KEYWORDS)
-        
-        if is_shape or is_table:
-            # Tìm hình ảnh chưa dùng phù hợp
+        if (is_shape or is_table) and is_good_position and not is_markdown_table_or_formula(para):
+            # Tìm hình phù hợp, chưa dùng
             for fig in figures_sorted:
                 if fig['name'] in used_figures:
                     continue
-                    
-                # Kiểm tra loại hình ảnh phù hợp với từ khóa
                 if (fig['is_table'] and is_table) or (not fig['is_table'] and is_shape):
                     tag = f"[BẢNG: {fig['name']}]" if fig['is_table'] else f"[HÌNH: {fig['name']}]"
                     processed_lines.append(tag)
                     used_figures.add(fig['name'])
                     break
-    
-    # Bước 4: Xử lý các hình ảnh còn lại
+
+    # Chèn các hình/bảng còn lại vào trước các dòng trống cuối (không chèn cuối file)
     remaining_figs = [fig for fig in figures_sorted if fig['name'] not in used_figures]
     if remaining_figs:
-        # Tìm vị trí chèn phù hợp (tránh cuối tài liệu)
         insert_pos = len(processed_lines) - 1
         while insert_pos > 0 and not processed_lines[insert_pos].strip():
             insert_pos -= 1
-        
-        # Chèn vào vị trí tốt nhất
         for fig in remaining_figs:
             tag = f"[BẢNG: {fig['name']}]" if fig['is_table'] else f"[HÌNH: {fig['name']}]"
             processed_lines.insert(insert_pos + 1, tag)
-    
+            insert_pos += 1
+
     return '\n'.join(processed_lines)
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
