@@ -13,6 +13,23 @@ from word_export import insert_images_to_word_from_markdown
 
 import re
 
+def fix_unbalanced_brackets_in_latex(text):
+    """
+    Kiểm tra các block ${...$ thiếu ngoặc đóng } và tự động thêm vào trước dấu $
+    """
+    def fix_block(match):
+        content = match.group(1)
+        # Nếu số lượng { nhiều hơn }, thì bổ sung thêm } cho đủ
+        n_open = content.count('{')
+        n_close = content.count('}')
+        if n_open > n_close:
+            # Bổ sung } cho đủ
+            content = content + '}' * (n_open - n_close)
+        return '${' + content + '}$'
+    # Chỉ bắt các block kiểu ${...$ (không có } trước $)
+    text = re.sub(r'\$\{([^\}$]+)\$', fix_block, text)
+    return text
+
 def fix_latex_block_errors(text):
     """
     Sửa các lỗi block LaTeX hay gặp: thiếu/dư dấu ngoặc, dấu ^{\\prime}, chèn sai vị trí, lỗi ký hiệu toán học khi OCR.
@@ -202,25 +219,6 @@ def merge_split_latex_blocks(text):
     text = re.sub(r"\$\{([^\}]+)\}$", fix_block, text)
     return text
     
-def fix_unbalanced_brackets_in_latex(text):
-    """
-    Tự động bổ sung dấu ngoặc nhọn và ngoặc tròn còn thiếu trong các block ${...}$
-    """
-    def balance_block(match):
-        content = match.group(1)
-        # Đếm số ngoặc mở/đóng
-        count_curly_open = content.count('{')
-        count_curly_close = content.count('}')
-        count_paren_open = content.count('(')
-        count_paren_close = content.count(')')
-        # Bổ sung cho đủ
-        content += '}' * (count_curly_open - count_curly_close)
-        content += ')' * (count_paren_open - count_paren_close)
-        return '${' + content + '}$'
-    # Chỉ xử lý các block ${...}$
-    text = re.sub(r'\$\{([^$]+?)\}\$', balance_block, text)
-    return text
-
 def markdown_image_to_hinh_tag(text):
     # Chuyển ![img-0.jpeg](img-0.jpeg) thành [HÌNH: img-0.jpeg]
     return re.sub(r'!\[.*?\]\((img-\d+\.jpeg)\)', r'[HÌNH: \1]', text)
