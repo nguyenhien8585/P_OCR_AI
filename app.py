@@ -274,20 +274,32 @@ def get_next_api_key():
 
 GEMINI_PROMPT = '''
 YÊU CẦU QUAN TRỌNG:
-1.  GÕ LẠI CHÍNH XÁC TẤT CẢ VĂN BẢN TRONG ẢNH: Tuyệt đối không bỏ sót bất kỳ từ, câu, đoạn văn nào. Giữ nguyên cấu trúc đoạn văn, dấu xuống dòng, và định dạng gốc (ví dụ: in đậm, in nghiêng nếu có thể).
-2.  ĐÁNH DẤU VỊ TRÍ HÌNH ẢNH/BẢNG: Nếu phát hiện hình minh hoạ (hình vẽ, đồ thị, biểu đồ) hoặc bảng số liệu (bảng giá trị, bảng biến thiên, bảng tần số), hãy đánh dấu đúng vị trí của chúng bằng cú pháp placeholder:
-    *   [HÌNH_PLACEHOLDER] cho hình ảnh minh hoạ.
-    *   [BẢNG_PLACEHOLDER] cho bảng hoặc bảng số liệu.
-3.  CHÈN PLACEHOLDER ĐÚNG VỊ TRÍ: Với mỗi placeholder, hãy chèn ngay sau dòng mô tả có các cụm từ như: "xem hình dưới", "hình dưới đây", "bảng biến thiên", "bảng tần số", "bảng giá trị", "hình vẽ", "biểu đồ", "như hình vẽ", "thống kê lại ở bảng", hoặc ngay sau dòng câu hỏi liên quan trực tiếp tới hình/bảng/biểu đồ đó. Nếu không có từ khóa, hãy chèn vào vị trí logic nhất trong đoạn văn bản liên quan.
-4.  ĐỊNH DẠNG CÔNG THỨC TOÁN HỌC: Mọi công thức toán học, biểu thức, hệ phương trình, ký hiệu toán học phải được định dạng bằng LaTeX inline: ${...}$, nếu có hệ phương trình, ghi đúng cú pháp ${\begin{cases} ... \end{cases}}$.
-5.  CHUYỂN BẢNG SỐ LIỆU SANG MARKDOWN: Nếu phát hiện bảng số liệu, hãy chuyển đổi chúng thành định dạng bảng Markdown nếu có thể.
-6.  ĐỊNH DẠNG CÂU HỎI: Tuân thủ nghiêm ngặt các định dạng sau cho từng loại câu hỏi:
-    1.  Trắc nghiệm 4 phương án: mỗi lựa chọn trên dòng riêng.
-    2.  Đúng/Sai: cuối cùng là 2 lựa chọn trên 2 dòng riêng.
-    3.  Trả lời ngắn: Trả lời: ________
-    4.  Tự luận: nguyên câu hỏi.
+1. GÕ LẠI CHÍNH XÁC:
+- Gõ lại toàn bộ văn bản trong ảnh, không bỏ sót từ, câu, đoạn nào.
+- Giữ nguyên cấu trúc xuống dòng, in đậm, in nghiêng (nếu có thể).
+2. ĐÁNH DẤU HÌNH/BẢNG:
+- Nếu có hình minh hoạ, ghi [HÌNH_PLACEHOLDER].
+- Nếu có bảng số liệu, ghi [BẢNG_PLACEHOLDER].
+3. VỊ TRÍ PLACEHOLDER:
+- Chèn placeholder ngay sau dòng có từ khóa (ví dụ: "xem hình dưới", "bảng số liệu", "bảng biến thiên", "biểu đồ", "hình vẽ", "bảng giá trị", "bảng tần số", v.v...),
+- Nếu không có từ khóa, chèn tại vị trí logic sát nhất với nội dung liên quan.
+4. CÔNG THỨC TOÁN HỌC:
+- Tất cả công thức, ký hiệu toán học dùng LaTeX inline: ${...}$.
+- Hệ phương trình: ${\begin{cases} ... \end{cases}}$.
+- Không dùng \(...\) hoặc \[...\].
+- Ký hiệu hình học, số liệu đặc biệt (vd: ${Oxyz}$, ${A}$, ${0,1%}$, ...) cũng đặt trong ${...}$.
+5. BẢNG SỐ LIỆU:
+- Nếu có bảng số liệu, chuyển thành bảng Markdown nếu hợp lý.
+6. ĐỊNH DẠNG CÂU HỎI:
+- Trắc nghiệm (4 lựa chọn): mỗi lựa chọn trên một dòng.
+- Đúng/Sai: ghi hai lựa chọn trên hai dòng.
+- Trả lời ngắn: Trả lời: ________
+- Tự luận: ghi nguyên văn câu hỏi.
 
-LƯU Ý: KHÔNG BỎ SÓT NỘI DUNG, KHÔNG ĐƯỢC SỬA ĐỔI, CHỈ GÕ LẠI CHÍNH XÁC.
+LƯU Ý:
++ Không bỏ sót bất kỳ chi tiết nào.
++ Không tự ý sửa đổi nội dung.
++ Chỉ thực hiện đúng yêu cầu như trên.
 '''
 
 def gemini_generate_text(image_bytes, api_key):
