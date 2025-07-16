@@ -14,43 +14,53 @@ from word_export import insert_images_to_word_from_markdown
 import re
 
 def fix_latex_block_errors(text):
-    # 1. Sửa ${A^{\prime B \perp D^{\prime C}}}$ => ${A^{\prime} B \perp D^{\prime} C}$
-    def fix_mixed_prime(match):
+    """
+    Sửa các lỗi block LaTeX hay gặp: thiếu/dư dấu ngoặc, dấu ^{\\prime}, chèn sai vị trí, lỗi ký hiệu toán học khi OCR.
+    """
+
+    # 1. Sửa các khối kiểu ${A^{\prime B}$ thành ${A^{\prime} B}$ (thiếu dấu })
+    def fix_missing_prime_brace(match):
         expr = match.group(1)
-        # Thêm dấu } cho mỗi ^{\prime} nếu thiếu
-        expr = re.sub(r'([A-Za-z])\^\{\\prime\b', r'\1^{\prime}', expr)
-        # Sửa các \perp, \parallel nếu dính vào giữa các nhóm
-        expr = re.sub(r'\}\s*([A-Za-z])', r'} \1', expr)
-        # Đảm bảo mỗi ^{\prime} đều có ký tự trước và sau là chữ
+        # Sửa: A^{\prime B -> A^{\prime} B
+        expr = re.sub(r'([A-Za-z])\^\{\\prime ([A-Za-z])', r'\1^{\\prime} \2', expr)
         return '${' + expr + '}$'
-    # Xử lý các block thiếu dấu đóng }
-    text = re.sub(r'\$\{([^}$]+?(\^\{\\prime)? [^}$]+?(\^\{\\prime)? [^}$]+?)\}\$', fix_mixed_prime, text)
-    
-    # 2. Sửa các block thiếu $ ở cuối: ...}$ -> ...}$
-    text = re.sub(r'(\$\{[^\$}]+\})\n', r'\1$\n', text)
-    text = re.sub(r'(\$\{[^\$}]+\})$', r'\1$', text)
+    text = re.sub(r'\$\{([^}$]*[A-Za-z]\^\{\\prime [^}$]+)\}\$', fix_missing_prime_brace, text)
 
-    # 3. Sửa các block thiếu } ở cuối: ...$ -> ...}$
-    text = re.sub(r'(\$\{[^\$}]+)\$', lambda m: m.group(1) + '}$', text)
+    # 2. Sửa các block kiểu ${B C^{\prime \perp A^{\prime D}}}$ thành ${B C^{\prime} \perp A^{\prime} D}$
+    def fix_mixed_prime_perp(match):
+        expr = match.group(1)
+        # Tách các đoạn ^{\prime và thêm }
+        expr = re.sub(r'([A-Za-z])\^\{\\prime\b', r'\1^{\\prime}', expr)
+        return '${' + expr + '}$'
+    text = re.sub(r'\$\{([^}$]+)\}\$', fix_mixed_prime_perp, text)
 
-    # 4. Sửa block có \left( ... \right)=... nhưng bị thiếu ngoặc, ví dụ: 
-    # ${\left(A D^{\prime}, B^{\prime C\right)=90^{\circ}}}$ => ${\left(A D^{\prime}, B^{\prime} C\right)=90^{\circ}}$
-    def fix_left_right(match):
-        inner = match.group(1)
-        # Tách các thành phần bị dính
-        inner = re.sub(r'([A-Za-z])\^\{\\prime ([A-Za-z])', r'\1^{\prime} \2', inner)
-        inner = re.sub(r'([A-Za-z])\^\{\\prime\}', r'\1^{\prime}', inner)
-        return '${\\left(' + inner + '\\right)=90^{\\circ}}$'
-    text = re.sub(
-        r'\$\{\\left\(([A-Za-z0-9\s\^\{\}\\,\']+?)\\right\)=90\^\{\\circ\}\}\$', 
-        fix_left_right, text
-    )
+    # 3. Sửa các block thiếu } cuối: ${...$ -> ${...}$
+    text = re.sub(r'\$\{([^}$]+)\$', r'${\1}$', text)
 
-    # 5. Sửa block thiếu } cuối cùng
-    text = re.sub(r'(\$\{[^\$}]+)\$', lambda m: m.group(1) + '}$', text)
+    # 4. Sửa block dư } cuối: ${...}}$ -> ${...}$
+    text = re.sub(r'\$\{([^}$]+)\}\}\$', r'${\1}$', text)
+
+    # 5. Sửa các block dư { đầu: ${{...}$ -> ${...}$
+    text = re.sub(r'\$\{\{([^}$]+)\}\$', r'${\1}$', text)
+
+    # 6. Sửa dấu ngoặc trái/phải trong \left( ... \right)
+    # Lưu ý: chỉ sửa nếu block có lệch ngoặc
+    def fix_left_right_bracket(match):
+        expr = match.group(1)
+        # Sửa (nhận diện ngoặc bị thiếu/dư)
+        expr = re.sub(r'\\left\(([^\)]*)\\right\)', r'\\left(\1\\right)', expr)
+        expr = re.sub(r'\\left\{([^\}]*)\\right\}', r'\\left\{\1\\right\}', expr)
+        return '${' + expr + '}$'
+    text = re.sub(r'\$\{([^}$]*\\left[({\[][^}$]*)\}\$', fix_left_right_bracket, text)
+
+    # 7. Đảm bảo block LaTeX luôn đủ ngoặc ${...}$ (cắt dư/dồn thiếu)
+    # Loại các block rỗng
+    text = re.sub(r'\$\{\s*\}\$', '', text)
+    # Nếu bị nhiều dấu $ liền kề, loại thừa
+    text = re.sub(r'\${{2,}', '${', text)
+    text = re.sub(r'}{2,}\$', '}$', text)
 
     return text
-
 
 def fix_latex_block_parentheses(text):
     import re
