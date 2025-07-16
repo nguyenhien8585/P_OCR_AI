@@ -13,6 +13,16 @@ from word_export import insert_images_to_word_from_markdown
 
 import re
 
+def remove_extra_dollar_sign(text):
+    # Xóa các đoạn $${...}$$ thành ${...}$
+    # Chỉ áp dụng cho các block bắt đầu bằng $${ và kết thúc bằng }$$
+    text = re.sub(r'\$\$\{', '${', text)
+    text = re.sub(r'\}\$\$', '}$', text)
+    # Xử lý trường hợp hiếm: $${...}$  hoặc ${...}$$
+    text = re.sub(r'\$\$\{', '${', text)
+    text = re.sub(r'\}\$\$', '}$', text)
+    return text
+
 def normalize_math_latex_all(text):
     # 1. Ghép các đoạn bị tách nhỏ thành ${...}$
     text = re.sub(r'\}\$\s*\$\{', '', text)
@@ -465,6 +475,7 @@ with tab_img:
                 text = fix_missing_backslash_cases(text)
                 text = normalize_math_latex_all(text)
                 text = fix_math_special_cases(text)
+                text = remove_extra_dollar_sign(text)
                 text = remove_all_figure_markdown(text)
                 text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
                 formatted_text = format_exam_markdown(text)
