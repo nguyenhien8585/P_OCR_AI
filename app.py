@@ -14,40 +14,39 @@ from word_export import insert_images_to_word_from_markdown
 # ==== Hàm ĐỊNH DẠNG ĐỀ ĐẸP CHUẨN GIÁO VIÊN ====
 import re
 
+import re
+
 def format_exam_markdown(text):
-    # Đưa các tag [BẢNG: ...], [HÌNH: ...] về dòng riêng
+    # 1. Đưa mỗi [BẢNG: ...], [HÌNH: ...] về dòng riêng
     text = re.sub(r'([^\n])(\[BẢNG: [^\]]+\])', r'\1\n\2', text)
     text = re.sub(r'(\[BẢNG: [^\]]+\])([^\n])', r'\1\n\2', text)
     text = re.sub(r'([^\n])(\[HÌNH: [^\]]+\])', r'\1\n\2', text)
     text = re.sub(r'(\[HÌNH: [^\]]+\])([^\n])', r'\1\n\2', text)
-
-    # Đưa các dòng Trang .../Mã đề ... về riêng block, tách bằng ---
-    text = re.sub(r'(Trang\s*\d+\/\d+\s*-\s*Mã đề\s*\d+)', r'\n\n---\n\1\n---\n', text)
-
-    # Tách từng block bắt đầu bằng "Câu X."
-    pattern = r'(?=(?:^|\n)Câu\s*\d+[.:])'
-    blocks = re.split(pattern, text)
+    # 2. Đưa Trang .../Mã đề ... về block riêng
+    text = re.sub(r'(Trang\s*\d+\/\d+\s*-\s*Mã\s*đề\s*\d+)', r'\n\n---\n\1\n---\n', text, flags=re.IGNORECASE)
+    # 3. Đưa mỗi "Câu X." hoặc "Câu X:" lên đầu dòng (kể cả nếu bị dính trước đó)
+    text = re.sub(r'(?<!^)\s*(?=Câu\s*\d+[.:])', r'\n', text)
+    # 4. Tách block từng câu hỏi
+    blocks = re.split(r'(?=^Câu\s*\d+[.:])', text, flags=re.MULTILINE)
     result_blocks = []
     for blk in blocks:
         blk = blk.strip()
         if not blk:
             continue
-        # Đảm bảo Câu X. nằm đầu dòng
-        blk = re.sub(r'^(?!Câu\s*\d+[.:])', 'Câu ', blk) if not blk.startswith("Câu") else blk
         # Đưa mỗi đáp án A. B. C. D. xuống dòng riêng (nếu bị dính)
         blk = re.sub(r'(?<!\n)[ ]*A\.', r'\nA.', blk)
         blk = re.sub(r'(?<!\n)[ ]*B\.', r'\nB.', blk)
         blk = re.sub(r'(?<!\n)[ ]*C\.', r'\nC.', blk)
         blk = re.sub(r'(?<!\n)[ ]*D\.', r'\nD.', blk)
-        # Dọn sạch dòng trống thừa
+        # Loại bỏ dòng trống thừa
         lines = [l.strip() for l in blk.split('\n')]
         lines = [l for i, l in enumerate(lines) if l or (i > 0 and lines[i-1])]
         result_blocks.append('\n'.join(lines))
+    # Ghép lại, không để quá 2 dòng trống
     result = '\n\n'.join(result_blocks)
-
-    # Cuối cùng: ghép lại, không để 3+ dòng trống liền
     result = re.sub(r'\n{3,}', '\n\n', result)
     return result.strip()
+
 
 def filter_nested_boxes(candidates):
     filtered = []
