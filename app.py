@@ -210,18 +210,18 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
     used_figures = set()
     processed_lines = []
     fig_idx = 0
-
     i = 0
     while i < len(lines):
         line = lines[i]
         processed_lines.append(line)
-        # Nếu dòng có từ khóa hình/bảng
         lower = line.lower()
-        is_table = False
+        inserted = False
+
+        # Chèn BẢNG đúng sau dòng chứa từ khóa nếu ngay dưới là bảng markdown
         if any(x in lower for x in ["bảng", "bảng giá trị", "bảng biến thiên", "bảng tần số"]):
-            # Nếu ngay sau đó là một block bảng Markdown (| ...)
+            # Nếu dòng tiếp theo là bảng Markdown (bắt đầu bằng "|")
             if (i + 1 < len(lines)) and lines[i + 1].strip().startswith("|"):
-                # tìm figure tiếp theo là bảng chưa dùng
+                # Lấy bảng chưa gán
                 while fig_idx < len(figures_sorted):
                     fig = figures_sorted[fig_idx]
                     if fig['is_table'] and fig['name'] not in used_figures:
@@ -229,11 +229,12 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
                         processed_lines.append(tag)
                         used_figures.add(fig['name'])
                         fig_idx += 1
-                        is_table = True
+                        inserted = True
                         break
                     fig_idx += 1
-        # Nếu dòng có từ khóa hình ảnh
-        if not is_table and any(x in lower for x in ["hình vẽ", "hình bên", "(hình", "xem hình", "đồ thị", "biểu đồ", "minh họa"]):
+
+        # Chèn HÌNH đúng sau dòng chứa từ khóa hình học
+        if not inserted and any(x in lower for x in ["hình vẽ", "hình bên", "(hình", "xem hình", "đồ thị", "biểu đồ", "minh họa"]):
             while fig_idx < len(figures_sorted):
                 fig = figures_sorted[fig_idx]
                 if not fig['is_table'] and fig['name'] not in used_figures:
@@ -243,6 +244,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
                     fig_idx += 1
                     break
                 fig_idx += 1
+
         i += 1
 
     # Bước 2: Map các hình/bảng chưa gán vào ngay sau các dòng "Câu X." chưa có hình/bảng minh hoạ ngay sau
