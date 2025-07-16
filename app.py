@@ -96,6 +96,16 @@ def format_exam_markdown(text):
         blk = re.sub(r'(?<!\n)[ ]*B\.', r'\nB.', blk)
         blk = re.sub(r'(?<!\n)[ ]*C\.', r'\nC.', blk)
         blk = re.sub(r'(?<!\n)[ ]*D\.', r'\nD.', blk)
+        # Tách đáp án trắc nghiệm kiểu a), b), c), d)
+        blk = re.sub(r'(?<!\n)[ ]*a\)', r'\na)', blk)
+        blk = re.sub(r'(?<!\n)[ ]*b\)', r'\nb)', blk)
+        blk = re.sub(r'(?<!\n)[ ]*c\)', r'\nc)', blk)
+        blk = re.sub(r'(?<!\n)[ ]*d\)', r'\nd)', blk)
+        # Tách đáp án trắc nghiệm kiểu a., b., c., d.
+        blk = re.sub(r'(?<!\n)[ ]*a\.', r'\na.', blk)
+        blk = re.sub(r'(?<!\n)[ ]*b\.', r'\nb.', blk)
+        blk = re.sub(r'(?<!\n)[ ]*c\.', r'\nc.', blk)
+        blk = re.sub(r'(?<!\n)[ ]*d\.', r'\nd.', blk)
         lines = [l.strip() for l in blk.split('\n')]
         lines = [l for i, l in enumerate(lines) if l or (i > 0 and lines[i-1])]
         result_blocks.append('\n'.join(lines))
@@ -291,8 +301,8 @@ YÊU CẦU QUAN TRỌNG:
 5. BẢNG SỐ LIỆU:
 - Nếu có bảng số liệu, chuyển thành bảng Markdown nếu hợp lý.
 6. ĐỊNH DẠNG CÂU HỎI:
-- Trắc nghiệm (4 lựa chọn): mỗi lựa chọn trên một dòng.
-- Đúng/Sai: ghi hai lựa chọn trên hai dòng.
+- Trắc nghiệm (4 lựa chọn): Nhận diện đáp án dạng A., B., C., D. hoặc a), b), c), d) hoặc a., b., c., d.. Đảm bảo mỗi lựa chọn ở một dòng riêng.
+- Trắc nghiệm đúng/sai: Nếu gặp các đáp án bắt đầu bằng a), b), c), d) hoặc a., b., c., d., vẫn tách mỗi đáp án lên dòng riêng.
 - Trả lời ngắn: Trả lời: ________
 - Tự luận: ghi nguyên văn câu hỏi.
 
