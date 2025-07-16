@@ -13,38 +13,56 @@ from word_export import insert_images_to_word_from_markdown
 
 import re
 
-def normalize_math_latex(text):
+def normalize_math_latex_all(text):
+    # 1. Ghép các đoạn bị tách nhỏ thành ${...}$
     text = re.sub(r'\}\$\s*\$\{', '', text)
     text = re.sub(r'\$\{', '${', text)
     text = re.sub(r'\}\$', '}$', text)
-    while True:
-        new_text = re.sub(r'\}\$\s*\$\{', '', text)
-        if new_text == text:
-            break
-        text = new_text
     text = re.sub(r'\$\{\s*\}\$', '', text)
-    text = re.sub(r'\${2,}', '${', text)
-    text = re.sub(r'\}{2,}\$', '}$', text)
-    text = re.sub(r'(?<!\\)begin\{?cases\}?', r'\\begin{cases}', text)
-    text = re.sub(r'(?<!\\)end\{?cases\}?', r'\\end{cases}', text)
-    text = re.sub(r'\\begin{cases}+', r'\\begin{cases}', text)
-    text = re.sub(r'\\end{cases}+', r'\\end{cases}', text)
-    text = re.sub(r'\$\{[ \t\r\n]*', '${', text)
-    text = re.sub(r'[ \t\r\n]*\}\$', '}$', text)
-    def fix_parentheses(m):
-        s = m.group(1)
-        s = re.sub(r'\(\s*\(', '(', s)
-        s = re.sub(r'\)\s*\)', ')', s)
-        s = re.sub(r'\{\s*\{', '{', s)
-        s = re.sub(r'\}\s*\}', '}', s)
-        s = re.sub(r'\((\([^()]*\))\)', r'\1', s)
-        s = re.sub(r'\(([^()]*\)\))', r'(\1', s)
-        s = re.sub(r'\(\(([^()]*)\)\)', r'(\1)', s)
-        s = re.sub(r'\(\(([^\)]*)\)\)', r'(\1)', s)
-        return '${' + s.strip() + '}$'
-    text = re.sub(r'\$\{([^\$]+?)\}\$', fix_parentheses, text)
+    # 2. Gom nhiều ${...}${...}$ liền kề về một ${...}$
+    def merge_formulas(match):
+        inner = ''.join(re.findall(r'\$\{([^\$]*?)\}\$', match.group(0)))
+        return '${' + inner.replace('}{', '') + '}$'
+    text = re.sub(r'(\$\{[^\$]*\}\$){2,}', merge_formulas, text)
+    # 3. Sửa log, sin, cos, ... thiếu ngoặc: ${log_{\sqrt{2}-1 x}$ → ${log_{\sqrt{2}-1 x}}$
+    text = re.sub(r'(\$\{[^\}]*(log|sin|cos|tan|cot|sec|csc)_[^\}\$]+ [^\}\$]+)\}\$', r'\1}}$', text)
+    # 4. Sửa các dấu ngoặc tròn/vuông/nhiều ngoặc: ((...)) → (...)
+    text = re.sub(r'\(\(([^()]+)\)\)', r'(\1)', text)
+    text = re.sub(r'\(\(([^()]+)\)', r'(\1', text)
+    text = re.sub(r'\(([^()]+)\)\)', r'(\1)', text)
+    # 5. Sửa \overrightarrow{n = ...)} → \overrightarrow{n} = (...)}
+    text = re.sub(r'\\overrightarrow\{([a-zA-Z])\s*=\s*\(([^)]+)\)\}', r'\\overrightarrow{\1} = (\2)}', text)
+    text = re.sub(r'\(\(([^)]+)\)\)', r'(\1)', text)
+    # 6. Xử lý thiếu dấu ngoặc ở tích phân: int_{1}^{2 (2+f} (x)\, \, dx}$ => int_{1}^{2 (2+f(x))}\, \, dx}$
+    def fix_integral(match):
+        expr = match.group(1)
+        # Sửa f (x) thành f(x)
+        expr = re.sub(r'f\s*\(\s*x\s*\)', 'f(x)', expr)
+        # Bổ sung ngoặc nếu thiếu
+        expr = re.sub(r'int_\{([^\}]+)\}\^\{([^\}]+)\s*\(([^)]*)\}\$', r'int_{\1}^{\2}(\3)}$', expr)
+        # Nếu còn trường hợp ...int_{1}^{2 (2+f} (x)... thì ghép (x) vào trong
+        expr = re.sub(r'(\([^)]+)f\} \((x)\)', r'\1f(x)', expr)
+        # Thêm dấu ) thiếu cho ngoặc ở cuối nếu có
+        opens = expr.count('(')
+        closes = expr.count(')')
+        if opens > closes:
+            expr += ')' * (opens - closes)
+        return '${' + expr.strip() + '}$'
+    text = re.sub(r'\$\{([^\$]*int_[^\$]*)\}\$', fix_integral, text)
+    # 7. Nếu còn $...$ chưa đúng, chuyển thành ${...}$
+    text = re.sub(r'\$(?!\{)([^\$]+?)\$', lambda m: '${' + m.group(1).strip() + '}$', text)
+    # 8. Xóa ngoặc thừa ở đầu/cuối công thức
+    text = re.sub(r'\${\s*([^\$]*?)\s*}\$', lambda m: '${' + m.group(1).strip() + '}$', text)
+    # 9. Sửa các lỗi ${...}$ ngay sát nhau thành 1 block lớn
+    while True:
+        text2 = re.sub(r'\}\$\s*\$\{', '', text)
+        if text2 == text:
+            break
+        text = text2
+    # 10. Loại bỏ ngoặc lẻ/ngoặc thừa trong công thức ${...}$ (nếu gặp)
+    text = re.sub(r'\$\{([^\$]*)\}\$', lambda m: '${' + re.sub(r'[\{\}]+', '', m.group(1)) + '}$', text)
     return text
-
+    
 def fix_func_paren_latex(text):
     def replacer(m):
         s = m.group(1)
@@ -409,7 +427,7 @@ with tab_img:
                     except Exception as e:
                         text = f"[Lỗi Gemini: {e}]"
                 text = fix_missing_backslash_cases(text)
-                text = normalize_math_latex(text)
+                text = normalize_math_latex_all(text)
                 text = fix_func_paren_latex(text)
                 text = fix_latex_missing_braces(text)
                 text = fix_vector_notation(text)
