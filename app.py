@@ -492,6 +492,7 @@ with tab_img:
                 text = fix_vector_notation(text)
                 text = fix_log_base_brace(text) 
                 text = fix_integral_brace(text)
+                text = fix_close_brace_latex(text) 
                 text = remove_all_figure_markdown(text)
                 text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
                 formatted_text = format_exam_markdown(text)
