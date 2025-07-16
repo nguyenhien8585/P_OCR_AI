@@ -296,6 +296,8 @@ YÊU CẦU QUAN TRỌNG:
 - Tất cả công thức, ký hiệu toán học dùng LaTeX inline: ${...}$.
 - Hệ phương trình: ${\begin{cases} ... \end{cases}}$.
 - Không dùng \(...\) hoặc \[...\].
+- Các công thức dạng latex không được thiếu dấu { } trên không được thiếu nếu có mở ngoặc thì phải có đóng ngoặc.
+Ví dụ: ${A B C D . A^{\prime B^{\prime C^{\prime} D^{\prime}}$ 
 - Ký hiệu hình học, số liệu đặc biệt (vd: ${Oxyz}$, ${A}$, ${0,1%}$, ...) cũng đặt trong ${...}$.
 5. BẢNG SỐ LIỆU:
 - Nếu có bảng số liệu, chuyển thành bảng Markdown nếu hợp lý.
