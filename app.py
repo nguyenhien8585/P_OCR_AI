@@ -13,65 +13,70 @@ from word_export import insert_images_to_word_from_markdown
 
 import re
 
-import re
-
 def fix_math_block_splits(text):
-    # Gộp các block LaTeX bị tách nhỏ: ${...}${...}$, ${...}$ x}$, frac, vector...
-    # 1. Nối các block liền nhau ${...}${...}$ thành ${......}$
+    # Gộp các block LaTeX bị tách nhỏ kiểu ${...}${...}$ hoặc ${...}$...${...}$
+    # 1. Nối các block LaTeX liền nhau: ${...}${...}$ -> ${... ...}$
     while True:
         new_text = re.sub(r'\}\$\s*\$\{', '', text)
         if new_text == text: break
         text = new_text
 
-    # 2. Gộp ${...}$ x}$ về ${... x}$
-    text = re.sub(r'\$\{([^\$]*?)\}\$\s*([a-zA-Z0-9\\^_\{\}\(\)]+)\}\$', r'${\1 \2}$', text)
-
-    # 3. Gộp ${log_}${\sqrt2}$-1} x}${ → ${log_{\sqrt{2}-1} x}$
+    # 2. Gộp block ${log_}${0.2 x}${ -> ${log_{0.2} x}$
     text = re.sub(
-        r'\$\{log_}\$\{(\\sqrt[^\}]+)\}-1\}\s*x\}\$',
-        r'${log_{\1-1} x}$', text
+        r'\$\{([a-zA-Z]+_)\}\$\{([^\$}]+)\}\$([a-zA-Z0-9\\\^\_\(\)\[\]\s]*)\}\$',
+        lambda m: '${' + m.group(1) + '{' + m.group(2) + '} ' + m.group(3).strip() + '}$', text
     )
 
-    # 4. Gộp ${frac}${8 3}$}${ → ${\frac{8}{3}}$
+    # 3. Gộp block ${log_}${\sqrt}{2}$-1} x}${  -> ${log_{\sqrt{2}-1} x}$
+    text = re.sub(
+        r'\$\{([a-zA-Z]+_)\}\$\{\\sqrt\}\$\{([^\$}]+)\}-1\}\s*x\}\$',
+        lambda m: '${' + m.group(1) + '{\\sqrt{' + m.group(2) + '}-1} x}$', text
+    )
+
+    # 4. Gộp ${frac}${13 3}$}${ hoặc tương tự về ${\frac{13}{3}}$
     text = re.sub(
         r'\$\{\\frac\}\$\{([^\$ ]+)\s+([^\$ }]+)\}\$\}?', r'${\\frac{\1}{\2}}$', text
     )
-    # hoặc ${frac}${13 3}$}${ → ${\frac{13}{3}}$
+    # 4b. ${\frac}${5\sqrt}${5}$}${2}$}${ -> ${\frac{5\sqrt{5}}{2}}$
     text = re.sub(
-        r'\\frac\}\$\{([^\$ ]+)\s+([^\$ }]+)\}\$', r'\\frac{\1}{\2}', text
+        r'\$\{\\frac\}\$\{([^\$}]+)\$\{([^\$}]+)\}\$\{([^\$}]+)\}\$\}?', 
+        lambda m: '${\\frac{' + m.group(1) + m.group(2) + '}{' + m.group(3) + '}}$', text
     )
 
-    # 5. Gộp các begin-cases hệ phương trình chia block: ${begin}${cases}$...${end}${cases}$}${ → ${\begin{cases} ... \end{cases}}$
+    # 5. Gộp begin-cases bị chia nhỏ: ${begin}${cases}$ ... ${end}${cases}$}${  -> ${\begin{cases} ... \end{cases}}$
     text = re.sub(
         r'\$\{\\begin\}\$\{cases\}\$(.*?)\$\{\\end\}\$\{cases\}\$\}?', 
         lambda m: '${\\begin{cases}' + m.group(1) + '\\end{cases}}$', 
         text, flags=re.DOTALL
     )
 
-    # 6. Gộp vector, mathbb chia block: ${overrightarrow}${n}$}${ → ${\overrightarrow{n}}$
+    # 6. Gộp vector chia nhỏ: ${overrightarrow}${n}$}${ -> ${\overrightarrow{n}}$
     text = re.sub(r'\$\{\\overrightarrow\}\$\{([a-zA-Z])\}\$\}?', r'${\\overrightarrow{\1}}$', text)
+
+    # 7. Gộp mathbb chia nhỏ: ${mathbb}${R}$}${ -> ${\mathbb{R}}$
     text = re.sub(r'\$\{\\mathbb\}\$\{([A-Z])\}\$\}?', r'${\\mathbb{\1}}$', text)
 
-    # 7. Gộp tích phân chia block: ${\int_}${1}$^${2}$(2+f(x))dx}$ → ${\int_{1}^{2} (2+f(x))dx}$
+    # 8. Gộp tích phân chia nhỏ: ${\int_}${1}$^${2}$(2+f(x)dx}${  -> ${\int_{1}^{2} (2+f(x))dx}$
     text = re.sub(
-        r'\$\{\\int_\}\$\{([^\$]+)\}\$\^\}\$\{([^\$]+)\}\$\(([^$]+)\)dx\}\$',
-        r'${\\int_{\1}^{\2} (\3)dx}$', text
+        r'\$\{\\int_\}\$\{([^\$}]+)\}\$\^\}\$\{([^\$}]+)\}\$(.*?)dx\}\$',
+        r'${\\int_{\1}^{\2} \3dx}$', text
     )
 
-    # 8. Loại block rỗng, block dư ngoặc
+    # 9. Block ${...}$ rỗng hoặc dư ngoặc cuối
     text = re.sub(r'\${\s*}\$', '', text)
     text = re.sub(r'(\${[^\$}]*)\}{2,}\$', r'\1}$', text)
     text = re.sub(r'\)\)+\$', r')$', text)
+    # Nếu bị thiếu dấu $ ở cuối block, thêm vào
+    text = re.sub(r'(\${[^}]+)\$', lambda m: m.group(1) + '}$' if not m.group(1).endswith('}') else m.group(0), text)
 
-    # 9. Đảm bảo cuối mỗi block LaTeX là đúng ${...}$
-    text = re.sub(r'\${([^}]*)\$', r'${\1}$', text)
-
-    # 10. Xóa double dollar $${...}$$ -> ${...}$
+    # 10. Loại double dollar $${...}$$ -> ${...}$
     text = re.sub(r'\$\$\{', '${', text)
     text = re.sub(r'\}\$\$', '}$', text)
 
-    return text
+    # 11. Đảm bảo cuối mỗi block LaTeX là đúng ${...}$
+    text = re.sub(r'\${([^}]*)\$', r'${\1}$', text)
 
+    return text
 
 def remove_extra_dollar_sign(text):
     # Xóa các đoạn $${...}$$ thành ${...}$
