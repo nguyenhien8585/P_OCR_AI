@@ -13,33 +13,28 @@ from word_export import insert_images_to_word_from_markdown
 
 import re
 
-def fix_stray_open_latex_blocks(text):
-    """
-    Tự động thêm dấu }$ cho mọi block bắt đầu bằng ${ mà chưa kết thúc bằng }$
-    """
-    def replacer(match):
-        content = match.group(1)
-        # Nếu đã kết thúc bằng }, thêm $ nếu thiếu
-        if content.rstrip().endswith('}'):
-            return '${' + content.rstrip() + '}$'
-        else:
-            return '${' + content.rstrip() + '}$'
-    # Áp dụng cho mọi block bắt đầu ${ và kết thúc trước dòng xuống dòng hoặc hết file mà chưa có }$
-    return re.sub(r'\$\{([^}$\n]+)(?:\n|$)', lambda m: replacer(m) + '\n', text)
-
 def fix_all_unclosed_latex_blocks(text):
     """
-    Tự động thêm dấu } vào trước $ cho tất cả block ${...$ còn thiếu }
+    Tự động thêm ngoặc }$ ở cuối các block LaTeX đang thiếu ngoặc hoặc thiếu $.
+    Dùng cho trường hợp bị thiếu sau cùng, hoặc các hàm trước vẫn còn sót.
     """
     def replacer(match):
         content = match.group(1)
-        # Nếu đã kết thúc bằng }, thôi, giữ nguyên
-        if content.rstrip().endswith('}'):
-            return '${' + content + '$'
-        else:
-            return '${' + content.rstrip() + '}' + '$'
-    # Áp dụng cho mọi block bắt đầu ${, kết thúc bằng $
-    return re.sub(r'\$\{([^}$]+)\$', replacer, text)
+        # Đếm số lượng ngoặc mở/đóng trong content
+        open_braces = content.count('{')
+        close_braces = content.count('}')
+        missing = open_braces - close_braces
+        if missing > 0:
+            content += '}' * missing
+        # Đảm bảo kết thúc bằng }
+        if not content.rstrip().endswith('}'):
+            content = content.rstrip() + '}'
+        return '${' + content + '}$'
+    # Vá block LaTeX bắt đầu bằng ${ nhưng không kết thúc bằng }$
+    # (dừng lại trước dấu xuống dòng hoặc hết văn bản)
+    pattern = r'\$\{([^\}$\n]+)(?:\n|$)'
+    fixed_text = re.sub(pattern, lambda m: replacer(m) + '\n', text)
+    return fixed_text
 
 def fix_missing_closing_brace_in_latex(text):
     """
@@ -730,7 +725,6 @@ with tab_pdf:
         text_content = fix_latex_block_errors(text_content)           # 8. Sửa lỗi đặc biệt cuối cùng cho block phức tạp
         text_content = fix_missing_closing_brace_in_latex(text_content)
         text_content = fix_all_unclosed_latex_blocks(text_content)
-        text_content = fix_stray_open_latex_blocks(text_content)
         images = st.session_state.get("ocr_images", [])
         tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
         with tab1:
