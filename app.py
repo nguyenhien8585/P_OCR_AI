@@ -122,85 +122,82 @@ def remove_all_figure_markdown(text):
 
 # -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
 def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
-    # Định nghĩa các từ khóa nhận diện vị trí chèn
-    IMAGE_KEYWORDS = ["hình vẽ", "hình minh họa", "như hình vẽ", "xem hình", "minh họa", "biểu đồ"]
-    TABLE_KEYWORDS = ["bảng biến thiên", "bảng giá trị", "bảng tần số", "bảng số liệu"]
+    # Từ khóa cho hình ảnh và bảng
+    MATH_IMAGE_KEYWORDS = [
+        "hình vẽ", "như hình", "theo hình", "hình bên", 
+        "đồ thị", "biểu đồ", "sơ đồ", "hình minh họa"
+    ]
     
-    lines = text.split('\n')
-    final_lines = []
-    inserted_figures = set()
+    MATH_TABLE_KEYWORDS = [
+        "bảng biến thiên", "bảng giá trị", "bảng tần số", 
+        "bảng xét dấu", "bảng số liệu"
+    ]
     
-    # Sắp xếp hình ảnh theo vị trí từ trên xuống
-    figures = sorted(figures, key=lambda f: f['bbox'][1])
+    lines = []
+    buffer = ""
     
-    for i, line in enumerate(lines):
-        line = line.strip()
-        final_lines.append(line)
-        
-        # Kiểm tra xem dòng hiện tại có chứa từ khóa không
-        found_keyword = False
-        
-        # Tìm từ khóa hình ảnh
-        if any(keyword in line.lower() for keyword in IMAGE_KEYWORDS):
-            # Tìm hình ảnh phù hợp chưa được chèn
-            for fig in figures:
-                if not fig['is_table'] and fig['name'] not in inserted_figures:
-                    final_lines.append(f"[HÌNH: {fig['name']}]")
-                    inserted_figures.add(fig['name'])
-                    found_keyword = True
-                    break
-        
-        # Tìm từ khóa bảng
-        elif any(keyword in line.lower() for keyword in TABLE_KEYWORDS):
-            # Tìm bảng phù hợp chưa được chèn
-            for fig in figures:
-                if fig['is_table'] and fig['name'] not in inserted_figures:
-                    final_lines.append(f"[BẢNG: {fig['name']}]")
-                    inserted_figures.add(fig['name'])
-                    found_keyword = True
-                    break
-    
-    # Xử lý các hình ảnh chưa được chèn
-    for fig in figures:
-        if fig['name'] not in inserted_figures:
-            # Chèn vào vị trí tốt nhất có thể
-            best_position = find_best_insert_position(lines, fig['is_table'])
-            if best_position is not None:
-                if fig['is_table']:
-                    final_lines.insert(best_position + 1, f"[BẢNG: {fig['name']}]")
-                else:
-                    final_lines.insert(best_position + 1, f"[HÌNH: {fig['name']}]")
-                inserted_figures.add(fig['name'])
-                
-    return '\n'.join(final_lines)
-
-def find_best_insert_position(lines, is_table):
-    """Tìm vị trí tốt nhất để chèn hình/bảng khi không có từ khóa"""
-    # Ưu tiên chọn đoạn có liên quan đến toán học
-    math_keywords = ["giải", "tính", "chứng minh", "tìm"]
-    
-    for i, line in enumerate(lines):
-        line = line.strip().lower()
-        
-        # Đối với bảng, tìm các đoạn chứa số liệu
-        if is_table and any(k in line for k in ["số liệu", "thống kê", "giá trị"]):
-            return i
+    # Bước 1: Phân đoạn văn bản
+    for line in text.split('\n'):
+        stripped_line = line.strip()
+        if stripped_line:
+            buffer = buffer + " " + stripped_line if buffer else stripped_line
+        else:
+            if buffer:
+                lines.append(buffer)
+                buffer = ""
+            lines.append('')  # Giữ lại dòng trống
             
-        # Đối với hình ảnh, tìm các đoạn mô tả hình học
-        elif not is_table and any(k in line for k in ["hình", "đường", "vẽ", "đồ thị"]):
-            return i
-            
-        # Hoặc bất kỳ đoạn nào có từ khóa toán học
-        elif any(k in line for k in math_keywords):
-            return i
+    if buffer:
+        lines.append(buffer)
     
-    # Mặc định chèn sau đoạn đầu tiên (không chèn cuối file)
-    if len(lines) > 1:
-        return 0
-    return None
-
-
-
+    # Bước 2: Sắp xếp hình ảnh theo vị trí từ trên xuống
+    figures_sorted = sorted(
+        [fig for fig in figures if fig.get('bbox')],
+        key=lambda f: (f['bbox'][1], f['bbox'][0])
+    )
+    
+    # Bước 3: Ánh xạ hình ảnh vào các đoạn văn phù hợp
+    processed_lines = []
+    used_figures = set()
+    
+    for i, para in enumerate(lines):
+        if not para:  # Dòng trống
+            processed_lines.append('')
+            continue
+            
+        processed_lines.append(para)
+        
+        # Kiểm tra xem đoạn này có chứa từ khóa không
+        is_shape = any(keyword in para.lower() for keyword in MATH_IMAGE_KEYWORDS)
+        is_table = any(keyword in para.lower() for keyword in MATH_TABLE_KEYWORDS)
+        
+        if is_shape or is_table:
+            # Tìm hình ảnh chưa dùng phù hợp
+            for fig in figures_sorted:
+                if fig['name'] in used_figures:
+                    continue
+                    
+                # Kiểm tra loại hình ảnh phù hợp với từ khóa
+                if (fig['is_table'] and is_table) or (not fig['is_table'] and is_shape):
+                    tag = f"[BẢNG: {fig['name']}]" if fig['is_table'] else f"[HÌNH: {fig['name']}]"
+                    processed_lines.append(tag)
+                    used_figures.add(fig['name'])
+                    break
+    
+    # Bước 4: Xử lý các hình ảnh còn lại
+    remaining_figs = [fig for fig in figures_sorted if fig['name'] not in used_figures]
+    if remaining_figs:
+        # Tìm vị trí chèn phù hợp (tránh cuối tài liệu)
+        insert_pos = len(processed_lines) - 1
+        while insert_pos > 0 and not processed_lines[insert_pos].strip():
+            insert_pos -= 1
+        
+        # Chèn vào vị trí tốt nhất
+        for fig in remaining_figs:
+            tag = f"[BẢNG: {fig['name']}]" if fig['is_table'] else f"[HÌNH: {fig['name']}]"
+            processed_lines.insert(insert_pos + 1, tag)
+    
+    return '\n'.join(processed_lines)
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
     "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
