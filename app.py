@@ -12,8 +12,6 @@ from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
 # ==== Hàm ĐỊNH DẠNG ĐỀ ĐẸP CHUẨN GIÁO VIÊN ====
-import re
-
 def format_exam_markdown(text):
     # Đưa các tag [BẢNG: ...], [HÌNH: ...] về dòng riêng
     text = re.sub(r'([^\n])(\[BẢNG: [^\]]+\])', r'\1\n\2', text)
@@ -33,27 +31,23 @@ def format_exam_markdown(text):
     if curr:
         blocks.append('\n'.join(curr).strip())
 
-    # Đảm bảo mỗi đáp án A. B. C. D. đều xuống dòng riêng, không bị nối sát câu hỏi
+    # Đảm bảo mỗi đáp án A. B. C. D. đều xuống dòng riêng
     def fix_choices(block):
-        # Tìm dòng bắt đầu bằng A. (không tính dấu chấm câu ở cuối nội dung)
         parts = re.split(r'\n(?=A\.)', block, flags=re.MULTILINE)
         if len(parts) > 1:
             before = parts[0]
             choices = '\n'.join(parts[1:])
-
             # Đảm bảo đáp án mỗi dòng một đáp án
             choices = re.sub(r'\s*A\.', '\nA.', choices)
             choices = re.sub(r'\s*B\.', '\nB.', choices)
             choices = re.sub(r'\s*C\.', '\nC.', choices)
             choices = re.sub(r'\s*D\.', '\nD.', choices)
-            # Xóa dòng trống thừa
             block = before.strip() + '\n' + choices.strip()
         # Giữ bảng Markdown hoặc tag bảng nếu có
-        block = re.sub(r'([^\n])(\|)', r'\1\n\2', block)  # bảng dính trên 1 dòng thì tách ra
+        block = re.sub(r'([^\n])(\|)', r'\1\n\2', block)
         return block.strip()
 
     result = '\n\n'.join([fix_choices(b) for b in blocks if b.strip()])
-
     # Tách phần trang/mã đề nếu có
     result = re.sub(r'(Trang\s*\d+\/\d+\s*-\s*Mã đề\s*\d+)', r'\n\n---\n\1\n---\n', result)
     return result.strip()
@@ -147,7 +141,6 @@ def remove_all_figure_markdown(text):
     return text
 
 def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
-    import re
     lines = []
     buffer = ""
     for line in text.split('\n'):
@@ -202,8 +195,24 @@ api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
 def get_next_api_key():
     return next(api_key_cycle)
 
-GEMINI_PROMPT = '''YÊU CẦU QUAN TRỌNG:
-1.  ... ''' # Giữ prompt gốc của bạn!
+GEMINI_PROMPT = '''
+YÊU CẦU QUAN TRỌNG:
+1.  GÕ LẠI CHÍNH XÁC TẤT CẢ VĂN BẢN TRONG ẢNH: Đảm bảo không bỏ sót bất kỳ từ, câu, đoạn văn nào. Giữ nguyên cấu trúc đoạn văn, dấu xuống dòng, và định dạng gốc (ví dụ: in đậm, in nghiêng nếu có thể).
+2.  ĐÁNH DẤU VỊ TRÍ HÌNH ẢNH/BẢNG: Nếu phát hiện hình minh hoạ (hình vẽ, đồ thị, biểu đồ) hoặc bảng số liệu (bảng giá trị, bảng biến thiên, bảng tần số), hãy đánh dấu đúng vị trí của chúng bằng cú pháp placeholder:
+    *   [HÌNH_PLACEHOLDER] cho hình ảnh minh hoạ.
+    *   [BẢNG_PLACEHOLDER] cho bảng hoặc bảng số liệu.
+3.  CHÈN PLACEHOLDER ĐÚNG VỊ TRÍ: Với mỗi placeholder, hãy chèn ngay sau dòng mô tả có các cụm từ như: "xem hình dưới", "hình dưới đây", "bảng biến thiên", "bảng tần số", "bảng giá trị", "hình vẽ", "biểu đồ", "như hình vẽ", "thống kê lại ở bảng", hoặc ngay sau dòng câu hỏi liên quan trực tiếp tới hình/bảng/biểu đồ đó. Nếu không có từ khóa, hãy chèn vào vị trí logic nhất trong đoạn văn bản liên quan.
+4.  ĐỊNH DẠNG CÔNG THỨC TOÁN HỌC: Mọi công thức toán học, biểu thức, hệ phương trình, ký hiệu toán học phải được định dạng bằng LaTeX inline: ${...}$, Toán inline: ${...}$.
+5.  CHUYỂN BẢNG SỐ LIỆU SANG MARKDOWN: Nếu phát hiện bảng số liệu, hãy chuyển đổi chúng thành định dạng bảng Markdown nếu có thể.
+6.  ĐỊNH DẠNG CÂU HỎI: Tuân thủ nghiêm ngặt các định dạng sau cho từng loại câu hỏi:
+    1.  Trắc nghiệm 4 phương án: mỗi lựa chọn trên dòng riêng.
+    2.  Đúng/Sai: cuối cùng là 2 lựa chọn trên 2 dòng riêng.
+    3.  Trả lời ngắn: Trả lời: ________
+    4.  Tự luận: nguyên câu hỏi.
+
+LƯU Ý: KHÔNG BỎ SÓT NỘI DUNG, KHÔNG ĐƯỢC SỬA ĐỔI, CHỈ GÕ LẠI CHÍNH XÁC.
+
+'''
 
 def gemini_generate_text(image_bytes, api_key):
     api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
@@ -350,6 +359,7 @@ with tab_pdf:
             result = client.convert(pdf_bytes, file_name, mime_type)
         if not result.get("success"):
             st.error("❌ Xử lý OCR PDF thất bại: " + str(result.get("error")))
+
             st.stop()
         st.session_state["ocr_text_raw"] = result["data"].get("text_content", "")
         st.session_state["ocr_images"] = images
