@@ -13,6 +13,20 @@ from word_export import insert_images_to_word_from_markdown
 
 import re
 
+def fix_all_unclosed_latex_blocks(text):
+    """
+    Tự động thêm dấu } vào trước $ cho tất cả block ${...$ còn thiếu }
+    """
+    def replacer(match):
+        content = match.group(1)
+        # Nếu đã kết thúc bằng }, thôi, giữ nguyên
+        if content.rstrip().endswith('}'):
+            return '${' + content + '$'
+        else:
+            return '${' + content.rstrip() + '}' + '$'
+    # Áp dụng cho mọi block bắt đầu ${, kết thúc bằng $
+    return re.sub(r'\$\{([^}$]+)\$', replacer, text)
+
 def fix_missing_closing_brace_in_latex(text):
     """
     Thêm dấu } cho bất kỳ block LaTeX nào bắt đầu bằng ${ nhưng chưa kết thúc bằng }
@@ -701,6 +715,7 @@ with tab_pdf:
         text_content = fix_latex_super_sub_blocks(text_content)       # 7. Sửa các lỗi ^, _ đặc biệt trong block
         text_content = fix_latex_block_errors(text_content)           # 8. Sửa lỗi đặc biệt cuối cùng cho block phức tạp
         text_content = fix_missing_closing_brace_in_latex(text_content)
+        text_content = fix_all_unclosed_latex_blocks(text_content)
         images = st.session_state.get("ocr_images", [])
         tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
         with tab1:
