@@ -13,80 +13,64 @@ from word_export import insert_images_to_word_from_markdown
 
 # ======================== CHUẨN HÓA TOÁN HỌC ========================
 def normalize_math_latex(text):
-    # B1: Gom các đoạn bị chia nhỏ thành dạng ${...}$
-    text = re.sub(r'\}\$\{', '', text)     # Xóa cặp thừa
-    text = re.sub(r'\$\{', '${', text)     # Giữ lại mở chuẩn
-    text = re.sub(r'\}\$', '}$', text)     # Giữ lại đóng chuẩn
+    # 1. Gom công thức về dạng ${...}$ duy nhất (kể cả các đoạn bị split)
+    # Gom các đoạn ${...}${...}$ hoặc ${...}$...${...}$ liền nhau về một block
+    while True:
+        new_text = re.sub(r'\}\$\s*\$\{', '', text)
+        if new_text == text:
+            break
+        text = new_text
 
-    # B2: Gom nhiều dấu ${...}${...}$ về thành ${...}$
-    text = re.sub(r'\$\{([^\$]*)\}\$\{([^\$]*)\}\$', lambda m: '${' + m.group(1) + m.group(2) + '}$', text)
+    # 2. Đảm bảo ${...}$ luôn đủ cặp mở đóng
+    # Sửa ${...${...}$ về ${......}$
+    def merge_nested_formula(m):
+        content = ''.join(re.findall(r'\$\{([^$}]*)\}\$', m.group(0)))
+        return '${' + content.replace('}{', '') + '}$'
+    text = re.sub(r'(\$\{[^\$]*\}\$)+', merge_nested_formula, text)
 
-    # B3: Với trường hợp ...${abc${def} ghi thành ${abcdef}$
-    def merge_nested(match):
-        g = match.group(0)
-        g = g.replace('${', '').replace('}$', '')
-        return '${' + g.replace('}{', '') + '}$'
-    text = re.sub(r'(\$\{[^\$]*\}\$)+', merge_nested, text)
+    # 3. Bỏ mọi dấu ngoặc lẻ ${ hoặc }$ dư
+    text = re.sub(r'\$\{[ \t\r\n]*\}\$', '', text)
+    text = re.sub(r'[\{\}]+', '', text)
 
-    # B4: Đổi mọi xuất hiện của log${...}${x hoặc sin${...}${x... về ${\log_{...} x}$
+    # 4. Sửa các đoạn như log${_{a}}${x} → ${\log_{a} x}$
     text = re.sub(
-        r'([a-zA-Z]+)\$\{([^\}]*)\}\$\{?([a-zA-Z0-9\\\^\_\{\}\(\)\[\]\s]+)\}?', 
-        lambda m: '${\\' + m.group(1) + '_{' + m.group(2) + '} ' + m.group(3).strip() + '}$', 
+        r'([a-zA-Z]+)\$\{_([^\}]*)\}\$\{?([a-zA-Z0-9\\\^\_\{\}\(\)\[\]\s]+)\}?',
+        lambda m: '${\\' + m.group(1) + '_{' + m.group(2) + '} ' + m.group(3).strip() + '}$',
+        text
+    )
+    # fix log_{a}x, sin_{a}x...
+    text = re.sub(
+        r'([a-zA-Z]+)\$\{([^\}]*)\}\$\{([a-zA-Z0-9\\\^\_\{\}\(\)\[\]\s]+)\}',
+        lambda m: '${\\' + m.group(1) + '_{' + m.group(2) + '} ' + m.group(3).strip() + '}$',
         text
     )
 
-    # B5: Sửa lỗi ${{{...}$ hoặc ${{...}$ thành ${...}$ (xóa ngoặc thừa)
-    text = re.sub(r'\$\{{2,}', '${', text)
-    text = re.sub(r'\}{2,}\$', '}$', text)
-
-    # B6: Với các đoạn bị tách: ...}$...${..., nối lại thành ${...}$
-    text = re.sub(r'\}\$[\.\s]*\$\{', '', text)
-
-    # B7: Đảm bảo chỉ còn đúng cú pháp ${...}$ cho tất cả
-    # Đổi các $...$ còn sót thành ${...}$
+    # 5. Đổi mọi $...$ (nếu còn sót) về ${...}$
     text = re.sub(r'\$(?!\{)([^\$]+?)\$', lambda m: '${' + m.group(1).strip() + '}$', text)
 
-    # Loại dấu ngoặc lẻ đầu/ cuối
-    text = re.sub(r'(^|\s)[\}\{]+', r'\1', text)
-    text = re.sub(r'[\}\{]+(\s|$)', r'\1', text)
-
-    # B8: Đổi các đoạn kiểu ...${abc}$...${def}$... thành ...${abc def}$...
-    def merge_multiple_formulae(text):
-        # Nối liền 2 công thức cạnh nhau
-        while True:
-            new_text = re.sub(r'\}\$\s*\$\{', ' ', text)
-            if new_text == text:
-                break
-            text = new_text
-        return text
-
-    text = merge_multiple_formulae(text)
-
-    # B9: Loại bỏ dấu thừa giữa chữ và ${ hoặc }$
-    text = re.sub(r'([a-zA-Z0-9])\s*\$\{', r' ${', text)
-    text = re.sub(r'\}\$\s*([a-zA-Z0-9])', r'}$ \1', text)
-
-    # B10: Loại bỏ mọi ${ hoặc }$ đơn lẻ không có nội dung (rất hiếm)
-    text = re.sub(r'\$\{\s*\}\$', '', text)
-
-    # === SỬA LỖI ĐẶC BIỆT \begin{cases x... -> \begin{cases} ... ===
-    text = re.sub(r'\\begin\{cases[^\}]*\}', r'\\begin{cases}', text)
-    # Đảm bảo các hệ phương trình nằm trọn trong ${ ... }$
+    # 6. Chuẩn hóa lại hệ phương trình/cases:
+    # Tìm tất cả các đoạn như \begin{cases... hoặc \begin{cases x... thành \begin{cases}
+    text = re.sub(r'\\begin\{cases[^}]*\}', r'\\begin{cases}', text)
+    # Đảm bảo các hệ nằm trọn trong ${ ... }$
     text = re.sub(
         r'\$\{\\begin{cases}(.*?)\\end{cases}\}\$',
         r'${\\begin{cases}\1\\end{cases}}$',
-        text,
-        flags=re.DOTALL
+        text, flags=re.DOTALL
     )
-    # Nếu còn hệ phương trình bị tách, nối lại cho chắc chắn
+    # Nếu còn hệ phương trình bị tách, nối lại cho chắc
     text = re.sub(
         r'\$\{\\begin{cases}(.*?)\\end{cases}',
         r'${\\begin{cases}\1\\end{cases}}$',
-        text,
-        flags=re.DOTALL
+        text, flags=re.DOTALL
     )
+    # Xóa mọi thừa \begin{cases x... do OCR/Gemini gây lỗi
+    text = re.sub(r'\\begin\{cases\s*[a-zA-Z0-9_ \.\,\;:\-]*\}', r'\\begin{cases}', text)
 
-    return text
+    # 7. Loại bỏ khoảng trắng đầu cuối
+    text = re.sub(r' +', ' ', text)
+    text = text.replace('\r', '')
+    text = text.replace('\t', '')
+    return text.strip()
 
 # ======================= ĐỊNH DẠNG ĐỀ THI CHUẨN GIÁO VIÊN =======================
 def format_exam_markdown(text):
@@ -305,7 +289,7 @@ YÊU CẦU QUAN TRỌNG:
     *   [HÌNH_PLACEHOLDER] cho hình ảnh minh hoạ.
     *   [BẢNG_PLACEHOLDER] cho bảng hoặc bảng số liệu.
 3.  CHÈN PLACEHOLDER ĐÚNG VỊ TRÍ: Với mỗi placeholder, hãy chèn ngay sau dòng mô tả có các cụm từ như: "xem hình dưới", "hình dưới đây", "bảng biến thiên", "bảng tần số", "bảng giá trị", "hình vẽ", "biểu đồ", "như hình vẽ", "thống kê lại ở bảng", hoặc ngay sau dòng câu hỏi liên quan trực tiếp tới hình/bảng/biểu đồ đó. Nếu không có từ khóa, hãy chèn vào vị trí logic nhất trong đoạn văn bản liên quan.
-4.  ĐỊNH DẠNG CÔNG THỨC TOÁN HỌC: Mọi công thức toán học, biểu thức, hệ phương trình, ký hiệu toán học phải được định dạng bằng LaTeX inline: ${...}$, Toán inline: ${...}$, vui lòng đúng dạng ${.....}$ không được bỏ dấu {...}.
+4.  ĐỊNH DẠNG CÔNG THỨC TOÁN HỌC: Mọi công thức toán học, biểu thức, hệ phương trình, ký hiệu toán học phải được định dạng bằng LaTeX inline: ${...}$, nếu có hệ phương trình, ghi đúng cú pháp ${\begin{cases} ... \end{cases}}$, không chèn dư \begin{cases x... hoặc {cases x...!.
 5.  CHUYỂN BẢNG SỐ LIỆU SANG MARKDOWN: Nếu phát hiện bảng số liệu, hãy chuyển đổi chúng thành định dạng bảng Markdown nếu có thể.
 6.  ĐỊNH DẠNG CÂU HỎI: Tuân thủ nghiêm ngặt các định dạng sau cho từng loại câu hỏi:
     1.  Trắc nghiệm 4 phương án: mỗi lựa chọn trên dòng riêng.
