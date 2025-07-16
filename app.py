@@ -11,6 +11,35 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
+def merge_latex_blocks_multiline(text):
+    # Ghép các block trên nhiều dòng về cùng một dòng
+    lines = text.split('\n')
+    new_lines = []
+    buffer = ""
+    for line in lines:
+        if line.count('${') == 1 and line.count('}$') == 0:
+            buffer += line + " "
+        elif buffer:
+            buffer += line
+            new_lines.append(buffer)
+            buffer = ""
+        else:
+            new_lines.append(line)
+    if buffer:
+        new_lines.append(buffer)
+    return '\n'.join(new_lines)
+
+def merge_split_latex_blocks(text):
+    # Gom lại các block ${...}${...}$ liền nhau thành một block duy nhất nếu cùng dòng
+    def merge(match):
+        g = match.group(0)
+        # loại bỏ dấu ${ và }$ giữa các block, chỉ giữ ${ ở đầu và }$ ở cuối
+        inside = re.sub(r'(\$\{|\}\$)', '', g)
+        return '${' + inside + '}$'
+    text = re.sub(r'(\$\{[^\$]*\}\$){2,}', merge, text)
+
+    # Đặc biệt: Gom các block kiểu ${...}${...}${...}$ thành ${... ... ...}$
+    return text
 
 def markdown_image_to_hinh_tag(text):
     # Chuyển ![img-0.jpeg](img-0.jpeg) thành [HÌNH: img-0.jpeg]
@@ -470,6 +499,8 @@ with tab_pdf:
     if st.session_state.get("ocr_done"):
         raw_text = st.session_state.get("ocr_text_raw", "")
         text_content = normalize_math_latex(raw_text)
+        text_content = merge_split_latex_blocks(text_content)
+        text_content = merge_latex_blocks_multiline(text_content)
         text_content = markdown_image_to_hinh_tag(text_content)  # <-- CHUYỂN MARKDOWN ẢNH thành TAG [HÌNH: ...]
         images = st.session_state.get("ocr_images", [])
         tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
