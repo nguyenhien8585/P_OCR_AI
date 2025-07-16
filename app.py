@@ -182,65 +182,52 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
 # --------- Định dạng Markdown cho câu hỏi ---------
 def format_exam_markdown(text):
     """
-    - Tách các câu hỏi trắc nghiệm 4 đáp án thành block Câu X + 4 dòng đáp án
-    - Mapping [HÌNH: ...] đúng vị trí
-    - Định dạng phần Đúng/Sai: mỗi ý trên 1 dòng, có thể thêm [ ] Đúng/Sai
-    - Giữ công thức LaTeX, không chỉnh sửa dấu $
-    - Đảm bảo các dòng trống hợp lý giữa các câu
+    Định dạng câu hỏi trắc nghiệm 4 phương án thành:
+    Câu X: [nội dung]
+    A. [đáp án]
+    B. [đáp án] 
+    C. [đáp án]
+    D. [đáp án]
+    Định dạng câu hỏi trắc nghiệm đúng sai thành:
+    Câu X: [nội dung]
+    a) [đáp án]
+    b) [đáp án]
+    c) [đáp án]
+    d) [đáp án]
     """
 
-    # Xử lý 4 đáp án thành block trắc nghiệm
-    def format_choices(block):
-        m = re.match(r"^(Câu\s*\d+[\.|:])(.+?)(A\..+?B\..+?C\..+?D\..+?)$", block, re.DOTALL)
-        if m:
-            pre, question, choices = m.group(1), m.group(2), m.group(3)
-            abcd = re.findall(r"([A-D]\..*?)(?=(?:[A-D]\.|$))", choices, re.DOTALL)
-            choices_block = "\n".join(x.strip().replace('\n', ' ') for x in abcd)
-            return f"{pre}{question.strip()}\n{choices_block}"
-        return block
-
-    lines = text.split('\n')
-    out = []
-    buffer = ""
-    for line in lines + [""]:
-        if re.match(r"^\s*Câu\s*\d+[\.|:]", line):
-            if buffer.strip():
-                out.append(format_choices(buffer.strip()))
-            buffer = line
+    # 1. Tách các câu hỏi thành block riêng
+    questions = re.split(r'(Câu\s*\d+:)', text)
+    questions = [q.strip() for q in questions if q.strip()]
+    
+    # 2. Xử lý từng câu hỏi
+    formatted_questions = []
+    for i in range(1, len(questions), 2):
+        question_num = questions[i-1]  # "Câu X:"
+        content = questions[i]         # Nội dung câu hỏi và đáp án
+        
+        # Tách nội dung chính và các đáp án
+        # Giả sử đáp án bắt đầu bằng A. B. C. D.
+        pattern = r'(A\..*?)(B\..*?)(C\..*?)(D\..*?)$'
+        match = re.search(pattern, content, re.DOTALL)
+        
+        if match:
+            # Lấy nội dung chính (phần trước đáp án)
+            main_content = content[:match.start()].strip()
+            
+            # Xây dựng lại câu hỏi theo định dạng mong muốn
+            formatted = f"{question_num} {main_content}\n"
+            formatted += f"{match.group(1).strip()}\n"
+            formatted += f"{match.group(2).strip()}\n" 
+            formatted += f"{match.group(3).strip()}\n"
+            formatted += f"{match.group(4).strip()}"
+            
+            formatted_questions.append(formatted)
         else:
-            buffer += "\n" + line
-    if buffer.strip():
-        out.append(format_choices(buffer.strip()))
-    text = "\n\n".join(out)
+            formatted_questions.append(f"{question_num} {content}")
 
-    # Định dạng phần Đúng/Sai
-    def format_true_false(block):
-        lines = block.split('\n')
-        new_lines = []
-        for l in lines:
-            if re.match(r"^[a-d]\)", l.strip()):
-                l = l.strip()
-                new_lines.append(f"{l} [ ] Đúng [ ] Sai")
-            else:
-                new_lines.append(l)
-        return "\n".join(new_lines)
-
-    blocks = text.split('\n\n')
-    for i, b in enumerate(blocks):
-        if re.search(r"\ba\)", b) and re.search(r"\bb\)", b) and re.search(r"\bc\)", b):
-            blocks[i] = format_true_false(b)
-    text = "\n\n".join(blocks)
-
-    # Đảm bảo mỗi tag [HÌNH: ...] ở 1 dòng riêng
-    text = re.sub(r"([^\n])(\[HÌNH: [^\]]+\])", r"\1\n\2", text)
-    text = re.sub(r"(\[HÌNH: [^\]]+\])([^\n])", r"\1\n\2", text)
-    text = re.sub(r"([^\n])(\[BẢNG: [^\]]+\])", r"\1\n\2", text)
-    text = re.sub(r"(\[BẢNG: [^\]]+\])([^\n])", r"\1\n\2", text)
-
-    # Chuẩn hóa 2 dòng trống giữa các câu hỏi
-    text = re.sub(r"\n{3,}", "\n\n", text)
-
-    return text.strip()
+    # 3. Join các câu hỏi đã định dạng
+    return '\n\n'.join(formatted_questions)
 
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
@@ -477,6 +464,7 @@ with tab_pdf:
         with tab1:
             st.markdown("#### 📋 Kết quả OCR PDF:")
             formatted_text = format_exam_markdown(text_content)
+            st.session_state[text_key] = formatted_text
             st.text_area("Nội dung đã được phân tích:", formatted_text, height=350, label_visibility="collapsed")
             
             col1, col2 = st.columns(2)
