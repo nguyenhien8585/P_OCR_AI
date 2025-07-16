@@ -10,7 +10,37 @@ from config import API_URL, API_KEY
 from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
-   
+
+
+def replace_placeholders(text, images):
+    img_idx = 0
+    table_idx = 0
+    def repl(match):
+        nonlocal img_idx, table_idx
+        if match.group(0) == "[HÌNH_PLACEHOLDER]":
+            # Dò đến ảnh chưa dùng
+            while img_idx < len(images):
+                if not images[img_idx]["is_table"]:
+                    name = f"img-{img_idx}.jpeg"
+                    img_idx += 1
+                    return f"[HÌNH: {name}]"
+                img_idx += 1
+            name = f"img-{img_idx}.jpeg"
+            img_idx += 1
+            return f"[HÌNH: {name}]"
+        elif match.group(0) == "[BẢNG_PLACEHOLDER]":
+            while table_idx < len(images):
+                if images[table_idx]["is_table"]:
+                    name = f"table-{table_idx}.jpeg"
+                    table_idx += 1
+                    return f"[BẢNG: {name}]"
+                table_idx += 1
+            name = f"table-{table_idx}.jpeg"
+            table_idx += 1
+            return f"[BẢNG: {name}]"
+        else:
+            return match.group(0)
+    return re.sub(r"\[HÌNH_PLACEHOLDER\]|\[BẢNG_PLACEHOLDER\]", repl, text)
 # ==================== CHUẨN HÓA LaTeX TOÁN ====================
 def fix_missing_backslash_cases(text):
     # Thêm \ vào begincases, endcases nếu thiếu (cho hệ phương trình)
@@ -444,7 +474,6 @@ with tab_pdf:
             cols[1].metric("Loại file", mime_type)
             cols[2].metric("Kích thước", f"{size_mb:.1f} MB")
             st.caption(f"Số trang: {num_pages}")
-
     if uploaded_file and st.button("🚀 Xử lý OCR PDF", type="primary", use_container_width=True):
         st.info("⏳ Đang xử lý OCR PDF... (vui lòng chờ)")
         with st.spinner("Đang nhận diện văn bản và trích xuất hình ảnh..."):
@@ -452,12 +481,6 @@ with tab_pdf:
             uploaded_file.seek(0)
             pdf_bytes = uploaded_file.read()
             images = extract_images_from_pdf(pdf_bytes)
-            # Đổi tên các hình về đúng định dạng img-X.jpeg X từ 0
-            for idx, fig in enumerate(images):
-                if fig["is_table"]:
-                    fig["name"] = f"table-{idx}.jpeg"
-                else:
-                    fig["name"] = f"img-{idx}.jpeg"
             result = client.convert(pdf_bytes, file_name, mime_type)
         if not result.get("success"):
             st.error("❌ Xử lý OCR PDF thất bại: " + str(result.get("error")))
@@ -466,39 +489,13 @@ with tab_pdf:
         st.session_state["ocr_images"] = images
         st.session_state["ocr_done"] = True
         st.success("✅ Đã nhận diện PDF thành công!")
-
     if st.session_state.get("ocr_done"):
         raw_text = st.session_state.get("ocr_text_raw", "")
         images = st.session_state.get("ocr_images", [])
-        # Đổi các placeholder về đúng tên hình [HÌNH: img-X.jpeg]
-        def replace_placeholders(text, images):
-            img_idx = 0
-            table_idx = 0
-            def repl(match):
-                nonlocal img_idx, table_idx
-                if match.group(0) == "[HÌNH_PLACEHOLDER]":
-                    for k in range(img_idx, len(images)):
-                        if not images[k]["is_table"]:
-                            name = f"img-{k}.jpeg"
-                            img_idx = k + 1
-                            return f"[HÌNH: {name}]"
-                    return "[HÌNH: img-x.jpeg]"
-                elif match.group(0) == "[BẢNG_PLACEHOLDER]":
-                    for k in range(table_idx, len(images)):
-                        if images[k]["is_table"]:
-                            name = f"table-{k}.jpeg"
-                            table_idx = k + 1
-                            return f"[BẢNG: {name}]"
-                    return "[BẢNG: table-x.jpeg]"
-                else:
-                    return match.group(0)
-            text = re.sub(r"\[HÌNH_PLACEHOLDER\]|\[BẢNG_PLACEHOLDER\]", repl, raw_text)
-            return text
 
-        # Thay placeholder đúng theo tên
+        # -- Chèn đúng placeholder hình và bảng --
         replaced_text = replace_placeholders(raw_text, images)
-        # Chuẩn hóa LaTeX
-        text_content = normalize_math_latex(replaced_text)
+        text_content = normalize_math_latex(replaced_text)   # CHUẨN HÓA TOÁN
 
         tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
         with tab1:
@@ -551,7 +548,6 @@ with tab_pdf:
                 st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
     st.markdown("---")
     st.caption("✨ Hệ thống sử dụng AI nâng cao để nhận diện chính xác văn bản toán học và tự động mapping hình ảnh/bảng vào đúng vị trí")
-
 
 if st.sidebar.checkbox("ℹ️ Hiển thị thông tin kỹ thuật"):
     st.sidebar.write("**Phiên bản:** 1.5.0")
