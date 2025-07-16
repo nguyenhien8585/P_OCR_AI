@@ -403,7 +403,7 @@ with tab_img:
                     if figures:
                         for fig in figures:
                             img_bytes_fig = base64.b64decode(fig["base64"])
-                            st.image(img_bytes_fig, caption=fig["name"], use_column_width=True)
+                            st.image(img_bytes_fig, caption=fig["name"], use_container_width=True)
                             st.download_button(
                                 f"Tải {fig['name']}",
                                 img_bytes_fig,
@@ -494,7 +494,7 @@ with tab_pdf:
                         with cols[idx % 4]:
                             with st.expander(fig["name"], expanded=True):
                                 img_bytes = base64.b64decode(fig["base64"])
-                                st.image(img_bytes, use_column_width=True)
+                                st.image(img_bytes, use_container_width=True)
                                 st.download_button(
                                     f"Tải {fig['name']}",
                                     img_bytes,
