@@ -12,42 +12,51 @@ from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
 # ==== Hàm ĐỊNH DẠNG ĐỀ ĐẸP CHUẨN GIÁO VIÊN ====
+import re
+
 def format_exam_markdown(text):
+    # Đưa các tag [BẢNG: ...], [HÌNH: ...] về dòng riêng
     text = re.sub(r'([^\n])(\[BẢNG: [^\]]+\])', r'\1\n\2', text)
     text = re.sub(r'(\[BẢNG: [^\]]+\])([^\n])', r'\1\n\2', text)
     text = re.sub(r'([^\n])(\[HÌNH: [^\]]+\])', r'\1\n\2', text)
     text = re.sub(r'(\[HÌNH: [^\]]+\])([^\n])', r'\1\n\2', text)
-    # Tách block cho mỗi câu hỏi (Câu X.)
-    pattern = re.compile(r'(Câu\s*\d+[\.|:])')
-    splits = pattern.split(text)
+
+    # Tách block cho mỗi câu hỏi (Câu X.) kể cả nhiều dòng nội dung
     blocks = []
-    header = splits[0].strip()
-    if header:
-        blocks.append(header)
-    for i in range(1, len(splits), 2):
-        ques = splits[i].strip() # "Câu X."
-        content = splits[i+1] if i+1 < len(splits) else ''
-        # Tìm vị trí bắt đầu đáp án (A. B. C. D. đều trên dòng riêng hoặc liền mạch)
-        answer_match = re.search(r'(\n|^)\s*A\.', content)
-        if answer_match:
-            idx = answer_match.start()
-            main_content = content[:idx].strip()
-            rest = content[idx:].strip()
-        else:
-            main_content = content.strip()
-            rest = ''
-        # Đảm bảo mỗi đáp án xuống dòng riêng
-        rest = re.sub(r'\s*A\.', '\nA.', rest)
-        rest = re.sub(r'\s*B\.', '\nB.', rest)
-        rest = re.sub(r'\s*C\.', '\nC.', rest)
-        rest = re.sub(r'\s*D\.', '\nD.', rest)
-        block = f"{ques} {main_content}".strip()
-        if rest:
-            block += "\n" + rest
-        blocks.append(block.strip())
-    result = '\n\n'.join(blocks).strip()
+    curr = []
+    for line in text.split('\n'):
+        if re.match(r'^Câu\s*\d+[.:]', line.strip()):   # Gặp Câu X.
+            if curr:
+                blocks.append('\n'.join(curr).strip())
+                curr = []
+        curr.append(line)
+    if curr:
+        blocks.append('\n'.join(curr).strip())
+
+    # Đảm bảo mỗi đáp án A. B. C. D. đều xuống dòng riêng, không bị nối sát câu hỏi
+    def fix_choices(block):
+        # Tìm dòng bắt đầu bằng A. (không tính dấu chấm câu ở cuối nội dung)
+        parts = re.split(r'\n(?=A\.)', block, flags=re.MULTILINE)
+        if len(parts) > 1:
+            before = parts[0]
+            choices = '\n'.join(parts[1:])
+
+            # Đảm bảo đáp án mỗi dòng một đáp án
+            choices = re.sub(r'\s*A\.', '\nA.', choices)
+            choices = re.sub(r'\s*B\.', '\nB.', choices)
+            choices = re.sub(r'\s*C\.', '\nC.', choices)
+            choices = re.sub(r'\s*D\.', '\nD.', choices)
+            # Xóa dòng trống thừa
+            block = before.strip() + '\n' + choices.strip()
+        # Giữ bảng Markdown hoặc tag bảng nếu có
+        block = re.sub(r'([^\n])(\|)', r'\1\n\2', block)  # bảng dính trên 1 dòng thì tách ra
+        return block.strip()
+
+    result = '\n\n'.join([fix_choices(b) for b in blocks if b.strip()])
+
+    # Tách phần trang/mã đề nếu có
     result = re.sub(r'(Trang\s*\d+\/\d+\s*-\s*Mã đề\s*\d+)', r'\n\n---\n\1\n---\n', result)
-    return result
+    return result.strip()
 
 def filter_nested_boxes(candidates):
     filtered = []
