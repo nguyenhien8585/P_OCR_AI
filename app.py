@@ -13,169 +13,68 @@ from word_export import insert_images_to_word_from_markdown
 
 import re
 
+def normalize_math_latex(text):
+    text = re.sub(r'\}\$\s*\$\{', '', text)
+    text = re.sub(r'\$\{', '${', text)
+    text = re.sub(r'\}\$', '}$', text)
+    while True:
+        new_text = re.sub(r'\}\$\s*\$\{', '', text)
+        if new_text == text:
+            break
+        text = new_text
+    text = re.sub(r'\$\{\s*\}\$', '', text)
+    text = re.sub(r'\${2,}', '${', text)
+    text = re.sub(r'\}{2,}\$', '}$', text)
+    text = re.sub(r'(?<!\\)begin\{?cases\}?', r'\\begin{cases}', text)
+    text = re.sub(r'(?<!\\)end\{?cases\}?', r'\\end{cases}', text)
+    text = re.sub(r'\\begin{cases}+', r'\\begin{cases}', text)
+    text = re.sub(r'\\end{cases}+', r'\\end{cases}', text)
+    text = re.sub(r'\$\{[ \t\r\n]*', '${', text)
+    text = re.sub(r'[ \t\r\n]*\}\$', '}$', text)
+    def fix_parentheses(m):
+        s = m.group(1)
+        s = re.sub(r'\(\s*\(', '(', s)
+        s = re.sub(r'\)\s*\)', ')', s)
+        s = re.sub(r'\{\s*\{', '{', s)
+        s = re.sub(r'\}\s*\}', '}', s)
+        s = re.sub(r'\((\([^()]*\))\)', r'\1', s)
+        s = re.sub(r'\(([^()]*\)\))', r'(\1', s)
+        s = re.sub(r'\(\(([^()]*)\)\)', r'(\1)', s)
+        s = re.sub(r'\(\(([^\)]*)\)\)', r'(\1)', s)
+        return '${' + s.strip() + '}$'
+    text = re.sub(r'\$\{([^\$]+?)\}\$', fix_parentheses, text)
+    return text
+
 def fix_func_paren_latex(text):
-    """
-    Gộp mọi trường hợp bị tách giữa tên hàm và (x): f (x), g (x), h (y)... chỉ trong nội dung latex ${...}$.
-    """
     def replacer(m):
         s = m.group(1)
-        # Gộp f (x) => f(x), g (x) => g(x), v.v.
         s = re.sub(r'([a-zA-Z])\s+\((\w)\)', r'\1(\2)', s)
-        # Gộp f (x)) => f(x)),...
-        s = re.sub(r'([a-zA-Z])\s+\((\w)\)\)', r'\1(\2))', s)
-        # Gộp các hàm nhiều ký tự, ví dụ: sin (x), log (x)
         s = re.sub(r'(sin|cos|tan|cot|log|exp|arcsin|arccos|arctan)\s+\((\w)\)', r'\1(\2)', s)
         return '${' + s + '}$'
-    # Áp dụng cho từng block ${...}$
     return re.sub(r'\$\{([^\$]+?)\}\$', replacer, text)
 
-def fix_braces_and_parens_latex(text):
-    def process_formula(m):
-        s = m.group(1)
-        # Bỏ ngoặc tròn thừa liên tiếp ((...)) => (...)
-        s = re.sub(r'\(\((.*?)\)\)', r'(\1)', s)
-        s = re.sub(r'\(\((.*?)\)', r'(\1', s)
-        s = re.sub(r'\((.*?)\)\)', r'(\1)', s)
-        # Nếu nhiều dấu ) ở cuối => bỏ bớt cho khớp
-        while '))' in s:
-            s = s.replace('))', ')')
-        while '((' in s:
-            s = s.replace('((', '(')
-        # Bổ sung nếu thiếu ngoặc tròn
-        open_paren = s.count('(')
-        close_paren = s.count(')')
-        if open_paren > close_paren:
-            s += ')' * (open_paren - close_paren)
-        elif close_paren > open_paren:
-            s = '(' * (close_paren - open_paren) + s
-        # Bổ sung nếu thiếu ngoặc nhọn
-        open_brace = s.count('{')
-        close_brace = s.count('}')
-        if open_brace > close_brace:
-            s += '}' * (open_brace - close_brace)
-        elif close_brace > open_brace:
-            s = '{' * (close_brace - open_brace) + s
-        # Xử lý đặc biệt log, sin, cos, v.v.
-        s = re.sub(
-            r'(log|sin|cos|tan|cot|sec|csc)_\{([^\{\}]+) ([a-zA-Z0-9\\\^\_\(\)\[\]\s]+)\}',
-            lambda m2: f'{m2.group(1)}_{{{m2.group(2)}}} {m2.group(3)}',
-            s
-        )
-        return '${' + s + '}$'
-    return re.sub(r'\$\{([^\$]+?)\}\$', process_formula, text)
-    
-def fix_log_base_brace(text):
-    # Sửa log_{\sqrt{2}-1 x} thành log_{\sqrt{2}-1} x cho mọi trường hợp log, sin, cos, tan, ...
-    def replacer(m):
-        func = m.group(1)
-        base = m.group(2).rstrip()
-        # Nếu base thiếu }, thêm vào sau số, ký tự, hoặc dấu )
-        if not base.endswith('}'):
-            base += '}'
-        rest = m.group(3)
-        return f'${{{func}_{{{base}}} {rest}}}$'
-    # log, sin, cos, tan, cot, sec, csc bị thiếu }
+def fix_latex_missing_braces(text):
     text = re.sub(
-        r'\$\{\\?(log|sin|cos|tan|cot|sec|csc)_\{([^\{\}$]+)\s+([^\}$]+)\}}\$',
-        replacer,
-        text
-    )
+        r'(\$\{[^\}]*?log_[^\}]+[a-zA-Z0-9\\\^\_\-\s]+)\}\$',
+        lambda m: m.group(1) + '}}$', text)
     return text
 
 def fix_vector_notation(text):
-    # Sửa ${\overrightarrow{n = (1;-1;3)}$ thành ${\overrightarrow{n} = (1;-1;3)}$
-    text = re.sub(
-        r'\$\{\\overrightarrow\{([a-zA-Z])\s*=\s*([^)]+)\)\$\}',
-        r'${\\overrightarrow{\1} = (\2)}$',
-        text
-    )
-    # Sửa lỗi thiếu } kết thúc
-    text = re.sub(
-        r'\\overrightarrow\{([a-zA-Z])\s*=\s*([^)]+)\)',
-        r'\\overrightarrow{\1} = (\2)',
-        text
-    )
-    # Nếu viết nhầm dấu = trong {}, tách ra
-    text = re.sub(
-        r'\\overrightarrow\{([a-zA-Z])=([^)]+)\}',
-        r'\\overrightarrow{\1} = (\2)',
-        text
-    )
+    text = re.sub(r'\\overrightarrow\{\s*([a-zA-Z])\s*=\s*\(([^)]+)\)\}', r'\\overrightarrow{\1} = (\2)', text)
+    text = re.sub(r'\(\(([^)]+)\)\)', r'(\1)', text)
+    text = re.sub(r'\(\(([^)]+)\)', r'(\1', text)
+    text = re.sub(r'\(([^)]+)\)\)', r'(\1)', text)
     return text
 
-def fix_cases_brace(text):
-    # Sửa \begin{cases... thiếu } thành \begin{cases}
-    text = re.sub(r'(\\begin\{cases)([^\}])', r'\1}', text)
-    return text
-
-def fix_integral_brace(text):
-    # Sửa ${\int_{1}^{2 (2+f(x))dx}$ => ${\int_{1}^{2} (2+f(x))\, dx}$
-    # Thêm } sau số mũ trên nếu thiếu
-    text = re.sub(
-        r'(\\int_\{[^\}]+\}\^\{[^\}]+)\s*\(',
-        lambda m: m.group(1) + '} (',
-        text
-    )
-    # Thêm \, cho dx
-    text = re.sub(r'dx\}\$', r'\\, dx}$', text)
-    text = re.sub(r'dx}', r'\\, dx}', text)
-    return text
-
-def normalize_math_latex(text):
-    # Gom các đoạn bị tách nhỏ thành ${...}$
-    text = re.sub(r'\}\$\{', '', text)
-    text = re.sub(r'\$\{', '${', text)
-    text = re.sub(r'\}\$', '}$', text)
-
-    # Gom nhiều dấu ${...}${...}$ về thành ${...}$
-    text = re.sub(r'\$\{([^\$]*)\}\$\{([^\$]*)\}\$', lambda m: '${' + m.group(1) + m.group(2) + '}$', text)
-
-    # Với trường hợp ...${abc${def} ghi thành ${abcdef}$
-    def merge_nested(match):
-        g = match.group(0)
-        g = g.replace('${', '').replace('}$', '')
-        return '${' + g.replace('}{', '') + '}$'
-    text = re.sub(r'(\$\{[^\$]*\}\$)+', merge_nested, text)
-
-    # Đổi mọi xuất hiện của log${...}${x... về ${\log_{...} x}$
-    text = re.sub(
-        r'([a-zA-Z]+)\$\{([^\}]*)\}\$\{?([a-zA-Z0-9\\\^\_\{\}\(\)\[\]\s]+)\}?', 
-        lambda m: '${\\' + m.group(1) + '_{' + m.group(2) + '} ' + m.group(3).strip() + '}$',
-        text
-    )
-
-    # Sửa lỗi ${{{...}$ hoặc ${{...}$ thành ${...}$ (xóa ngoặc thừa)
-    text = re.sub(r'\$\{{2,}', '${', text)
-    text = re.sub(r'\}{2,}\$', '}$', text)
-
-    # Nối lại các đoạn bị tách: ...}$...${... thành ${...}$
-    text = re.sub(r'\}\$[\.\s]*\$\{', '', text)
-
-    # Đổi các $...$ còn sót thành ${...}$
-    text = re.sub(r'\$(?!\{)([^\$]+?)\$', lambda m: '${' + m.group(1).strip() + '}$', text)
-
-    # Loại dấu ngoặc lẻ đầu/ cuối
-    text = re.sub(r'(^|\s)[\}\{]+', r'\1', text)
-    text = re.sub(r'[\}\{]+(\s|$)', r'\1', text)
-
-    # Nối liền 2 công thức cạnh nhau thành 1
-    def merge_multiple_formulae(text):
-        while True:
-            new_text = re.sub(r'\}\$\s*\$\{', ' ', text)
-            if new_text == text:
-                break
-            text = new_text
-        return text
-    text = merge_multiple_formulae(text)
-
-    # Loại bỏ dấu thừa giữa chữ và ${ hoặc }$
-    text = re.sub(r'([a-zA-Z0-9])\s*\$\{', r' ${', text)
-    text = re.sub(r'\}\$\s*([a-zA-Z0-9])', r'}$ \1', text)
-
-    # Loại bỏ mọi ${ hoặc }$ đơn lẻ không có nội dung
-    text = re.sub(r'\$\{\s*\}\$', '', text)
-    return text
-
+def fix_integral_braces(text):
+    def replacer(m):
+        expr = m.group(1)
+        expr = re.sub(r'f\s*\(x\)', 'f(x)', expr)
+        expr = re.sub(r'(\(2\+f\(x\))(?=\s*\))', r'\1)', expr)
+        if expr.count('(') > expr.count(')'):
+            expr += ')' * (expr.count('(') - expr.count(')'))
+        return '${' + expr + '}$'
+    return re.sub(r'\$\{([^\$]*int_[^\$]*)\}\$', replacer, text)
 # ==================== CHUẨN HÓA LaTeX TOÁN ====================
 def fix_missing_backslash_cases(text):
     # Thêm \ vào begincases, endcases nếu thiếu (cho hệ phương trình)
@@ -510,13 +409,11 @@ with tab_img:
                     except Exception as e:
                         text = f"[Lỗi Gemini: {e}]"
                 text = fix_missing_backslash_cases(text)
-                text = normalize_math_latex(text)  # CHUẨN HÓA TOÁN
-                text = fix_cases_brace(text)
-                text = fix_vector_notation(text)
-                text = fix_log_base_brace(text) 
-                text = fix_integral_brace(text)
-                text = fix_braces_and_parens_latex(text)
+                text = normalize_math_latex(text)
                 text = fix_func_paren_latex(text)
+                text = fix_latex_missing_braces(text)
+                text = fix_vector_notation(text)
+                text = fix_integral_braces(text)
                 text = remove_all_figure_markdown(text)
                 text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
                 formatted_text = format_exam_markdown(text)
