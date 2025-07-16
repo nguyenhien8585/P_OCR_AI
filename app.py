@@ -464,7 +464,6 @@ with tab_pdf:
         with tab1:
             st.markdown("#### 📋 Kết quả OCR PDF:")
             formatted_text = format_exam_markdown(text_content)
-            st.session_state[text_key] = formatted_text
             st.text_area("Nội dung đã được phân tích:", formatted_text, height=350, label_visibility="collapsed")
             
             col1, col2 = st.columns(2)
