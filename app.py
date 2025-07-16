@@ -101,11 +101,6 @@ def format_exam_markdown(text):
         blk = re.sub(r'(?<!\n)[ ]*b\)', r'\nb)', blk)
         blk = re.sub(r'(?<!\n)[ ]*c\)', r'\nc)', blk)
         blk = re.sub(r'(?<!\n)[ ]*d\)', r'\nd)', blk)
-        # Tách đáp án trắc nghiệm kiểu a., b., c., d.
-        blk = re.sub(r'(?<!\n)[ ]*a\.', r'\na.', blk)
-        blk = re.sub(r'(?<!\n)[ ]*b\.', r'\nb.', blk)
-        blk = re.sub(r'(?<!\n)[ ]*c\.', r'\nc.', blk)
-        blk = re.sub(r'(?<!\n)[ ]*d\.', r'\nd.', blk)
         lines = [l.strip() for l in blk.split('\n')]
         lines = [l for i, l in enumerate(lines) if l or (i > 0 and lines[i-1])]
         result_blocks.append('\n'.join(lines))
