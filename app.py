@@ -14,36 +14,39 @@ from word_export import insert_images_to_word_from_markdown
 import re
 
 def fix_braces_and_parens_latex(text):
-    """
-    Sửa triệt để mọi lỗi thiếu/thừa dấu } và ) trong các biểu thức LaTeX dạng ${...}$.
-    Đảm bảo mỗi block luôn đóng đủ } và ) nếu xuất hiện thiếu.
-    """
-    def fix_block(m):
-        formula = m.group(1)
-        # Fix dấu ngoặc nhọn ({}):
-        open_brace = formula.count('{')
-        close_brace = formula.count('}')
-        if open_brace > close_brace:
-            formula += '}' * (open_brace - close_brace)
-        elif close_brace > open_brace:
-            formula = '{' * (close_brace - open_brace) + formula
-        # Fix dấu ngoặc tròn ():
-        open_paren = formula.count('(')
-        close_paren = formula.count(')')
+    def process_formula(m):
+        s = m.group(1)
+        # Bỏ ngoặc tròn thừa liên tiếp ((...)) => (...)
+        s = re.sub(r'\(\((.*?)\)\)', r'(\1)', s)
+        s = re.sub(r'\(\((.*?)\)', r'(\1', s)
+        s = re.sub(r'\((.*?)\)\)', r'(\1)', s)
+        # Nếu nhiều dấu ) ở cuối => bỏ bớt cho khớp
+        while '))' in s:
+            s = s.replace('))', ')')
+        while '((' in s:
+            s = s.replace('((', '(')
+        # Bổ sung nếu thiếu ngoặc tròn
+        open_paren = s.count('(')
+        close_paren = s.count(')')
         if open_paren > close_paren:
-            formula += ')' * (open_paren - close_paren)
+            s += ')' * (open_paren - close_paren)
         elif close_paren > open_paren:
-            formula = '(' * (close_paren - open_paren) + formula
-        # Xử lý đặc biệt cho các lỗi như log_{\sqrt{2}-1 x} (log base bị thiếu })
-        formula = re.sub(
+            s = '(' * (close_paren - open_paren) + s
+        # Bổ sung nếu thiếu ngoặc nhọn
+        open_brace = s.count('{')
+        close_brace = s.count('}')
+        if open_brace > close_brace:
+            s += '}' * (open_brace - close_brace)
+        elif close_brace > open_brace:
+            s = '{' * (close_brace - open_brace) + s
+        # Xử lý đặc biệt log, sin, cos, v.v.
+        s = re.sub(
             r'(log|sin|cos|tan|cot|sec|csc)_\{([^\{\}]+) ([a-zA-Z0-9\\\^\_\(\)\[\]\s]+)\}',
-            lambda m: f'{m.group(1)}_{{{m.group(2)}}} {m.group(3)}',
-            formula
+            lambda m2: f'{m2.group(1)}_{{{m2.group(2)}}} {m2.group(3)}',
+            s
         )
-        return '${' + formula + '}$'
-    # Chỉ xử lý bên trong ${...}$
-    text = re.sub(r'\$\{([^\$]+?)\}\$', fix_block, text)
-    return text
+        return '${' + s + '}$'
+    return re.sub(r'\$\{([^\$]+?)\}\$', process_formula, text)
     
 def fix_log_base_brace(text):
     # Sửa log_{\sqrt{2}-1 x} thành log_{\sqrt{2}-1} x cho mọi trường hợp log, sin, cos, tan, ...
