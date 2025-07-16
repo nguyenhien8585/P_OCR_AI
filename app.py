@@ -13,26 +13,80 @@ from word_export import insert_images_to_word_from_markdown
 
 import re
 
+def fix_missing_backslash_cases(text):
+    # Thêm \ vào begincases, endcases nếu thiếu (cho hệ phương trình)
+    text = re.sub(r'\$\{\s*begincases', r'${\\begin{cases}', text)
+    text = re.sub(r'(?<!\\)begincases', r'\\begin{cases}', text)
+    text = re.sub(r'(?<!\\)endcases', r'\\end{cases}', text)
+    return text
+
+def fix_math_special_cases(text):
+    # 1. Ghép các block liền kề ${...}${...}$ -> ${... ...}$
+    text = re.sub(r'\}\$\s*\$\{', ' ', text)
+    # 2. Xóa dấu } hoặc { lẻ ở đầu/cuối block
+    text = re.sub(r'\$\{+([^\$]*)\}\$+', r'${\1}$', text)
+    text = re.sub(r'\{+\$([^\$]*)\$', r'${\1}$', text)
+    text = re.sub(r'\$\{([^\$]*)\${', r'${\1}$', text)
+    text = re.sub(r'\$+\{*([^\$]*)\}*\$+', r'${\1}$', text)
+    # 3. Đổi $...$ (ko phải ${...}$) về ${...}$
+    text = re.sub(r'\$(?!\{)([^\$]+?)\$', lambda m: '${' + m.group(1).strip() + '}$', text)
+    # 4. Đổi {...} rời rạc thành ${...}$ (ko phải markdown table)
+    text = re.sub(r'(?<!\$)\{([^\{\}\n]+)\}(?!\$)', r'${\1}$', text)
+    # 5. Sửa vector thừa hoặc thiếu }
+    text = re.sub(r'\\overrightarrown\s*=\s*\(([^)]*)\)', r'\\overrightarrow{n} = (\1)', text)
+    text = re.sub(r'\\overrightarrow\s*\{([a-zA-Z])\}\s*=\s*\(([^)]*)\)\)', r'\\overrightarrow{\1} = (\2)', text)
+    text = re.sub(r'\\overrightarrow\s*\{([a-zA-Z])\}\s*=\s*\(([^)]*)\)', r'\\overrightarrow{\1} = (\2)', text)
+    # 6. Sửa begin{cases} thừa/thiếu \
+    text = re.sub(r'(\\*)begincases', r'\\begin{cases}', text)
+    text = re.sub(r'(\\*)endcases', r'\\end{cases}', text)
+    # Nếu block begin{cases} bị thiếu }, thêm vào
+    text = re.sub(r'\\begin{cases([^}]*)\}', r'\\begin{cases}\1', text)
+    text = re.sub(r'\\end{cases([^}]*)\}', r'\\end{cases}\1', text)
+    # Nếu thiếu block }, thêm vào cuối (hiếm)
+    text = re.sub(r'(\\end{cases})(?!\})', r'\1}', text)
+    # 7. Sửa log/ln/sin/cos... thiếu cơ số/dư dấu
+    text = re.sub(r'log_([^\s\{\}]+)\s*x', lambda m: '\\log_{' + m.group(1) + '} x', text)
+    text = re.sub(r'\\log_([^\{\} ]+)\s*([a-zA-Z0-9])', r'\\log_{\1} \2', text)
+    # 8. Sửa tích phân, thiếu/dư ngoặc
+    text = re.sub(
+        r'\\int_1\^2\s*\((2\+f\(x\))\s*dx\)*', 
+        r'\\int_1^2 (2+f(x)) dx', 
+        text
+    )
+    # Sửa các trường hợp thừa ) ở cuối tích phân
+    text = re.sub(r'(\\int_[^ ]+ )([^\$)]*)\)+', r'\1\2', text)
+    # 9. Sửa các block ${...}$ bị thiếu/dư }
+    text = re.sub(r'(\${[^\$}]*)\$', lambda m: m.group(1)+'}$' if not m.group(1).endswith('}') else m.group(0), text)
+    text = re.sub(r'(\${[^}]+)\}{2,}\$', r'\1}$', text)
+    text = re.sub(r'\)\)+\$', r')$', text)
+    # 10. Sửa \mathbbR thành \mathbb{R}
+    text = re.sub(r'\\mathbbR', r'\\mathbb{R}', text)
+    text = re.sub(r'\\mathbb\{R\}', r'\\mathbb{R}', text)
+    # 11. Loại bỏ dấu } lẻ cuối dòng nếu có, và ${...}$ rỗng
+    text = re.sub(r'\${\s*}\$', '', text)
+    text = re.sub(r'\${([^}]*)}\}$', r'${\1}$', text)
+    # 12. Đảm bảo mọi ${...}$ đóng đúng
+    text = re.sub(r'(\${[^}]+)\$', lambda m: m.group(1) + '}$' if not m.group(1).endswith('}') else m.group(0), text)
+    # 13. Gộp các ${...}${...}$ liền kề
+    text = re.sub(r'\}\$\s*\$\{', ' ', text)
+    return text
+
 def fix_math_block_splits(text):
     # Gộp các block LaTeX bị tách nhỏ kiểu ${...}${...}$ hoặc ${...}$...${...}$
-    # 1. Nối các block LaTeX liền nhau: ${...}${...}$ -> ${... ...}$
     while True:
         new_text = re.sub(r'\}\$\s*\$\{', '', text)
         if new_text == text: break
         text = new_text
-
     # 2. Gộp block ${log_}${0.2 x}${ -> ${log_{0.2} x}$
     text = re.sub(
         r'\$\{([a-zA-Z]+_)\}\$\{([^\$}]+)\}\$([a-zA-Z0-9\\\^\_\(\)\[\]\s]*)\}\$',
         lambda m: '${' + m.group(1) + '{' + m.group(2) + '} ' + m.group(3).strip() + '}$', text
     )
-
     # 3. Gộp block ${log_}${\sqrt}{2}$-1} x}${  -> ${log_{\sqrt{2}-1} x}$
     text = re.sub(
         r'\$\{([a-zA-Z]+_)\}\$\{\\sqrt\}\$\{([^\$}]+)\}-1\}\s*x\}\$',
         lambda m: '${' + m.group(1) + '{\\sqrt{' + m.group(2) + '}-1} x}$', text
     )
-
     # 4. Gộp ${frac}${13 3}$}${ hoặc tương tự về ${\frac{13}{3}}$
     text = re.sub(
         r'\$\{\\frac\}\$\{([^\$ ]+)\s+([^\$ }]+)\}\$\}?', r'${\\frac{\1}{\2}}$', text
@@ -42,116 +96,37 @@ def fix_math_block_splits(text):
         r'\$\{\\frac\}\$\{([^\$}]+)\$\{([^\$}]+)\}\$\{([^\$}]+)\}\$\}?', 
         lambda m: '${\\frac{' + m.group(1) + m.group(2) + '}{' + m.group(3) + '}}$', text
     )
-
     # 5. Gộp begin-cases bị chia nhỏ: ${begin}${cases}$ ... ${end}${cases}$}${  -> ${\begin{cases} ... \end{cases}}$
     text = re.sub(
         r'\$\{\\begin\}\$\{cases\}\$(.*?)\$\{\\end\}\$\{cases\}\$\}?', 
         lambda m: '${\\begin{cases}' + m.group(1) + '\\end{cases}}$', 
         text, flags=re.DOTALL
     )
-
     # 6. Gộp vector chia nhỏ: ${overrightarrow}${n}$}${ -> ${\overrightarrow{n}}$
     text = re.sub(r'\$\{\\overrightarrow\}\$\{([a-zA-Z])\}\$\}?', r'${\\overrightarrow{\1}}$', text)
-
     # 7. Gộp mathbb chia nhỏ: ${mathbb}${R}$}${ -> ${\mathbb{R}}$
     text = re.sub(r'\$\{\\mathbb\}\$\{([A-Z])\}\$\}?', r'${\\mathbb{\1}}$', text)
-
     # 8. Gộp tích phân chia nhỏ: ${\int_}${1}$^${2}$(2+f(x)dx}${  -> ${\int_{1}^{2} (2+f(x))dx}$
     text = re.sub(
         r'\$\{\\int_\}\$\{([^\$}]+)\}\$\^\}\$\{([^\$}]+)\}\$(.*?)dx\}\$',
         r'${\\int_{\1}^{\2} \3dx}$', text
     )
-
     # 9. Block ${...}$ rỗng hoặc dư ngoặc cuối
     text = re.sub(r'\${\s*}\$', '', text)
     text = re.sub(r'(\${[^\$}]*)\}{2,}\$', r'\1}$', text)
     text = re.sub(r'\)\)+\$', r')$', text)
     # Nếu bị thiếu dấu $ ở cuối block, thêm vào
     text = re.sub(r'(\${[^}]+)\$', lambda m: m.group(1) + '}$' if not m.group(1).endswith('}') else m.group(0), text)
-
     # 10. Loại double dollar $${...}$$ -> ${...}$
     text = re.sub(r'\$\$\{', '${', text)
     text = re.sub(r'\}\$\$', '}$', text)
-
     # 11. Đảm bảo cuối mỗi block LaTeX là đúng ${...}$
     text = re.sub(r'\${([^}]*)\$', r'${\1}$', text)
-
     return text
 
 def remove_extra_dollar_sign(text):
-    # Xóa các đoạn $${...}$$ thành ${...}$
-    # Chỉ áp dụng cho các block bắt đầu bằng $${ và kết thúc bằng }$$
     text = re.sub(r'\$\$\{', '${', text)
     text = re.sub(r'\}\$\$', '}$', text)
-    # Xử lý trường hợp hiếm: $${...}$  hoặc ${...}$$
-    text = re.sub(r'\$\$\{', '${', text)
-    text = re.sub(r'\}\$\$', '}$', text)
-    return text
-
-def fix_math_special_cases(text):
-    # 1. Đưa tất cả ${...}$, {....}, $....$, .. về dạng ${...}$
-    # a) Ghép các block liền kề ${...}${...}$ -> ${... ...}$
-    text = re.sub(r'\}\$\s*\$\{', ' ', text)
-    # b) Xóa dấu } hoặc { lẻ ở đầu/cuối block
-    text = re.sub(r'\$\{+([^\$]*)\}\$+', r'${\1}$', text)
-    text = re.sub(r'\{+\$([^\$]*)\$', r'${\1}$', text)
-    text = re.sub(r'\$\{([^\$]*)\${', r'${\1}$', text)
-    text = re.sub(r'\$+\{*([^\$]*)\}*\$+', r'${\1}$', text)
-    # c) Đổi $...$ (ko phải ${...}$) về ${...}$
-    text = re.sub(r'\$(?!\{)([^\$]+?)\$', lambda m: '${' + m.group(1).strip() + '}$', text)
-    # d) Đổi {...} rời rạc thành ${...}$ (ko phải mã Markdown table)
-    text = re.sub(r'(?<!\$)\{([^\{\}\n]+)\}(?!\$)', r'${\1}$', text)
-
-    # 2. Sửa vector thừa hoặc thiếu }
-    text = re.sub(r'\\overrightarrown\s*=\s*\(([^)]*)\)', r'\\overrightarrow{n} = (\1)', text)
-    text = re.sub(r'\\overrightarrow\s*\{([a-zA-Z])\}\s*=\s*\(([^)]*)\)\)', r'\\overrightarrow{\1} = (\2)', text)
-    text = re.sub(r'\\overrightarrow\s*\{([a-zA-Z])\}\s*=\s*\(([^)]*)\)', r'\\overrightarrow{\1} = (\2)', text)
-
-    # 3. Sửa begin{cases} thừa/thiếu \
-    text = re.sub(r'(\\*)begincases', r'\\begin{cases}', text)
-    text = re.sub(r'(\\*)endcases', r'\\end{cases}', text)
-    # Nếu block begin{cases} bị thiếu }, thêm vào
-    text = re.sub(r'\\begin{cases([^}]*)\}', r'\\begin{cases}\1', text)
-    text = re.sub(r'\\end{cases([^}]*)\}', r'\\end{cases}\1', text)
-    # Nếu thiếu block }, thêm vào cuối (hiếm)
-    text = re.sub(r'(\\end{cases})(?!\})', r'\1}', text)
-
-    # 4. Sửa log/ln/sin/cos... thiếu cơ số/dư dấu
-    text = re.sub(r'log_([^\s\{\}]+)\s*x', lambda m: '\\log_{' + m.group(1) + '} x', text)
-    text = re.sub(r'\\log_([^\{\} ]+)\s*([a-zA-Z0-9])', r'\\log_{\1} \2', text)
-
-    # 5. Sửa tích phân, thiếu/dư ngoặc
-    text = re.sub(
-        r'\\int_1\^2\s*\((2\+f\(x\))\s*dx\)*', 
-        r'\\int_1^2 (2+f(x)) dx', 
-        text
-    )
-    # Sửa các trường hợp thừa ) ở cuối tích phân
-    text = re.sub(r'(\\int_[^ ]+ )([^\$)]*)\)+', r'\1\2', text)
-
-    # 6. Sửa các block ${...}$ bị thiếu } ở cuối
-    text = re.sub(r'(\${[^\$}]*)\$', lambda m: m.group(1)+'}$' if not m.group(1).endswith('}') else m.group(0), text)
-    # Dư } ở cuối: ${...}}$ -> ${...}$
-    text = re.sub(r'(\${[^}]+)\}{2,}\$', r'\1}$', text)
-    # Dư } ở trong: ${...}}$ -> ${...}$
-    text = re.sub(r'(\${[^\$]+)\}{2,}\$', r'\1}$', text)
-    # Dư ) ở cuối: ${...))}$ -> ${...)}$
-    text = re.sub(r'\)\)+\$', r')$', text)
-
-    # 7. Sửa \mathbbR thành \mathbb{R}
-    text = re.sub(r'\\mathbbR', r'\\mathbb{R}', text)
-    text = re.sub(r'\\mathbb\{R\}', r'\\mathbb{R}', text)
-
-    # 8. Loại bỏ dấu } lẻ cuối dòng nếu có, và ${...}$ rỗng
-    text = re.sub(r'\${\s*}\$', '', text)
-    text = re.sub(r'\${([^}]*)}\}$', r'${\1}$', text)
-
-    # 9. Đảm bảo mọi ${...}$ đóng đúng
-    text = re.sub(r'(\${[^}]+)\$', lambda m: m.group(1) + '}$' if not m.group(1).endswith('}') else m.group(0), text)
-
-    # 10. Gộp các ${...}${...}$ liền kề
-    text = re.sub(r'\}\$\s*\$\{', ' ', text)
-
     return text
 
     
