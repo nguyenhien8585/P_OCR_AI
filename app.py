@@ -27,7 +27,7 @@ def fix_log_base_brace(text):
         return f'${{{func}_{{{base}}} {rest}}}$'
     # log, sin, cos, tan, cot, sec, csc bị thiếu }
     text = re.sub(
-        r'\$\{\\?(log|sin|cos|tan|cot|sec|csc)_\{([^\{\}$]+)\s+([^\}$]+)\}\$',
+        r'\$\{\\?(log|sin|cos|tan|cot|sec|csc)_\{([^\{\}$]+)\s+([^\}$]+)\}}\$',
         replacer,
         text
     )
