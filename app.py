@@ -15,19 +15,18 @@ import re
 
 def fix_missing_closing_brace_in_latex(text):
     """
-    Bổ sung ngoặc } cho bất kỳ block LaTeX ${...$ bị thiếu } ở cuối.
-    Chỉ thêm nếu block không có đủ số lượng } so với {.
+    Thêm dấu } cho bất kỳ block LaTeX nào bắt đầu bằng ${ nhưng chưa kết thúc bằng }
     """
     def fix_block(match):
         content = match.group(1)
-        n_open = content.count('{')
-        n_close = content.count('}')
-        # Nếu số } thiếu, bổ sung vào
-        if n_close < n_open:
-            content = content + '}' * (n_open - n_close)
-        return '${' + content + '}$'
-    # Chỉ xét các block ${...$ mà phía sau không phải là }
-    text = re.sub(r'\$\{([^\}$]+)\$', fix_block, text)
+        # Nếu đã kết thúc bằng }, không sửa
+        if content.strip().endswith('}'):
+            return '${' + content + '$'
+        else:
+            return '${' + content + '}$'
+    # Áp dụng cho tất cả block bị thiếu } và có thể thiếu cả $
+    # Dạng phổ biến: ${...$
+    text = re.sub(r'\$\{([^}$]+)\$', fix_block, text)
     return text
 
 def fix_unbalanced_brackets_in_latex(text):
