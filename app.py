@@ -13,6 +13,66 @@ from word_export import insert_images_to_word_from_markdown
 
 import re
 
+import re
+
+def fix_math_block_splits(text):
+    # Gộp các block LaTeX bị tách nhỏ: ${...}${...}$, ${...}$ x}$, frac, vector...
+    # 1. Nối các block liền nhau ${...}${...}$ thành ${......}$
+    while True:
+        new_text = re.sub(r'\}\$\s*\$\{', '', text)
+        if new_text == text: break
+        text = new_text
+
+    # 2. Gộp ${...}$ x}$ về ${... x}$
+    text = re.sub(r'\$\{([^\$]*?)\}\$\s*([a-zA-Z0-9\\^_\{\}\(\)]+)\}\$', r'${\1 \2}$', text)
+
+    # 3. Gộp ${log_}${\sqrt2}$-1} x}${ → ${log_{\sqrt{2}-1} x}$
+    text = re.sub(
+        r'\$\{log_}\$\{(\\sqrt[^\}]+)\}-1\}\s*x\}\$',
+        r'${log_{\1-1} x}$', text
+    )
+
+    # 4. Gộp ${frac}${8 3}$}${ → ${\frac{8}{3}}$
+    text = re.sub(
+        r'\$\{\\frac\}\$\{([^\$ ]+)\s+([^\$ }]+)\}\$\}?', r'${\\frac{\1}{\2}}$', text
+    )
+    # hoặc ${frac}${13 3}$}${ → ${\frac{13}{3}}$
+    text = re.sub(
+        r'\\frac\}\$\{([^\$ ]+)\s+([^\$ }]+)\}\$', r'\\frac{\1}{\2}', text
+    )
+
+    # 5. Gộp các begin-cases hệ phương trình chia block: ${begin}${cases}$...${end}${cases}$}${ → ${\begin{cases} ... \end{cases}}$
+    text = re.sub(
+        r'\$\{\\begin\}\$\{cases\}\$(.*?)\$\{\\end\}\$\{cases\}\$\}?', 
+        lambda m: '${\\begin{cases}' + m.group(1) + '\\end{cases}}$', 
+        text, flags=re.DOTALL
+    )
+
+    # 6. Gộp vector, mathbb chia block: ${overrightarrow}${n}$}${ → ${\overrightarrow{n}}$
+    text = re.sub(r'\$\{\\overrightarrow\}\$\{([a-zA-Z])\}\$\}?', r'${\\overrightarrow{\1}}$', text)
+    text = re.sub(r'\$\{\\mathbb\}\$\{([A-Z])\}\$\}?', r'${\\mathbb{\1}}$', text)
+
+    # 7. Gộp tích phân chia block: ${\int_}${1}$^${2}$(2+f(x))dx}$ → ${\int_{1}^{2} (2+f(x))dx}$
+    text = re.sub(
+        r'\$\{\\int_\}\$\{([^\$]+)\}\$\^\}\$\{([^\$]+)\}\$\(([^$]+)\)dx\}\$',
+        r'${\\int_{\1}^{\2} (\3)dx}$', text
+    )
+
+    # 8. Loại block rỗng, block dư ngoặc
+    text = re.sub(r'\${\s*}\$', '', text)
+    text = re.sub(r'(\${[^\$}]*)\}{2,}\$', r'\1}$', text)
+    text = re.sub(r'\)\)+\$', r')$', text)
+
+    # 9. Đảm bảo cuối mỗi block LaTeX là đúng ${...}$
+    text = re.sub(r'\${([^}]*)\$', r'${\1}$', text)
+
+    # 10. Xóa double dollar $${...}$$ -> ${...}$
+    text = re.sub(r'\$\$\{', '${', text)
+    text = re.sub(r'\}\$\$', '}$', text)
+
+    return text
+
+
 def remove_extra_dollar_sign(text):
     # Xóa các đoạn $${...}$$ thành ${...}$
     # Chỉ áp dụng cho các block bắt đầu bằng $${ và kết thúc bằng }$$
@@ -425,6 +485,7 @@ with tab_img:
                         text = f"[Lỗi Gemini: {e}]"
                 text = fix_missing_backslash_cases(text)
                 text = fix_math_special_cases(text)
+                text = fix_math_block_splits(text) 
                 text = remove_extra_dollar_sign(text)
                 text = remove_all_figure_markdown(text)
                 text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
