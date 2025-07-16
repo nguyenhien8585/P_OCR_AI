@@ -11,6 +11,21 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
+def fix_vector_notation(text):
+    # Sửa các đoạn như \overrightarrow{n = ...} thành \overrightarrow{n} = ...
+    text = re.sub(
+        r'\\overrightarrow\{\s*([a-zA-Z])\s*=\s*([^\{\}]+)\}',
+        lambda m: r'\\overrightarrow{' + m.group(1).strip() + '} = ' + m.group(2).strip(),
+        text
+    )
+    # Sửa các đoạn như \overrightarrow{n=...} thành \overrightarrow{n} = ...
+    text = re.sub(
+        r'\\overrightarrow\{\s*([a-zA-Z])=([^\{\}]+)\}',
+        lambda m: r'\\overrightarrow{' + m.group(1).strip() + '} = ' + m.group(2).strip(),
+        text
+    )
+    return text
+
 def fix_cases_brace(text):
     # Bổ sung dấu } bị thiếu cho \begin{cases}
     # Sửa \begin{cases ... thành \begin{cases} ...
@@ -356,6 +371,7 @@ with tab_img:
                 text = fix_missing_backslash_cases(text)
                 text = normalize_math_latex(text)  # CHUẨN HÓA TOÁN
                 text = fix_cases_brace(text)
+                text = fix_vector_notation(text)
                 text = remove_all_figure_markdown(text)
                 text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
                 formatted_text = format_exam_markdown(text)
