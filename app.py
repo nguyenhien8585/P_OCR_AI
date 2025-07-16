@@ -27,9 +27,6 @@ def fix_stray_open_latex_blocks(text):
     # Áp dụng cho mọi block bắt đầu ${ và kết thúc trước dòng xuống dòng hoặc hết file mà chưa có }$
     return re.sub(r'\$\{([^}$\n]+)(?:\n|$)', lambda m: replacer(m) + '\n', text)
 
-# Cách dùng cuối pipeline:
-text_content = fix_stray_open_latex_blocks(text_content)
-
 def fix_all_unclosed_latex_blocks(text):
     """
     Tự động thêm dấu } vào trước $ cho tất cả block ${...$ còn thiếu }
