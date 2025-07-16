@@ -73,57 +73,63 @@ def normalize_math_latex_all(text):
     text = re.sub(r'\$\{([^\$]*)\}\$', lambda m: '${' + re.sub(r'[\{\}]+', '', m.group(1)) + '}$', text)
     return text
 
-import re
-
 def fix_math_special_cases(text):
-    # Sửa các block bị mất ký tự đầu (thường do OCR hoặc ký tự lạ)
-    # Ví dụ: ${egincases ...} -> ${\begin{cases} ...}
-    text = re.sub(r'\$\{[^\w\\]*egincases', r'${\\begin{cases}', text, flags=re.IGNORECASE)
-    text = re.sub(r'\$\{[^\w\\]*endcases', r'${\\end{cases}', text, flags=re.IGNORECASE)
-    # Hoặc các trường hợp còn sót ngoài block
-    text = re.sub(r'([^{\\])egincases', r'\1\\begin{cases}', text)
-    text = re.sub(r'([^{\\])endcases', r'\1\\end{cases}', text)
+    # 1. Sửa mọi begin/cases bị mất \ hoặc thừa/thiếu ngoặc
+    text = re.sub(r'(\{|\$)?[^\w\\]*egincases', r'\\begin{cases}', text, flags=re.IGNORECASE)
+    text = re.sub(r'(\{|\$)?[^\w\\]*endcases', r'\\end{cases}', text, flags=re.IGNORECASE)
 
-    # Chuẩn hóa lại log, sin, cos, vecto
-    text = re.sub(r'log_([a-zA-Z0-9\{\}\^\-]+)\s*x', r'\\log_{\1} x', text)
-    text = re.sub(r'\\overrightarrown\s*=\s*\(([^\)]*)\)', r'\\overrightarrow{n} = (\1)', text)
-    text = re.sub(r'\\overrightarrown', r'\\overrightarrow{n}', text)
+    # 2. Đảm bảo các block vector đúng
+    text = re.sub(r'\\overrightarrown\s*=\s*\(([^)]*)\)', r'\\overrightarrow{n} = (\1)', text)
+    text = re.sub(r'\\overrightarrow\s*\{([a-zA-Z])\}\s*=\s*\(([^)]*)\)\)', r'\\overrightarrow{\1} = (\2)', text)
+    text = re.sub(r'\\overrightarrow\s*\{([a-zA-Z])\}\s*=\s*\(([^)]*)\)', r'\\overrightarrow{\1} = (\2)', text)
 
-    # Chuẩn hóa \mathbb{R}
+    # 3. Sửa log/ln/sin/cos/… thiếu ngoặc ở cơ số: log_\sqrt2-1 x → log_{\sqrt{2}-1} x
+    text = re.sub(r'log_([^\s\{\}]+)\s*x', lambda m: f'\\log_{{{m.group(1)}}} x', text)
+    text = re.sub(r'log_\{([^\}]+)\s*([^\}])', r'\\log_{\1}\2', text)
+
+    # 4. Sửa tích phân, thiếu/dư ngoặc
+    text = re.sub(
+        r'\\int_1\^2\s*\((2\+f\(x\))([^\)]*)\)dx', 
+        r'\\int_1^2 (\1)\2 dx', 
+        text
+    )
+    # Loại bỏ các dấu ) thừa ở cuối tích phân
+    text = re.sub(r'\\int_1\^2\s*\((2\+f\(x\))\)\s*dx\)+', r'\\int_1^2 (\1) dx', text)
+    # Đổi tích phân bị tách
+    text = re.sub(r'\\int_1\^2\s*\((2\+f\(x\))dx', r'\\int_1^2 (\1) dx', text)
+    text = re.sub(r'\\int_1\^2 \(2\+f\(x\)\)dx', r'\\int_1^2 (2+f(x)) dx', text)
+    # Các block ${...}$ bị dư/dư dấu
+    text = re.sub(r'(\${1,2})(?!\{)', r'${', text)
+    text = re.sub(r'([^\$])\}', r'\1}$', text)
+    # Chuyển các dạng ${...}${...} về 1 block
+    text = re.sub(r'\}\$\s*\$\{', '', text)
+
+    # 5. Đảm bảo đúng block ${...}$ cho mọi công thức (kể cả bị thiếu $)
+    # Sửa hết mọi {...} dạng toán về ${...}$
+    text = re.sub(r'(?<!\$)\{([^\{\}\$]+)\}(?!\$)', r'${\1}$', text)
+
+    # 6. Sửa ${...}$ bị thiếu ngoặc ở cuối (vector, tích phân, begin{cases}...)  
+    text = re.sub(r'\${([^{}]*)\${', r'${\1}$', text)  # Nếu có 2 mở, 1 đóng
+    text = re.sub(r'\${([^}]*)$', r'${\1}$', text)     # Nếu thiếu đóng cuối cùng
+
+    # 7. Sửa dấu ngoặc thừa/trùng
+    text = re.sub(r'\){2,}', ')', text)
+    text = re.sub(r'\}{2,}', '}', text)
+    text = re.sub(r'\({2,}', '(', text)
+    text = re.sub(r'\${2,}', '${', text)
+    text = re.sub(r'\${1,}\s*\$', '${', text)
+
+    # 8. Loại bỏ dấu $ bị trùng/không khớp
+    text = re.sub(r'\${\$', '${', text)
+    text = re.sub(r'\$\$', '$', text)
+
+    # 9. Sửa \mathbbR → \mathbb{R}
     text = re.sub(r'\\mathbbR', r'\\mathbb{R}', text)
     text = re.sub(r'\\mathbb\{R\}', r'\\mathbb{R}', text)
 
-    # Các công thức tích phân bị thiếu ngoặc
-    # ${\int_1^2(2+f(x)dx}$ hoặc ${\int_1^2 (2+f(x) dx}$ -> ${\int_1^2 (2+f(x)) dx}$
-    text = re.sub(
-        r'\\int_1\^2\s*\((2\+f\(x\))\s*dx', 
-        r'\\int_1^2 (\1) dx', 
-        text
-    )
-    text = re.sub(
-        r'\\int_1\^2\s*\((2\+f\(x\))dx', 
-        r'\\int_1^2 (\1) dx', 
-        text
-    )
-    # Fix các dấu ngoặc, dấu ) thừa trong tích phân
-    text = re.sub(r'\\int_1\^2\s*\((2\+f\(x\))\)\s*dx\)+', r'\\int_1^2 (\1) dx', text)
-
-    # Các block vector, ( ) thừa
-    text = re.sub(r'\\overrightarrow\{n\}\s*=\s*\(\(([^)]+)\)\)', r'\\overrightarrow{n} = (\1)', text)
-    text = re.sub(r'\\overrightarrow\{n\}\s*=\s*\(\s*([^\)]+)\s*\)', r'\\overrightarrow{n} = (\1)', text)
-
-    # Sửa các block bị mất/méo dấu ngoặc {}
-    text = re.sub(r'\$\{([^}]+)\$(?!\})', r'${\1}$', text)  # nếu mở { mà không đóng }
-    text = re.sub(r'\$\{([^\$]+)\}\$(?!\})', r'${\1}$', text)  # nếu thiếu } ngoài
-
-    # Sửa dấu } hoặc ) thừa lặp (ở cuối)
-    text = re.sub(r'\}{2,}', r'}', text)
-    text = re.sub(r'\){2,}', r')', text)
-
-    # Đảm bảo block ${...}$ không có dấu { hoặc } dư
-    text = re.sub(r'\$\{\s+', '${', text)
-    text = re.sub(r'\s+\}\$', '}$', text)
-    text = re.sub(r'\$\{\s*\}', '', text)
+    # 10. Đảm bảo mọi công thức đều nằm trong ${...}$
+    # Bọc lại những block toán học rời rạc
+    text = re.sub(r'(?<!\$)\$([^\$]+)\$(?!\$)', r'${\1}$', text)
     return text
 
     
