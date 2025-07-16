@@ -143,30 +143,40 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
         key=lambda f: (f['bbox'][1], f['bbox'][0])
     )
 
-    # 1. Map ảnh có từ khóa hình vẽ
     used_figures = set()
     processed_lines = []
+    fig_idx = 0
 
-    for line in lines:
+    for idx, line in enumerate(lines):
         processed_lines.append(line)
-        # Chèn hình nếu phát hiện từ khóa hình vẽ hoặc "như hình vẽ" hoặc "(hình vẽ)" hoặc "(hình)"
-        if any(x in line.lower() for x in ["hình vẽ", "(hình", "hình bên", "xem hình", "đồ thị", "biểu đồ", "minh họa"]):
-            for fig in figures_sorted:
-                if fig['name'] not in used_figures:
+        # Nếu dòng này có keyword hình vẽ/bảng → chèn hình tiếp theo
+        if any(x in line.lower() for x in ["hình vẽ", "hình bên", "(hình", "xem hình", "đồ thị", "biểu đồ", "minh họa"]):
+            while fig_idx < len(figures_sorted) and figures_sorted[fig_idx]['name'] in used_figures:
+                fig_idx += 1
+            if fig_idx < len(figures_sorted):
+                fig = figures_sorted[fig_idx]
+                tag = f"[BẢNG: {fig['name']}]" if fig['is_table'] else f"[HÌNH: {fig['name']}]"
+                processed_lines.append(tag)
+                used_figures.add(fig['name'])
+                fig_idx += 1
+
+    # Bước 2: Map các hình chưa gán vào đúng sau các dòng "Câu X." chưa có hình minh hoạ ngay sau
+    # Chỉ map nếu chưa dùng, theo thứ tự
+    for i, line in enumerate(processed_lines):
+        if re.match(r"^Câu\s*\d+[\.\:]", line) and fig_idx < len(figures_sorted):
+            # Nếu dòng tiếp theo KHÔNG PHẢI là hình minh hoạ
+            next_line = processed_lines[i+1] if i+1 < len(processed_lines) else ""
+            if not re.match(r"\[HÌNH:.*\]", next_line) and not re.match(r"\[BẢNG:.*\]", next_line):
+                while fig_idx < len(figures_sorted) and figures_sorted[fig_idx]['name'] in used_figures:
+                    fig_idx += 1
+                if fig_idx < len(figures_sorted):
+                    fig = figures_sorted[fig_idx]
                     tag = f"[BẢNG: {fig['name']}]" if fig['is_table'] else f"[HÌNH: {fig['name']}]"
-                    processed_lines.append(tag)
+                    processed_lines.insert(i+1, tag)
                     used_figures.add(fig['name'])
-                    break
+                    fig_idx += 1
 
-    # 2. Chèn các ảnh chưa dùng vào cuối nhưng trước các dòng trống cuối
-    for fig in figures_sorted:
-        if fig['name'] not in used_figures:
-            tag = f"[BẢNG: {fig['name']}]" if fig['is_table'] else f"[HÌNH: {fig['name']}]"
-            insert_pos = len(processed_lines) - 1
-            while insert_pos > 0 and not processed_lines[insert_pos].strip():
-                insert_pos -= 1
-            processed_lines.insert(insert_pos + 1, tag)
-
+    # Không chèn ảnh thừa ở cuối nữa!
     return '\n'.join(processed_lines)
 
 # --------- Định dạng Markdown cho câu hỏi ---------
