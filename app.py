@@ -43,7 +43,7 @@ def fix_log_base_brace(text):
 
     # Nhận các trường hợp thiếu }
     text = re.sub(
-        r'\$\{\\?(log|sin|cos|tan|cot|sec|csc)_\{([^\{\}]+)\s*([a-zA-Z0-9\\\^\_\(\)\[\]\s]+)\}\$',
+        r'\\$\{\\?(log|sin|cos|tan|cot|sec|csc)_\{([^\{\}]+)\s*([a-zA-Z0-9\\\^\_\(\)\[\]\s]+)\}\$',
         replacer,
         text
     )
