@@ -189,6 +189,7 @@ def remove_all_figure_markdown(text):
 
 def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
     import re
+    # Tiền xử lý đoạn văn bản thành dòng hợp lý
     lines = []
     buffer = ""
     for line in text.split('\n'):
@@ -202,7 +203,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
             lines.append('')
     if buffer:
         lines.append(buffer)
-
+    # Sắp xếp hình minh họa và bảng theo vị trí trên trang
     figures_sorted = sorted(
         [fig for fig in figures if fig.get('bbox')],
         key=lambda f: (f['bbox'][1], f['bbox'][0])
@@ -213,27 +214,31 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
     i = 0
     while i < len(lines):
         line = lines[i]
-        processed_lines.append(line)
         lower = line.lower()
+        processed_lines.append(line)
         inserted = False
 
-        # Chèn BẢNG: kiểm tra dòng sau là bảng markdown
-        if any(x in lower for x in ["bảng", "bảng giá trị", "bảng biến thiên", "bảng tần số"]):
-            # Nếu dòng tiếp theo là bảng Markdown (bắt đầu bằng |)
-            if (i + 1 < len(lines)) and lines[i + 1].strip().startswith("|"):
-                # Chèn bảng chưa gán
-                for j in range(fig_idx, len(figures_sorted)):
-                    fig = figures_sorted[j]
-                    if fig['is_table'] and fig['name'] not in used_figures:
-                        tag = f"[BẢNG: {fig['name']}]"
-                        processed_lines.append(tag)
-                        used_figures.add(fig['name'])
-                        fig_idx = j + 1
-                        inserted = True
-                        break
+        # 1. Nếu gặp dòng có từ "bảng" hoặc bảng markdown, chèn bảng vào luôn sau đó
+        if (
+            any(x in lower for x in ["bảng", "bảng giá trị", "bảng biến thiên", "bảng tần số"])
+            or (line.strip().startswith("|") and "|" in line)
+        ):
+            # Tìm bảng chưa dùng
+            for j in range(fig_idx, len(figures_sorted)):
+                fig = figures_sorted[j]
+                if fig['is_table'] and fig['name'] not in used_figures:
+                    tag = f"[BẢNG: {fig['name']}]"
+                    processed_lines.append(tag)
+                    used_figures.add(fig['name'])
+                    fig_idx = j + 1
+                    inserted = True
+                    break
 
-        # Chèn HÌNH đúng sau dòng chứa từ khóa hình
-        if not inserted and any(x in lower for x in ["hình vẽ", "hình bên", "(hình", "xem hình", "đồ thị", "biểu đồ", "minh họa"]):
+        # 2. Nếu gặp dòng có từ khóa hình thì chèn hình vào luôn sau đó
+        if (
+            not inserted
+            and any(x in lower for x in ["hình vẽ", "hình bên", "(hình", "xem hình", "đồ thị", "biểu đồ", "minh họa"])
+        ):
             for j in range(fig_idx, len(figures_sorted)):
                 fig = figures_sorted[j]
                 if not fig['is_table'] and fig['name'] not in used_figures:
@@ -244,9 +249,10 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
                     break
         i += 1
 
-    # BƯỚC 2: Các hình/bảng chưa gán thì gán tiếp vào đầu các câu hỏi chưa có hình/bảng
+    # 3. Map tiếp các ảnh/bảng còn dư vào sau các dòng "Câu X." chưa có hình/bảng phía sau
     for i, line in enumerate(processed_lines):
         if re.match(r"^Câu\s*\d+[\.\:]", line) and fig_idx < len(figures_sorted):
+            # Nếu dòng tiếp theo KHÔNG PHẢI là hình minh họa hay bảng
             next_line = processed_lines[i+1] if i+1 < len(processed_lines) else ""
             if not re.match(r"\[HÌNH:.*\]", next_line) and not re.match(r"\[BẢNG:.*\]", next_line):
                 while fig_idx < len(figures_sorted) and figures_sorted[fig_idx]['name'] in used_figures:
@@ -258,7 +264,9 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
                     used_figures.add(fig['name'])
                     fig_idx += 1
 
+    # Ghép lại văn bản đã xử lý
     return '\n'.join(processed_lines)
+
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
     "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
