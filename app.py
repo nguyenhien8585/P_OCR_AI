@@ -122,117 +122,86 @@ def remove_all_figure_markdown(text):
 
 # -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
 def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
-    lines = [l.rstrip() for l in text.split('\n')]
-    final_processed_lines = []
+    # Định nghĩa các từ khóa nhận diện vị trí chèn
+    IMAGE_KEYWORDS = ["hình vẽ", "hình minh họa", "như hình vẽ", "xem hình", "minh họa", "biểu đồ"]
+    TABLE_KEYWORDS = ["bảng biến thiên", "bảng giá trị", "bảng tần số", "bảng số liệu"]
+    
+    lines = text.split('\n')
+    final_lines = []
+    inserted_figures = set()
+    
+    # Sắp xếp hình ảnh theo vị trí từ trên xuống
+    figures = sorted(figures, key=lambda f: f['bbox'][1])
+    
+    for i, line in enumerate(lines):
+        line = line.strip()
+        final_lines.append(line)
+        
+        # Kiểm tra xem dòng hiện tại có chứa từ khóa không
+        found_keyword = False
+        
+        # Tìm từ khóa hình ảnh
+        if any(keyword in line.lower() for keyword in IMAGE_KEYWORDS):
+            # Tìm hình ảnh phù hợp chưa được chèn
+            for fig in figures:
+                if not fig['is_table'] and fig['name'] not in inserted_figures:
+                    final_lines.append(f"[HÌNH: {fig['name']}]")
+                    inserted_figures.add(fig['name'])
+                    found_keyword = True
+                    break
+        
+        # Tìm từ khóa bảng
+        elif any(keyword in line.lower() for keyword in TABLE_KEYWORDS):
+            # Tìm bảng phù hợp chưa được chèn
+            for fig in figures:
+                if fig['is_table'] and fig['name'] not in inserted_figures:
+                    final_lines.append(f"[BẢNG: {fig['name']}]")
+                    inserted_figures.add(fig['name'])
+                    found_keyword = True
+                    break
+    
+    # Xử lý các hình ảnh chưa được chèn
+    for fig in figures:
+        if fig['name'] not in inserted_figures:
+            # Chèn vào vị trí tốt nhất có thể
+            best_position = find_best_insert_position(lines, fig['is_table'])
+            if best_position is not None:
+                if fig['is_table']:
+                    final_lines.insert(best_position + 1, f"[BẢNG: {fig['name']}]")
+                else:
+                    final_lines.insert(best_position + 1, f"[HÌNH: {fig['name']}]")
+                inserted_figures.add(fig['name'])
+                
+    return '\n'.join(final_lines)
 
-    inserted_figures_names = set()
-    available_figures = list(figures)
-    available_figures.sort(key=lambda f: (f['bbox'][1], f['bbox'][0]))
-
-    # Phân tích các khối văn bản (câu hỏi, đoạn văn) và vị trí của chúng
-    text_blocks = []
-    current_block_lines = []
-    current_block_start_idx = 0
-
-    for idx, line in enumerate(lines):
-        line_strip = line.strip()
-
-        is_question_start = re.match(r"^(Câu\s*\d+\.?|Bài\s*\d+\.?|Câu hỏi\s*\d+\.?)$", line_strip, re.IGNORECASE)
-
-        if is_question_start:
-            if current_block_lines:
-                text_blocks.append({
-                    "content_lines": list(current_block_lines),
-                    "start_line_idx": current_block_start_idx,
-                    "end_line_idx": idx - 1
-                })
-            current_block_lines = [line]
-            current_block_start_idx = idx
-        else:
-            current_block_lines.append(line)
-
-    if current_block_lines:
-        text_blocks.append({
-            "content_lines": list(current_block_lines),
-            "start_line_idx": current_block_start_idx,
-            "end_line_idx": len(lines) - 1
-        })
-
-    # Gán hình ảnh cho các khối văn bản
-    figure_to_block_map = {}
-    for fig in available_figures:
-        if fig is None: continue
-
-        fig_y_center = fig['bbox'][1] + fig['bbox'][3] / 2
-        best_block_match_idx = -1
-        min_y_dist = float('inf')
-
-        for block_idx, block in enumerate(text_blocks):
-            block_start_y = block["start_line_idx"] * (img_h / len(lines))
-            block_end_y = (block["end_line_idx"] + 1) * (img_h / len(lines))
-            block_y_center = (block_start_y + block_end_y) / 2
-
-            dist = abs(fig_y_center - block_y_center)
-
-            if block_start_y <= fig_y_center <= block_end_y:
-                if dist < min_y_dist:
-                    min_y_dist = dist
-                    best_block_match_idx = block_idx
-
-        if best_block_match_idx != -1:
-            figure_to_block_map[fig["name"]] = best_block_match_idx
-
-    # Xây dựng lại văn bản, chèn hình ảnh vào đúng vị trí
-    for block_idx, block in enumerate(text_blocks):
-        current_buffer = ""
-
-        for line_content in block["content_lines"]:
-            line_strip = line_content.strip()
-
-            # Chèn hình ảnh/bảng nếu có từ khóa
-            if any(keyword in line_strip for keyword in ["hình vẽ", "hình minh họa", "bảng", "theo sơ đồ dưới đây"]):
-                if not any(fig["name"] in inserted_figures_names for fig in available_figures):
-                    if available_figures:
-                        fig_to_insert = available_figures[0]  # Chọn hình ảnh đầu tiên
-                        if fig_to_insert["is_table"]:
-                            current_buffer += f"[BẢNG: {fig_to_insert['name']}]\n"
-                        else:
-                            current_buffer += f"[HÌNH: {fig_to_insert['name']}]\n"
-                        inserted_figures_names.add(fig_to_insert["name"])
-
-            if not line_strip:
-                if current_buffer:
-                    final_processed_lines.append(current_buffer.strip())
-                    current_buffer = ""
-                final_processed_lines.append("")
-            else:
-                current_buffer += " " + line_strip if current_buffer else line_strip
-
-        if current_buffer:
-            final_processed_lines.append(current_buffer.strip())
-
-        # Chèn hình ảnh thuộc về khối này vào đúng vị trí
-        figures_for_this_block = [f for f in available_figures if f is not None and figure_to_block_map.get(f["name"]) == block_idx and f["name"] not in inserted_figures_names]
-
-        for fig_to_insert in figures_for_this_block:
-            if fig_to_insert["is_table"]:
-                final_processed_lines.append(f"[BẢNG: {fig_to_insert['name']}]")
-            else:
-                final_processed_lines.append(f"[HÌNH: {fig_to_insert['name']}]")
-            inserted_figures_names.add(fig_to_insert["name"])
-
-    return '\n'.join([l for l in final_processed_lines if l.strip() or l == ""])
+def find_best_insert_position(lines, is_table):
+    """Tìm vị trí tốt nhất để chèn hình/bảng khi không có từ khóa"""
+    # Ưu tiên chọn đoạn có liên quan đến toán học
+    math_keywords = ["giải", "tính", "chứng minh", "tìm"]
+    
+    for i, line in enumerate(lines):
+        line = line.strip().lower()
+        
+        # Đối với bảng, tìm các đoạn chứa số liệu
+        if is_table and any(k in line for k in ["số liệu", "thống kê", "giá trị"]):
+            return i
+            
+        # Đối với hình ảnh, tìm các đoạn mô tả hình học
+        elif not is_table and any(k in line for k in ["hình", "đường", "vẽ", "đồ thị"]):
+            return i
+            
+        # Hoặc bất kỳ đoạn nào có từ khóa toán học
+        elif any(k in line for k in math_keywords):
+            return i
+    
+    # Mặc định chèn sau đoạn đầu tiên (không chèn cuối file)
+    if len(lines) > 1:
+        return 0
+    return None
 
 
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
-    "AIzaSyB5YTKx6aLeehY3sjHsgCR4dROFLDOeV00",
-    "AIzaSyDJ_7Fw2zJvFA7Yl3nrh0as8gFT8FxwOO0",
-    "AIzaSyCXYsvctNOSQSr2jaHWUlGjF9iMCOqpFeg",
-    "AIzaSyCVUtoKWzyw27LvVbQPxs5D4n48eZWNw9k",
-    "AIzaSyD6uAzLz6y2CwgEHg-1XVPM11iAPoEoc3E",
-    "AIzaSyDCrzo3_3hKMF3jr114J7pb_wAAd2LesjI",
-    "AIzaSyDbU_e892synpWo3uV8HLM2gj6CK0mC7eQ",
     "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
     "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
 ]
