@@ -11,11 +11,24 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
-# ==== Hàm ĐỊNH DẠNG ĐỀ ĐẸP CHUẨN GIÁO VIÊN ====
-import re
+# ======================== CHUẨN HÓA TOÁN HỌC ========================
+def normalize_math_latex(text):
+    """
+    Chuyển toàn bộ $...$ và \( ... \) thành ${...}$ cho đúng chuẩn LaTeX inline
+    Không động vào cái đã là ${...}$
+    """
+    def repl(m):
+        content = m.group(1)
+        if content.strip().startswith("{") and content.strip().endswith("}"):
+            return f"${content}$"
+        return f"${{{content}}}$"
+    # Đổi $...$ chỉ khi chưa có dấu {...}
+    text = re.sub(r"\$(?!\{)([^\$]+?)\$", repl, text)
+    # Đổi \( ... \) sang ${...}$
+    text = re.sub(r"\\\((.+?)\\\)", lambda m: "${" + m.group(1).strip() + "}$", text)
+    return text
 
-import re
-
+# ======================= ĐỊNH DẠNG ĐỀ THI CHUẨN GIÁO VIÊN =======================
 def format_exam_markdown(text):
     # 1. Đưa mỗi [BẢNG: ...], [HÌNH: ...] về dòng riêng
     text = re.sub(r'([^\n])(\[BẢNG: [^\]]+\])', r'\1\n\2', text)
@@ -47,7 +60,7 @@ def format_exam_markdown(text):
     result = re.sub(r'\n{3,}', '\n\n', result)
     return result.strip()
 
-
+# ================== TÁCH BẢNG, HÌNH MINH HỌA ==================
 def filter_nested_boxes(candidates):
     filtered = []
     for i, box in enumerate(candidates):
@@ -198,7 +211,7 @@ YÊU CẦU QUAN TRỌNG:
     *   [HÌNH_PLACEHOLDER] cho hình ảnh minh hoạ.
     *   [BẢNG_PLACEHOLDER] cho bảng hoặc bảng số liệu.
 3.  CHÈN PLACEHOLDER ĐÚNG VỊ TRÍ: Với mỗi placeholder, hãy chèn ngay sau dòng mô tả có các cụm từ như: "xem hình dưới", "hình dưới đây", "bảng biến thiên", "bảng tần số", "bảng giá trị", "hình vẽ", "biểu đồ", "như hình vẽ", "thống kê lại ở bảng", hoặc ngay sau dòng câu hỏi liên quan trực tiếp tới hình/bảng/biểu đồ đó. Nếu không có từ khóa, hãy chèn vào vị trí logic nhất trong đoạn văn bản liên quan.
-4.  ĐỊNH DẠNG CÔNG THỨC TOÁN HỌC: Mọi công thức toán học, biểu thức, hệ phương trình, ký hiệu toán học phải được định dạng bằng LaTeX inline: ${...}$.
+4.  ĐỊNH DẠNG CÔNG THỨC TOÁN HỌC: Mọi công thức toán học, biểu thức, hệ phương trình, ký hiệu toán học phải được định dạng bằng LaTeX inline: ${...}$, Toán inline: ${...}$, vui lòng đúng dạng ${.....}$ không được bỏ dấu {...}.
 5.  CHUYỂN BẢNG SỐ LIỆU SANG MARKDOWN: Nếu phát hiện bảng số liệu, hãy chuyển đổi chúng thành định dạng bảng Markdown nếu có thể.
 6.  ĐỊNH DẠNG CÂU HỎI: Tuân thủ nghiêm ngặt các định dạng sau cho từng loại câu hỏi:
     1.  Trắc nghiệm 4 phương án: mỗi lựa chọn trên dòng riêng.
@@ -207,7 +220,6 @@ YÊU CẦU QUAN TRỌNG:
     4.  Tự luận: nguyên câu hỏi.
 
 LƯU Ý: KHÔNG BỎ SÓT NỘI DUNG, KHÔNG ĐƯỢC SỬA ĐỔI, CHỈ GÕ LẠI CHÍNH XÁC.
-
 '''
 
 def gemini_generate_text(image_bytes, api_key):
@@ -263,6 +275,7 @@ with tab_img:
                         text = gemini_generate_text(img_bytes, api_key)
                     except Exception as e:
                         text = f"[Lỗi Gemini: {e}]"
+                text = normalize_math_latex(text)  # CHUẨN HÓA TOÁN
                 text = remove_all_figure_markdown(text)
                 text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
                 formatted_text = format_exam_markdown(text)
@@ -355,17 +368,14 @@ with tab_pdf:
             result = client.convert(pdf_bytes, file_name, mime_type)
         if not result.get("success"):
             st.error("❌ Xử lý OCR PDF thất bại: " + str(result.get("error")))
-
             st.stop()
         st.session_state["ocr_text_raw"] = result["data"].get("text_content", "")
         st.session_state["ocr_images"] = images
         st.session_state["ocr_done"] = True
         st.success("✅ Đã nhận diện PDF thành công!")
     if st.session_state.get("ocr_done"):
-        def enhance_text_visibility(s):
-            return re.sub(r'\$(.+?)\$', r'$\1$', s)
         raw_text = st.session_state.get("ocr_text_raw", "")
-        text_content = enhance_text_visibility(raw_text)
+        text_content = normalize_math_latex(raw_text)   # CHUẨN HÓA TOÁN
         images = st.session_state.get("ocr_images", [])
         tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
         with tab1:
