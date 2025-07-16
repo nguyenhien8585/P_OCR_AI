@@ -20,10 +20,11 @@ def format_exam_markdown(text):
     text = re.sub(r'(\[BẢNG: [^\]]+\])([^\n])', r'\1\n\2', text)
     text = re.sub(r'([^\n])(\[HÌNH: [^\]]+\])', r'\1\n\2', text)
     text = re.sub(r'(\[HÌNH: [^\]]+\])([^\n])', r'\1\n\2', text)
-
-    # 2. Tách block từng câu hỏi (Câu X: hoặc Câu X.)
-    # Luôn đảm bảo Câu X: là đầu dòng
-    text = re.sub(r'(?<!^)(Câu\s*\d+[.:])', r'\n\1', text)
+    # 2. Đưa Trang .../Mã đề ... về block riêng
+    text = re.sub(r'(Trang\s*\d+\/\d+\s*-\s*Mã\s*đề\s*\d+)', r'\n\n---\n\1\n---\n', text, flags=re.IGNORECASE)
+    # 3. Đưa mỗi "Câu X." hoặc "Câu X:" lên đầu dòng (kể cả nếu bị dính trước đó)
+    text = re.sub(r'(?<!^)\s*(?=Câu\s*\d+[.:])', r'\n', text)
+    # 4. Tách block từng câu hỏi
     blocks = re.split(r'(?=^Câu\s*\d+[.:])', text, flags=re.MULTILINE)
     result_blocks = []
     for blk in blocks:
@@ -39,9 +40,8 @@ def format_exam_markdown(text):
         lines = [l.strip() for l in blk.split('\n')]
         lines = [l for i, l in enumerate(lines) if l or (i > 0 and lines[i-1])]
         result_blocks.append('\n'.join(lines))
+    # Ghép lại, không để quá 2 dòng trống
     result = '\n\n'.join(result_blocks)
-    # Gộp các đoạn Trang.../Mã đề ... về block riêng
-    result = re.sub(r'(Trang\s*\d+\/\d+\s*-\s*Mã\s*đề\s*\d+)', r'\n\n---\n\1\n---\n', result, flags=re.IGNORECASE)
     result = re.sub(r'\n{3,}', '\n\n', result)
     return result.strip()
 
