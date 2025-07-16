@@ -13,6 +13,23 @@ from word_export import insert_images_to_word_from_markdown
 
 import re
 
+def fix_integral_latex(text):
+    # Sửa mọi xuất hiện của ${\int_{a}^{b ...}$ về ${\int_{a}^{b} ...}$
+    text = re.sub(
+        r'\$\{\\int_([^\}]+)\^([^\}]+)\s*([^\$]*)\}\$',
+        lambda m: '${\\int_{' + m.group(1).strip() + '}^{' + m.group(2).strip() + '} ' + m.group(3).strip() + '}$',
+        text
+    )
+    # Thêm khoảng trắng và dx đúng chuẩn
+    text = re.sub(
+        r'\\int_([^\}]+)\^\{([^\}]+)\}\s*\(([^\)]+)\)dx',
+        r'\\int_{\1}^{\2} (\3)\, dx',
+        text
+    )
+    # Thêm dấu } nếu bị thiếu
+    text = re.sub(r'\\int_([^\}]+)\^([^\}]+)\s*\(([^\)]+)\)\s*dx', r'\\int_{\1}^{\2} (\3)\, dx', text)
+    return text
+
 def fix_log_base_brace(text):
     # Sửa log_{...x} thành log_{...} x cho mọi trường hợp log, sin, cos, tan, ...
     def replacer(m):
@@ -401,6 +418,7 @@ with tab_img:
                 text = fix_cases_brace(text)
                 text = fix_vector_notation(text)
                 text = fix_log_base_brace(text) 
+                text = fix_integral_latex(text)
                 text = remove_all_figure_markdown(text)
                 text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
                 formatted_text = format_exam_markdown(text)
