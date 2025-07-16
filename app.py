@@ -13,6 +13,22 @@ from word_export import insert_images_to_word_from_markdown
 
 import re
 
+def fix_func_paren_latex(text):
+    """
+    Gộp mọi trường hợp bị tách giữa tên hàm và (x): f (x), g (x), h (y)... chỉ trong nội dung latex ${...}$.
+    """
+    def replacer(m):
+        s = m.group(1)
+        # Gộp f (x) => f(x), g (x) => g(x), v.v.
+        s = re.sub(r'([a-zA-Z])\s+\((\w)\)', r'\1(\2)', s)
+        # Gộp f (x)) => f(x)),...
+        s = re.sub(r'([a-zA-Z])\s+\((\w)\)\)', r'\1(\2))', s)
+        # Gộp các hàm nhiều ký tự, ví dụ: sin (x), log (x)
+        s = re.sub(r'(sin|cos|tan|cot|log|exp|arcsin|arccos|arctan)\s+\((\w)\)', r'\1(\2)', s)
+        return '${' + s + '}$'
+    # Áp dụng cho từng block ${...}$
+    return re.sub(r'\$\{([^\$]+?)\}\$', replacer, text)
+
 def fix_braces_and_parens_latex(text):
     def process_formula(m):
         s = m.group(1)
@@ -500,6 +516,7 @@ with tab_img:
                 text = fix_log_base_brace(text) 
                 text = fix_integral_brace(text)
                 text = fix_braces_and_parens_latex(text)
+                text = fix_func_paren_latex(text)
                 text = remove_all_figure_markdown(text)
                 text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
                 formatted_text = format_exam_markdown(text)
