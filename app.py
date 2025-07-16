@@ -217,37 +217,34 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
         lower = line.lower()
         inserted = False
 
-        # Chèn BẢNG đúng sau dòng chứa từ khóa nếu ngay dưới là bảng markdown
+        # Chèn BẢNG: kiểm tra dòng sau là bảng markdown
         if any(x in lower for x in ["bảng", "bảng giá trị", "bảng biến thiên", "bảng tần số"]):
-            # Nếu dòng tiếp theo là bảng Markdown (bắt đầu bằng "|")
+            # Nếu dòng tiếp theo là bảng Markdown (bắt đầu bằng |)
             if (i + 1 < len(lines)) and lines[i + 1].strip().startswith("|"):
-                # Lấy bảng chưa gán
-                while fig_idx < len(figures_sorted):
-                    fig = figures_sorted[fig_idx]
+                # Chèn bảng chưa gán
+                for j in range(fig_idx, len(figures_sorted)):
+                    fig = figures_sorted[j]
                     if fig['is_table'] and fig['name'] not in used_figures:
                         tag = f"[BẢNG: {fig['name']}]"
                         processed_lines.append(tag)
                         used_figures.add(fig['name'])
-                        fig_idx += 1
+                        fig_idx = j + 1
                         inserted = True
                         break
-                    fig_idx += 1
 
-        # Chèn HÌNH đúng sau dòng chứa từ khóa hình học
+        # Chèn HÌNH đúng sau dòng chứa từ khóa hình
         if not inserted and any(x in lower for x in ["hình vẽ", "hình bên", "(hình", "xem hình", "đồ thị", "biểu đồ", "minh họa"]):
-            while fig_idx < len(figures_sorted):
-                fig = figures_sorted[fig_idx]
+            for j in range(fig_idx, len(figures_sorted)):
+                fig = figures_sorted[j]
                 if not fig['is_table'] and fig['name'] not in used_figures:
                     tag = f"[HÌNH: {fig['name']}]"
                     processed_lines.append(tag)
                     used_figures.add(fig['name'])
-                    fig_idx += 1
+                    fig_idx = j + 1
                     break
-                fig_idx += 1
-
         i += 1
 
-    # Bước 2: Map các hình/bảng chưa gán vào ngay sau các dòng "Câu X." chưa có hình/bảng minh hoạ ngay sau
+    # BƯỚC 2: Các hình/bảng chưa gán thì gán tiếp vào đầu các câu hỏi chưa có hình/bảng
     for i, line in enumerate(processed_lines):
         if re.match(r"^Câu\s*\d+[\.\:]", line) and fig_idx < len(figures_sorted):
             next_line = processed_lines[i+1] if i+1 < len(processed_lines) else ""
@@ -262,7 +259,6 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
                     fig_idx += 1
 
     return '\n'.join(processed_lines)
-
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
     "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
