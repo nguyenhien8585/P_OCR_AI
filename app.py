@@ -668,14 +668,14 @@ with tab_pdf:
 
     if st.session_state.get("ocr_done"):
         raw_text = st.session_state.get("ocr_text_raw", "")
-        text_content = normalize_math_latex(raw_text)
-        text_content = fix_latex_block_parentheses(text_content)
-        text_content = merge_split_latex_blocks(text_content)
-        text_content = merge_latex_blocks_multiline(text_content)
-        text_content = markdown_image_to_hinh_tag(text_content)  # <-- CHUYỂN MARKDOWN ẢNH thành TAG [HÌNH: ...]
-        text_content = fix_unbalanced_brackets_in_latex(text_content)
-        text_content = fix_latex_super_sub_blocks(text_content)
-        text_content = fix_latex_block_errors(text_content)  
+        text_content = normalize_math_latex(raw_text)                 # 1. Chuẩn hóa các block LaTeX cơ bản
+        text_content = fix_latex_block_parentheses(text_content)      # 2. Sửa các ngoặc cha/con bị lẫn lộn (nếu có)
+        text_content = merge_split_latex_blocks(text_content)         # 3. Ghép các block LaTeX bị tách dòng
+        text_content = merge_latex_blocks_multiline(text_content)     # 4. Ghép các block nhiều dòng thành 1
+        text_content = markdown_image_to_hinh_tag(text_content)       # 5. Chuyển markdown image -> tag [HÌNH: ...]
+        text_content = fix_unbalanced_brackets_in_latex(text_content) # 6. Sửa các block thiếu/thừa dấu ngoặc
+        text_content = fix_latex_super_sub_blocks(text_content)       # 7. Sửa các lỗi ^, _ đặc biệt trong block
+        text_content = fix_latex_block_errors(text_content)           # 8. Sửa lỗi đặc biệt cuối cùng cho block phức tạp
         images = st.session_state.get("ocr_images", [])
         tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
         with tab1:
