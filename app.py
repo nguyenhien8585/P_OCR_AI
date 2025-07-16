@@ -73,71 +73,59 @@ def normalize_math_latex_all(text):
     text = re.sub(r'\$\{([^\$]*)\}\$', lambda m: '${' + re.sub(r'[\{\}]+', '', m.group(1)) + '}$', text)
     return text
 
+import re
+
 def fix_math_special_cases(text):
-    # B1: Tìm tất cả các biểu thức toán học dạng {....} bị thiếu $
-    # (Chỉ áp dụng cho các dòng có dấu =, \, hoặc các hàm toán học, không bắt toàn bộ ngoặc)
-    def add_dollar_for_math(m):
-        expr = m.group(1)
-        # Không bọc lại nếu đã có $ hoặc { ở đầu/kết thúc
-        if expr.startswith('$') or expr.endswith('$'):
-            return m.group(0)
-        return '${' + expr + '}$'
-    # Thêm $ cho các đoạn { ... } đứng độc lập chứa công thức toán
-    text = re.sub(
-        r'(?<!\$)\{([^\{\}\n]{2,80}?(?:=|\\|log|sin|cos|tan|cot|sec|csc|int|frac|overrightarrow)[^{}]*?)\}(?!\$)',
-        add_dollar_for_math, text)
+    # Sửa các block bị mất ký tự đầu (thường do OCR hoặc ký tự lạ)
+    # Ví dụ: ${egincases ...} -> ${\begin{cases} ...}
+    text = re.sub(r'\$\{[^\w\\]*egincases', r'${\\begin{cases}', text, flags=re.IGNORECASE)
+    text = re.sub(r'\$\{[^\w\\]*endcases', r'${\\end{cases}', text, flags=re.IGNORECASE)
+    # Hoặc các trường hợp còn sót ngoài block
+    text = re.sub(r'([^{\\])egincases', r'\1\\begin{cases}', text)
+    text = re.sub(r'([^{\\])endcases', r'\1\\end{cases}', text)
 
-    # B2: Sửa các lỗi ${...${...}...}$ lồng nhau (nối thành 1 block)
-    def merge_nested_formula(m):
-        s = ''.join(re.findall(r'\$\{([^\$}]*)\}\$', m.group(0)))
-        return '${' + s + '}$'
-    text = re.sub(r'(\$\{[^\$]*\}\$)+', merge_nested_formula, text)
+    # Chuẩn hóa lại log, sin, cos, vecto
+    text = re.sub(r'log_([a-zA-Z0-9\{\}\^\-]+)\s*x', r'\\log_{\1} x', text)
+    text = re.sub(r'\\overrightarrown\s*=\s*\(([^\)]*)\)', r'\\overrightarrow{n} = (\1)', text)
+    text = re.sub(r'\\overrightarrown', r'\\overrightarrow{n}', text)
 
-    # B3: Sửa lỗi log_\sqrt2-1 x thành log_{\sqrt{2}-1} x
-    text = re.sub(
-        r'log_\\?sqrt(\d+)-(\d+)\}? ?([a-zA-Z])',
-        lambda m: 'log_{\\sqrt{' + m.group(1) + '}-' + m.group(2) + '} ' + m.group(3),
-        text
-    )
-
-    # B4: Sửa lại vector: \overrightarrown = ... thành \overrightarrow{n} = ...
-    text = re.sub(
-        r'\\overrightarrown = ([\(\-0-9;]+)',
-        r'\\overrightarrow{n} = \1',
-        text
-    )
-
-    # B5: Chuẩn hóa \mathbbR thành \mathbb{R}
+    # Chuẩn hóa \mathbb{R}
     text = re.sub(r'\\mathbbR', r'\\mathbb{R}', text)
-    text = re.sub(r'\\mathbb([A-Z])', r'\\mathbb{\1}', text)
+    text = re.sub(r'\\mathbb\{R\}', r'\\mathbb{R}', text)
 
-    # B6: Chuẩn hóa begin{cases}, end{cases}
-    text = re.sub(r'\\begincases', r'\\begin{cases}', text)
-    text = re.sub(r'\\endcases', r'\\end{cases}', text)
-    # Thêm $ nếu thiếu cho hệ phương trình
+    # Các công thức tích phân bị thiếu ngoặc
+    # ${\int_1^2(2+f(x)dx}$ hoặc ${\int_1^2 (2+f(x) dx}$ -> ${\int_1^2 (2+f(x)) dx}$
     text = re.sub(
-        r'\{\\begin\{cases\}(.*?)\\end\{cases\}\}', lambda m: '${\\begin{cases}' + m.group(1) + '\\end{cases}}$', text, flags=re.DOTALL
-    )
-
-    # B7: Chuẩn hóa tích phân ${\int_1^2 (2+f(x) dx}$ → ${\int_1^2 (2+f(x)) dx}$
-    text = re.sub(
-        r'\\int_1\^2\s*\((2\+f\(x\))\s*dx\}',
-        r'\\int_1^2 (\1)dx}',
+        r'\\int_1\^2\s*\((2\+f\(x\))\s*dx', 
+        r'\\int_1^2 (\1) dx', 
         text
     )
+    text = re.sub(
+        r'\\int_1\^2\s*\((2\+f\(x\))dx', 
+        r'\\int_1^2 (\1) dx', 
+        text
+    )
+    # Fix các dấu ngoặc, dấu ) thừa trong tích phân
+    text = re.sub(r'\\int_1\^2\s*\((2\+f\(x\))\)\s*dx\)+', r'\\int_1^2 (\1) dx', text)
 
-    # B8: Xử lý các dấu ngoặc thừa: ${...}} -> ${...}$
-    text = re.sub(r'\$\{([^\}]+)\}\}', r'${\1}$', text)
-    text = re.sub(r'\}\}\$', '}$', text)
-    text = re.sub(r'\$\{([^\$]+)\}\$\}', r'${\1}$', text)
+    # Các block vector, ( ) thừa
+    text = re.sub(r'\\overrightarrow\{n\}\s*=\s*\(\(([^)]+)\)\)', r'\\overrightarrow{n} = (\1)', text)
+    text = re.sub(r'\\overrightarrow\{n\}\s*=\s*\(\s*([^\)]+)\s*\)', r'\\overrightarrow{n} = (\1)', text)
 
-    # B9: Xóa các } ở cuối dòng không cần thiết
-    text = re.sub(r'\}\.$', '.$', text, flags=re.MULTILINE)
+    # Sửa các block bị mất/méo dấu ngoặc {}
+    text = re.sub(r'\$\{([^}]+)\$(?!\})', r'${\1}$', text)  # nếu mở { mà không đóng }
+    text = re.sub(r'\$\{([^\$]+)\}\$(?!\})', r'${\1}$', text)  # nếu thiếu } ngoài
 
-    # B10: Xử lý các dấu = bị dính trước $ (hiếm gặp)
-    text = re.sub(r'= *\$', '= $', text)
+    # Sửa dấu } hoặc ) thừa lặp (ở cuối)
+    text = re.sub(r'\}{2,}', r'}', text)
+    text = re.sub(r'\){2,}', r')', text)
 
+    # Đảm bảo block ${...}$ không có dấu { hoặc } dư
+    text = re.sub(r'\$\{\s+', '${', text)
+    text = re.sub(r'\s+\}\$', '}$', text)
+    text = re.sub(r'\$\{\s*\}', '', text)
     return text
+
     
 # ==================== CHUẨN HÓA LaTeX TOÁN ====================
 def fix_missing_backslash_cases(text):
