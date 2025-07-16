@@ -62,37 +62,48 @@ def normalize_math_latex_all(text):
     # 10. Loại bỏ ngoặc lẻ/ngoặc thừa trong công thức ${...}$ (nếu gặp)
     text = re.sub(r'\$\{([^\$]*)\}\$', lambda m: '${' + re.sub(r'[\{\}]+', '', m.group(1)) + '}$', text)
     return text
-    
-def fix_func_paren_latex(text):
-    def replacer(m):
-        s = m.group(1)
-        s = re.sub(r'([a-zA-Z])\s+\((\w)\)', r'\1(\2)', s)
-        s = re.sub(r'(sin|cos|tan|cot|log|exp|arcsin|arccos|arctan)\s+\((\w)\)', r'\1(\2)', s)
-        return '${' + s + '}$'
-    return re.sub(r'\$\{([^\$]+?)\}\$', replacer, text)
 
-def fix_latex_missing_braces(text):
+import re
+
+def fix_math_special_cases(text):
+    # Sửa \overrightarrown => \overrightarrow{n}
+    text = re.sub(r'\\overrightarrown', r'\\overrightarrow{n}', text)
+    # Sửa ${\overrightarrow{n}}$ = ... thành ${\overrightarrow{n}}$ = ...
+    text = re.sub(r'\$\{\\overrightarrow\{([a-zA-Z])\}\}?\$\s*=\s*([\(\[]?[^\$]+)[\$\)]?', r'${\\overrightarrow{\1}}$ = \2', text)
+    # Sửa các vector dư ngoặc hoặc thiếu ngoặc: ((1;-1;0))} → (1;-1;0)
+    text = re.sub(r'\(\(([^()]+)\)\)', r'(\1)', text)
+    text = re.sub(r'\(([^()]+)\)\)', r'(\1)', text)
+    text = re.sub(r'\(\(([^()]+)\)', r'(\1', text)
+    # Sửa ${log_3 x = 2}}$ => ${log_3 x = 2}$
+    text = re.sub(r'(\$\{[^\}]+)\}\}\$', r'\1}$', text)
+    # Sửa ${\mathbbR}$ => ${\mathbb{R}}$
+    text = re.sub(r'\\mathbbR', r'\\mathbb{R}', text)
+    # Sửa ${\begincases ... \endcases}$ => ${\begin{cases} ... \end{cases}}$
     text = re.sub(
-        r'(\$\{[^\}]*?log_[^\}]+[a-zA-Z0-9\\\^\_\-\s]+)\}\$',
-        lambda m: m.group(1) + '}}$', text)
+        r'\\begincases',
+        r'\\begin{cases}',
+        text
+    )
+    text = re.sub(
+        r'\\endcases',
+        r'\\end{cases}',
+        text
+    )
+    # Đảm bảo \begin{cases} có dấu } đúng
+    text = re.sub(r'\\begin\{cases\}', r'\\begin{cases}', text)
+    text = re.sub(r'\\end\{cases\}', r'\\end{cases}', text)
+    # Sửa thiếu hoặc thừa dấu ngoặc tích phân: int_1^2 (2+f(x)dx)}$  => int_1^2 (2+f(x))dx}$
+    text = re.sub(
+        r'(\$\{\\int[_\^0-9{}]+ \(2\+f\(x\))(?:\)?)dx\}\$',
+        lambda m: m.group(1) + '))dx}$',
+        text
+    )
+    # Sửa dư hoặc thiếu ngoặc tích phân, vd: (2+f(x)dx)}$ => (2+f(x))dx}$
+    text = re.sub(r'\(2\+f\(x\)dx\}\$', r'(2+f(x))dx}$', text)
+    # Sửa ${...}$ thiếu hoặc thừa dấu ngoặc cuối
+    text = re.sub(r'\$\{([^\$]*?)\}\}*\$', lambda m: '${' + m.group(1).rstrip('}').rstrip() + '}$', text)
     return text
 
-def fix_vector_notation(text):
-    text = re.sub(r'\\overrightarrow\{\s*([a-zA-Z])\s*=\s*\(([^)]+)\)\}', r'\\overrightarrow{\1} = (\2)', text)
-    text = re.sub(r'\(\(([^)]+)\)\)', r'(\1)', text)
-    text = re.sub(r'\(\(([^)]+)\)', r'(\1', text)
-    text = re.sub(r'\(([^)]+)\)\)', r'(\1)', text)
-    return text
-
-def fix_integral_braces(text):
-    def replacer(m):
-        expr = m.group(1)
-        expr = re.sub(r'f\s*\(x\)', 'f(x)', expr)
-        expr = re.sub(r'(\(2\+f\(x\))(?=\s*\))', r'\1)', expr)
-        if expr.count('(') > expr.count(')'):
-            expr += ')' * (expr.count('(') - expr.count(')'))
-        return '${' + expr + '}$'
-    return re.sub(r'\$\{([^\$]*int_[^\$]*)\}\$', replacer, text)
 # ==================== CHUẨN HÓA LaTeX TOÁN ====================
 def fix_missing_backslash_cases(text):
     # Thêm \ vào begincases, endcases nếu thiếu (cho hệ phương trình)
@@ -428,10 +439,7 @@ with tab_img:
                         text = f"[Lỗi Gemini: {e}]"
                 text = fix_missing_backslash_cases(text)
                 text = normalize_math_latex_all(text)
-                text = fix_func_paren_latex(text)
-                text = fix_latex_missing_braces(text)
-                text = fix_vector_notation(text)
-                text = fix_integral_braces(text)
+                text = fix_math_special_cases(text)
                 text = remove_all_figure_markdown(text)
                 text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
                 formatted_text = format_exam_markdown(text)
