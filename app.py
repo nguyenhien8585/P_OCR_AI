@@ -11,98 +11,104 @@ from ocr_client_api import EnhancedSmartOCRClient
 from extract_images import extract_images_from_pdf
 from word_export import insert_images_to_word_from_markdown
 
-# ---- Hàm lọc loại bỏ vùng lồng nhau/trùng lặp khi tách hình ----
-def filter_nested_candidates(candidates, iou_thresh=0.85):
-    keep = []
-    for i, cand_i in enumerate(candidates):
-        xi0, yi0, xi1, yi1 = cand_i['x0'], cand_i['y0'], cand_i['x1'], cand_i['y1']
-        area_i = (xi1 - xi0) * (yi1 - yi0)
-        is_nested = False
-        for j, cand_j in enumerate(candidates):
-            if i == j: continue
-            xj0, yj0, xj1, yj1 = cand_j['x0'], cand_j['y0'], cand_j['x1'], cand_j['y1']
-            area_j = (xj1 - xj0) * (yj1 - yj0)
-            # Intersection
-            xx0, yy0 = max(xi0, xj0), max(yi0, yj0)
-            xx1, yy1 = min(xi1, xj1), min(yi1, yj1)
-            iw, ih = max(0, xx1-xx0), max(0, yy1-yy0)
-            intersection = iw*ih
-            if min(area_i, area_j) == 0: continue
-            iou = intersection / min(area_i, area_j)
-            if iou > iou_thresh and area_i < area_j:
-                is_nested = True
-                break
-        if not is_nested:
-            keep.append(cand_i)
-    return keep
-
 # ----------- Hàm tách bảng giá trị/bảng biến thiên và hình minh hoạ (chuẩn nâng cao) ----------
 def extract_figures_and_tables(img_bytes, min_area_ratio=0.008, min_area_abs=2500, min_w=70, min_h=70, max_figures=8):
     img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img = np.array(img_pil)
-    h, w = img.shape[:2]
+    h, w = img.shape[:2] 
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    gray = cv2.GaussianBlur(gray, (3,3), 0)
+    
+    # Áp dụng GaussianBlur để làm mịn nhiễu
+    gray = cv2.GaussianBlur(gray, (3,3), 0) 
+    
+    # Áp dụng CLAHE để tăng cường độ tương phản cục bộ
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
     gray = clahe.apply(gray)
+    
+    # Adaptive Thresholding
     thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
-                                   cv2.THRESH_BINARY_INV, 25, 10)
+                                   cv2.THRESH_BINARY_INV, 25, 10) 
+    
+    # Dilate để làm dày các đường nét
     kernel = np.ones((3,3),np.uint8)
     thresh = cv2.dilate(thresh, kernel, iterations=1)
+    
+    # Tìm contours
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
     candidates = []
     for cnt in contours:
         x, y, ww, hh = cv2.boundingRect(cnt)
         area = ww * hh
         area_ratio = area / (w * h)
         aspect = ww / (hh + 1e-6)
-        if area < min_area_abs or area_ratio < min_area_ratio or area_ratio > 0.6:
+        
+        # Lọc các vùng quá nhỏ hoặc quá lớn
+        if area < min_area_abs or area_ratio < min_area_ratio or area_ratio > 0.6: 
             continue
+        
+        # Lọc theo kích thước tối thiểu
         if ww < min_w or hh < min_h:
             continue
-        if not (0.2 < aspect < 8.0):
+
+        # Lọc theo tỷ lệ khung hình hợp lý cho hình ảnh/bảng
+        if not (0.2 < aspect < 8.0): 
             continue
+
+        # Không lấy vùng quá sát mép giấy
         if x < 0.03*w or y < 0.03*h or (x+ww) > 0.97*w or (y+hh) > 0.97*h:
             continue
+        
+        # Thêm lọc dựa trên solidity
         hull = cv2.convexHull(cnt)
         hull_area = cv2.contourArea(hull)
         if hull_area == 0: continue
         solidity = float(area)/hull_area
-        if solidity < 0.4:
+        if solidity < 0.4: 
             continue
-        is_table = (ww > 0.25*w and hh > 0.05*h and aspect > 2.0 and aspect < 10.0)
+
+        # Logic nhận dạng bảng
+        is_table = (ww > 0.25*w and hh > 0.05*h and aspect > 2.0 and aspect < 10.0) 
+        
         candidates.append({
             "area": area, "x0": x, "y0": y, "x1": x+ww, "y1": y+hh,
-            "is_table": is_table, "bbox": (x, y, ww, hh)
+            "is_table": is_table, "bbox": (x, y, ww, hh) 
         })
-    # Bổ sung lọc vùng lồng nhau/trùng lặp
-    candidates = filter_nested_candidates(candidates, iou_thresh=0.85)
+    
     # Sắp xếp các ứng cử viên theo diện tích giảm dần
     candidates = sorted(candidates, key=lambda f: f['area'], reverse=True)
+    
     # Giới hạn cứng số lượng đối tượng trả về
-    candidates = candidates[:max_figures]
+    candidates = candidates[:2] 
+
     # Sắp xếp lại theo vị trí trên trang
     candidates = sorted(candidates, key=lambda box: (box["y0"], box["x0"]))
+
     final_figures_list = []
     img_idx = 0
     table_idx = 0
-    for fig_data in candidates:
+    
+    # Sau khi lọc, gán lại tên và tạo base64
+    for fig_data in candidates: 
         crop = img[fig_data["y0"]:fig_data["y1"], fig_data["x0"]:fig_data["x1"]]
         buf = io.BytesIO()
         Image.fromarray(crop).save(buf, format="JPEG")
         b64 = base64.b64encode(buf.getvalue()).decode()
+        
         if fig_data["is_table"]:
-            name = f"table-{table_idx+1}.jpeg"
+            name = f"table-{table_idx+1}.jpeg" 
             table_idx += 1
         else:
-            name = f"img-{img_idx+1}.jpeg"
+            name = f"img-{img_idx+1}.jpeg" 
             img_idx += 1
+        
         final_figures_list.append({
             "name": name,
             "base64": b64,
             "is_table": fig_data["is_table"],
-            "bbox": fig_data["bbox"]
+            "bbox": fig_data["bbox"] 
         })
+
     return final_figures_list, h, w
 
 def remove_all_figure_markdown(text):
@@ -114,9 +120,10 @@ def remove_all_figure_markdown(text):
     text = re.sub(r'\[BẢNG_PLACEHOLDER\]', '', text)
     return text
 
-# --- Mapping hình vào đúng đoạn ---
+# -------- Mapping nâng cao (tách đúng đoạn, không chen giữa câu) --------
 def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
     import re
+
     lines = []
     buffer = ""
     for line in text.split('\n'):
@@ -130,14 +137,19 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
             lines.append('')
     if buffer:
         lines.append(buffer)
+
     figures_sorted = sorted(
         [fig for fig in figures if fig.get('bbox')],
         key=lambda f: (f['bbox'][1], f['bbox'][0])
     )
+
+    # 1. Map ảnh có từ khóa hình vẽ
     used_figures = set()
     processed_lines = []
-    for idx, line in enumerate(lines):
+
+    for line in lines:
         processed_lines.append(line)
+        # Chèn hình nếu phát hiện từ khóa hình vẽ hoặc "như hình vẽ" hoặc "(hình vẽ)" hoặc "(hình)"
         if any(x in line.lower() for x in ["hình vẽ", "(hình", "hình bên", "xem hình", "đồ thị", "biểu đồ", "minh họa"]):
             for fig in figures_sorted:
                 if fig['name'] not in used_figures:
@@ -145,16 +157,8 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
                     processed_lines.append(tag)
                     used_figures.add(fig['name'])
                     break
-    for qnum in range(1, 50):
-        mline = [i for i,l in enumerate(processed_lines) if re.match(fr"Câu\s*{qnum}[\.\:]", l)]
-        if mline:
-            for fig in figures_sorted:
-                if fig['name'] not in used_figures:
-                    tag = f"[BẢNG: {fig['name']}]" if fig['is_table'] else f"[HÌNH: {fig['name']}]"
-                    if mline[0]+1 >= len(processed_lines) or not processed_lines[mline[0]+1].startswith("[HÌNH:"):
-                        processed_lines.insert(mline[0]+1, tag)
-                        used_figures.add(fig['name'])
-                    break
+
+    # 2. Chèn các ảnh chưa dùng vào cuối nhưng trước các dòng trống cuối
     for fig in figures_sorted:
         if fig['name'] not in used_figures:
             tag = f"[BẢNG: {fig['name']}]" if fig['is_table'] else f"[HÌNH: {fig['name']}]"
@@ -162,11 +166,20 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
             while insert_pos > 0 and not processed_lines[insert_pos].strip():
                 insert_pos -= 1
             processed_lines.insert(insert_pos + 1, tag)
+
     return '\n'.join(processed_lines)
 
-# --- Định dạng markdown chuẩn Toán/Trắc nghiệm/Đúng Sai ---
+# --------- Định dạng Markdown cho câu hỏi ---------
 def format_exam_markdown(text):
-    import re
+    """
+    - Tách các câu hỏi trắc nghiệm 4 đáp án thành block Câu X + 4 dòng đáp án
+    - Mapping [HÌNH: ...] đúng vị trí
+    - Định dạng phần Đúng/Sai: mỗi ý trên 1 dòng, có thể thêm [ ] Đúng/Sai
+    - Giữ công thức LaTeX, không chỉnh sửa dấu $
+    - Đảm bảo các dòng trống hợp lý giữa các câu
+    """
+
+    # Xử lý 4 đáp án thành block trắc nghiệm
     def format_choices(block):
         m = re.match(r"^(Câu\s*\d+[\.|:])(.+?)(A\..+?B\..+?C\..+?D\..+?)$", block, re.DOTALL)
         if m:
@@ -175,6 +188,7 @@ def format_exam_markdown(text):
             choices_block = "\n".join(x.strip().replace('\n', ' ') for x in abcd)
             return f"{pre}{question.strip()}\n{choices_block}"
         return block
+
     lines = text.split('\n')
     out = []
     buffer = ""
@@ -188,6 +202,8 @@ def format_exam_markdown(text):
     if buffer.strip():
         out.append(format_choices(buffer.strip()))
     text = "\n\n".join(out)
+
+    # Định dạng phần Đúng/Sai
     def format_true_false(block):
         lines = block.split('\n')
         new_lines = []
@@ -198,19 +214,25 @@ def format_exam_markdown(text):
             else:
                 new_lines.append(l)
         return "\n".join(new_lines)
+
     blocks = text.split('\n\n')
     for i, b in enumerate(blocks):
         if re.search(r"\ba\)", b) and re.search(r"\bb\)", b) and re.search(r"\bc\)", b):
             blocks[i] = format_true_false(b)
     text = "\n\n".join(blocks)
+
+    # Đảm bảo mỗi tag [HÌNH: ...] ở 1 dòng riêng
     text = re.sub(r"([^\n])(\[HÌNH: [^\]]+\])", r"\1\n\2", text)
     text = re.sub(r"(\[HÌNH: [^\]]+\])([^\n])", r"\1\n\2", text)
     text = re.sub(r"([^\n])(\[BẢNG: [^\]]+\])", r"\1\n\2", text)
     text = re.sub(r"(\[BẢNG: [^\]]+\])([^\n])", r"\1\n\2", text)
+
+    # Chuẩn hóa 2 dòng trống giữa các câu hỏi
     text = re.sub(r"\n{3,}", "\n\n", text)
+
     return text.strip()
 
-# ---------- Key Gemini ----------
+# --------- Key Gemini -----------
 GEMINI_API_KEYS = [
     "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
     "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
@@ -221,11 +243,58 @@ def get_next_api_key():
 
 GEMINI_PROMPT = '''
 YÊU CẦU QUAN TRỌNG:
-1. GÕ LẠI CHÍNH XÁC TẤT CẢ VĂN BẢN TRONG ẢNH...
-2. ĐÁNH DẤU VỊ TRÍ HÌNH ẢNH/BẢNG: ...
-...
+1.  **GÕ LẠI CHÍNH XÁC TẤT CẢ VĂN BẢN TRONG ẢNH**: Đảm bảo không bỏ sót bất kỳ từ, câu, đoạn văn nào. Giữ nguyên cấu trúc đoạn văn, dấu xuống dòng, và định dạng gốc (ví dụ: in đậm, in nghiêng nếu có thể).
+2.  **ĐÁNH DẤU VỊ TRÍ HÌNH ẢNH/BẢNG**: Nếu phát hiện hình minh hoạ (hình vẽ, đồ thị, biểu đồ) hoặc bảng số liệu (bảng giá trị, bảng biến thiên, bảng tần số), hãy đánh dấu đúng vị trí của chúng bằng cú pháp placeholder:
+    *   `[HÌNH_PLACEHOLDER]` cho hình ảnh minh hoạ.
+    *   `[BẢNG_PLACEHOLDER]` cho bảng hoặc bảng số liệu.
+3.  **CHÈN PLACEHOLDER ĐÚNG VỊ TRÍ**: Với mỗi placeholder, hãy chèn ngay sau dòng mô tả có các cụm từ như: "xem hình dưới", "hình dưới đây", "bảng biến thiên", "bảng tần số", "bảng giá trị", "hình vẽ", "biểu đồ", "như hình vẽ", "thống kê lại ở bảng", hoặc ngay sau dòng câu hỏi liên quan trực tiếp tới hình/bảng/biểu đồ đó. Nếu không có từ khóa, hãy chèn vào vị trí logic nhất trong đoạn văn bản liên quan.
+4.  **ĐỊNH DẠNG CÔNG THỨC TOÁN HỌC**: Mọi công thức toán học, biểu thức, hệ phương trình, ký hiệu toán học phải được định dạng bằng LaTeX inline: `${...}$`, Toán inline: `${...}$`.
+5.  **CHUYỂN BẢNG SỐ LIỆU SANG MARKDOWN**: Nếu phát hiện bảng số liệu, hãy chuyển đổi chúng thành định dạng bảng Markdown nếu có thể.
+6.  **ĐỊNH DẠNG CÂU HỎI**: Tuân thủ nghiêm ngặt các định dạng sau cho từng loại câu hỏi:
+
+    **Định dạng câu hỏi:**
+
+    1.  **Trắc nghiệm 4 phương án**
+        *   Bắt đầu bằng "Câu X." (X là số thứ tự), sau đó là nội dung câu hỏi ĐẦY ĐỦ, rồi lần lượt TẤT CẢ các lựa chọn A, B, C, D trên các dòng riêng biệt:
+        Câu X. [Nội dung câu hỏi đầy đủ]
+        A. [Đáp án A đầy đủ]
+        B. [Đáp án B đầy đủ]
+        C. [Đáp án C đầy đủ]
+        D. [Đáp án D đầy đủ]
+    2.  **Đúng/Sai**
+        *   Bắt đầu bằng "Câu X.", nội dung câu hỏi, cuối cùng là 2 lựa chọn trên 2 dòng riêng:
+        Câu X. [Nội dung câu hỏi]
+        A. Đúng
+        B. Sai
+    3.  **Trả lời ngắn**
+        *   Bắt đầu bằng "Câu X.", nội dung câu hỏi.
+        Câu X. [Nội dung câu hỏi] Trả lời: ________
+    4.  **Tự luận**
+        *   Bắt đầu bằng "Câu X.", nội dung câu hỏi.
+        Câu X. [Nội dung câu hỏi]
+
+**Lưu ý cực kỳ quan trọng:**
+*   **KHÔNG BỎ SÓT BẤT KỲ NỘI DUNG NÀO**: Kể cả câu hỏi bị thiếu một phần, đáp án bị cắt, hay bất kỳ đoạn văn bản nào. Nếu một phần bị cắt, hãy ghi lại phần có thể đọc được và thêm `[...]` để chỉ ra phần bị thiếu.
+*   **KHÔNG BỎ SÓT ĐÁP ÁN**: Nếu một lựa chọn (A, B, C, D) bị thiếu nội dung, hãy ghi `...` vào vị trí đó.
+*   **GIỮ NGUYÊN THỨ TỰ**: Đảm bảo thứ tự của các câu hỏi, đáp án, và nội dung gốc được giữ nguyên.
+*   **CHỈ CHÈN PLACEHOLDER ĐÚNG VỊ TRÍ**: Không tự ý chèn placeholder ở những nơi không liên quan đến hình hoặc bảng.
+*   **KHÔNG TỰ Ý BỎ QUA HAY THAY ĐỔI CHI TIẾT**: Mọi thông tin, bao gồm tiêu đề đề thi, mã đề, thời gian, v.v., phải được ghi lại chính xác.
+
+**Ví dụ minh hoạ:**
+
+Câu 1. Cho tam giác ${ABC}$ có ${AB = AC}$. Xem hình dưới.
+[HÌNH_PLACEHOLDER]
+A. Tam giác cân tại ${A}$.
+B. Tam giác vuông tại ${B}$.
+C. Tam giác đều.
+D. Tam giác tù.
+
+Câu 2. Điền số thích hợp vào ô trống trong bảng giá trị sau:
+[BẢNG_PLACEHOLDER]
+
 Hãy xuất ra văn bản theo đúng định dạng trên!
 '''
+
 def gemini_generate_text(image_bytes, api_key):
     api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     b64_img = base64.b64encode(image_bytes).decode()
@@ -250,7 +319,7 @@ def gemini_generate_text(image_bytes, api_key):
 
 # ========== Giao diện ==========
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
-st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & bảng ✨")
+st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & bảng (bảng giá trị, bảng tần số, biến thiên) ✨")
 
 tab_img, tab_pdf = st.tabs(["🖼️ Ảnh", "📄 PDF"])
 
@@ -261,37 +330,45 @@ with tab_img:
         accept_multiple_files=True,
         help="Mỗi ảnh là 1 trang, minh hoạ & bảng sẽ được tách tự động."
     )
+
     if uploaded_images:
         for img_idx, img_file in enumerate(uploaded_images):
-            with st.expander("ℹ️ Thông tin file", expanded=True):
-                st.write(f"**🖼️ Tên file:** {img_file.name}")
-                st.write(f"**🟡 Loại file:** {img_file.type}")
-                st.write(f"**✏️ Kích thước:** {img_file.size / 1024:.1f} KB")
+            with st.expander(f"ℹ️ Thông tin file: {img_file.name}", expanded=True):
+                st.write(f"**Tên file:** {img_file.name}")
+                st.write(f"**Loại file:** {img_file.type}")
+                st.write(f"**Kích thước:** {img_file.size / 1024:.1f} KB")
+
             ocr_key = f"ocr_{img_file.name}_{img_idx}"
             text_key = f"text_{img_file.name}_{img_idx}"
             fig_key = f"fig_{img_file.name}_{img_idx}"
-            if st.button(f"🚀 Xử lý OCR Image ({img_file.name})", key=ocr_key):
+
+            if st.button(f"🚀 Xử lý ảnh ({img_file.name})", key=ocr_key):
                 img_bytes = img_file.read()
                 figures, img_h, img_w = extract_figures_and_tables(img_bytes)
                 api_key = get_next_api_key()
-                with st.spinner("Đang nhận diện..."):
+                with st.spinner("Đang xử lý..."):
                     try:
                         text = gemini_generate_text(img_bytes, api_key)
                     except Exception as e:
                         text = f"[Lỗi Gemini: {e}]"
+
                 text = remove_all_figure_markdown(text)
                 text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
-                text_markdown = format_exam_markdown(text)
-                st.session_state[text_key] = text_markdown
+                formatted_text = format_exam_markdown(text)
+
+                st.session_state[text_key] = formatted_text
                 st.session_state[fig_key] = figures
+
             if text_key in st.session_state and fig_key in st.session_state:
-                st.markdown("### 📋 Kết quả mapping & format chuẩn:")
-                tab_text_img, tab_figures_img = st.tabs(["📝 Văn bản Markdown", "🖼️ Hình ảnh"])
-                with tab_text_img:
+                st.markdown("### 📋 Kết quả:")
+                
+                tab1, tab2 = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
+
+                with tab1:
                     st.code(st.session_state[text_key], language="markdown")
                     figures = st.session_state[fig_key]
                     if figures:
-                        if st.button("📝 Tạo và tải file Word giữ hình & bảng đúng vị trí",
+                        if st.button("📝 Xuất ra Word", 
                                    use_container_width=True,
                                    key=f"word-{img_file.name}-{img_idx}"):
                             with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
@@ -313,7 +390,8 @@ with tab_img:
                             os.remove(tmp_word.name)
                     else:
                         st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh để xuất Word.")
-                with tab_figures_img:
+
+                with tab2:
                     figures = st.session_state[fig_key]
                     if figures:
                         for fig in figures:
@@ -329,6 +407,7 @@ with tab_img:
                             )
                     else:
                         st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh.")
+
     else:
         st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
 
@@ -336,6 +415,7 @@ with tab_pdf:
     st.markdown("#### 📝 OCR PDF Toán, giữ công thức, ảnh minh hoạ")
     uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"], key="pdf_uploader")
     num_pages = None
+    
     if uploaded_file:
         pdf_bytes = uploaded_file.read()
         file_name = uploaded_file.name
@@ -348,53 +428,61 @@ with tab_pdf:
             uploaded_file.seek(0)
         except:
             num_pages = "?"
+        
         with st.expander("ℹ️ Thông tin file", expanded=True):
             cols = st.columns(3)
             cols[0].metric("Tên file", file_name)
             cols[1].metric("Loại file", mime_type)
             cols[2].metric("Kích thước", f"{size_mb:.1f} MB")
             st.caption(f"Số trang: {num_pages}")
-    if uploaded_file:
-        if st.button("🚀 Xử lý OCR PDF", type="primary", use_container_width=True):
-            st.info("⏳ Đang xử lý OCR PDF... (vui lòng chờ)")
-            with st.spinner("Đang nhận diện văn bản và trích xuất hình ảnh..."):
-                client = EnhancedSmartOCRClient(API_URL, API_KEY)
-                uploaded_file.seek(0)
-                pdf_bytes = uploaded_file.read()
-                images = extract_images_from_pdf(pdf_bytes)
-                result = client.convert(pdf_bytes, file_name, mime_type)
-            if not result.get("success"):
-                st.error("❌ Xử lý OCR PDF thất bại: " + str(result.get("error")))
-                st.stop()
-            st.session_state["ocr_text_raw"] = result["data"].get("text_content", "")
-            st.session_state["ocr_images"] = images
-            st.session_state["ocr_done"] = True
-            st.success("✅ Đã nhận diện PDF thành công!")
+
+    if uploaded_file and st.button("🚀 Xử lý OCR PDF", type="primary", use_container_width=True):
+        st.info("⏳ Đang xử lý OCR PDF... (vui lòng chờ)")
+        with st.spinner("Đang nhận diện văn bản và trích xuất hình ảnh..."):
+            client = EnhancedSmartOCRClient(API_URL, API_KEY)
+            uploaded_file.seek(0)
+            pdf_bytes = uploaded_file.read()
+            images = extract_images_from_pdf(pdf_bytes)
+            result = client.convert(pdf_bytes, file_name, mime_type)
+        
+        if not result.get("success"):
+            st.error("❌ Xử lý OCR PDF thất bại: " + str(result.get("error")))
+            st.stop()
+        
+        st.session_state["ocr_text_raw"] = result["data"].get("text_content", "")
+        st.session_state["ocr_images"] = images
+        st.session_state["ocr_done"] = True
+        st.success("✅ Đã nhận diện PDF thành công!")
+
     if st.session_state.get("ocr_done"):
         def enhance_text_visibility(s):
             return re.sub(r'\$(.+?)\$', r'$\1$', s)
+        
         raw_text = st.session_state.get("ocr_text_raw", "")
         text_content = enhance_text_visibility(raw_text)
         images = st.session_state.get("ocr_images", [])
-        text_markdown = format_exam_markdown(text_content)
-        tab1, tab2 = st.tabs(["📝 Văn bản Markdown", "🖼️ Hình ảnh trích xuất"])
+        
+        tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
+        
         with tab1:
-            st.markdown("#### 📋 Kết quả OCR PDF (Markdown):")
-            st.text_area("Nội dung đã được định dạng:", text_markdown, height=350, label_visibility="collapsed")
+            st.markdown("#### 📋 Kết quả OCR PDF:")
+            formatted_text = format_exam_markdown(text_content)
+            st.text_area("Nội dung đã được phân tích:", formatted_text, height=350, label_visibility="collapsed")
+            
             col1, col2 = st.columns(2)
             with col1:
                 st.download_button(
                     "📄 Tải văn bản (TXT)",
-                    text_markdown,
+                    formatted_text,
                     file_name="ket_qua_ocr.txt",
                     mime="text/plain",
                     use_container_width=True,
                 )
             with col2:
-                if st.button("📝 Tạo và tải file Word", use_container_width=True, key="word_download"):
+                if st.button("📝 Xuất ra Word", use_container_width=True, key="word_export"):
                     with st.spinner("Đang tạo file Word..."):
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                            insert_images_to_word_from_markdown(text_markdown, images, tmp_word.name)
+                            insert_images_to_word_from_markdown(formatted_text, images, tmp_word.name)
                         with open(tmp_word.name, "rb") as f:
                             word_data = f.read()
                         st.success("✅ Đã tạo file Word thành công!")
@@ -406,6 +494,7 @@ with tab_pdf:
                             use_container_width=True
                         )
                         os.remove(tmp_word.name)
+        
         with tab2:
             if images:
                 st.success(f"🖼️ Đã tìm thấy {len(images)} hình ảnh:")
@@ -428,9 +517,11 @@ with tab_pdf:
                         st.error(f"Không đọc được ảnh {fig['name']}: {e}")
             else:
                 st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
+    
     st.markdown("---")
     st.caption("✨ Hệ thống sử dụng AI nâng cao để nhận diện chính xác văn bản toán học và tự động mapping hình ảnh/bảng vào đúng vị trí")
 
+# Thêm chức năng phụ trợ
 if st.sidebar.checkbox("ℹ️ Hiển thị thông tin kỹ thuật"):
     st.sidebar.write("**Phiên bản:** 1.5.0")
     st.sidebar.write("**Cập nhật:** 2024-02-15")
