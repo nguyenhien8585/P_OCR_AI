@@ -13,7 +13,33 @@ from word_export import insert_images_to_word_from_markdown
 
 import re
 
-import re
+def fix_close_brace_latex(text):
+    # 1. Thêm dấu } bị thiếu cho các biểu thức kiểu ${...$ hoặc ${...}$
+    # a. Tìm công thức có dạng thiếu dấu } cuối (như log_{\sqrt{2}-1 x}$)
+    text = re.sub(
+        r'(\$\{[^{}]*_[^{}]*[a-zA-Z0-9\\]+)\}\$',
+        lambda m: m.group(1) + '}' + '}$' if m.group(1).count('{') > m.group(1).count('}') else m.group(0),
+        text
+    )
+    # b. Với trường hợp ${...$ thiếu } tận cuối dòng hoặc trước dấu chấm
+    text = re.sub(
+        r'(\$\{[^{}]+)(\$\s*[\.\,\?\!\)]*)',
+        lambda m: m.group(1) + '}' + m.group(2) if m.group(1).count('{') > m.group(1).count('}') else m.group(0),
+        text
+    )
+    # 2. Sửa lỗi thừa dấu ngoặc tròn
+    # ${\overrightarrow{n} = ((1;-1;0)}$ => ${\overrightarrow{n} = (1;-1;0)}$
+    text = re.sub(
+        r'\\overrightarrow\{([a-zA-Z])\}\s*=\s*\(\(([^\)]*)\)\)',  # 2 ngoặc (
+        r'\\overrightarrow{\1} = (\2)',
+        text
+    )
+    text = re.sub(
+        r'\\overrightarrow\{([a-zA-Z])\}\s*=\s*\((\([^\)]*\))\)',  # 1 ngoặc ( dư trong
+        r'\\overrightarrow{\1} = \2',
+        text
+    )
+    return text
 
 def fix_log_base_brace(text):
     # Sửa log_{\sqrt{2}-1 x} thành log_{\sqrt{2}-1} x cho mọi trường hợp log, sin, cos, tan, ...
