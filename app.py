@@ -57,18 +57,61 @@ def merge_latex_blocks_multiline(text):
     return '\n'.join(new_lines)
 
 def merge_split_latex_blocks(text):
-    """
-    Gộp các block ${...}${...}${...}$ liền nhau thành ${... ... ...}$
-    và xử lý cân bằng ngoặc cho các trường hợp bị thiếu.
-    """
-    # Gộp các block LaTeX bị chia nhỏ trên cùng một dòng
-    def merge(match):
-        g = match.group(0)
-        # loại bỏ tất cả ${ và }$ giữa các block
-        inside = re.sub(r'(\$\{|\}\$)', '', g)
-        return '${' + inside + '}$'
-    # Gộp mọi trường hợp từ 2 block trở lên liền kề thành 1 block
-    text = re.sub(r'(\$\{[^\$]*\}\$){2,}', merge, text)
+   # Tìm các block có thể lỗi kiểu ${...}$ dài > 2 từ/ký hiệu
+    def fix_block(m):
+        content = m.group(1)
+        # Thay thế toán tử // và \perp, =, , bằng ký tự đặc biệt tạm thời để tách ra
+        content = content.replace('//', '|//|').replace('\perp', '|\\perp|').replace(',', '|,|').replace('=', '|=|')
+        # Tách mọi nhóm có mũ/chỉ số: A^{\prime}, C^{\prime} -> [A^{\prime}, ...]
+        # Biến có mũ/chỉ số
+        tokens = re.findall(r"[A-Za-z](?:\^\{[^\}]+\})?", content)
+        # Toán tử, dấu hoặc số đơn (sau khi đã thay tạm bằng |...|)
+        ops = re.findall(r"\|\S+?\|", content)
+        others = re.findall(r"[0-9]+|[^\sA-Za-z\^\{\}|]+", content)
+        # Duyệt lại toàn bộ theo thứ tự
+        order = []
+        i = 0
+        j = 0
+        content2 = content
+        # Thay lại các ký hiệu đặc biệt
+        content2 = re.sub(r"\|//\|", r'//', content2)
+        content2 = re.sub(r"\|\\perp\|", r'\\perp', content2)
+        content2 = re.sub(r"\|,\|", r',', content2)
+        content2 = re.sub(r"\|=\|", r'=', content2)
+        # Nếu không chứa ^ hoặc \perp thì trả về như cũ
+        if not re.search(r"(\^\{|\^\\|\^\'|\\perp|//|,|=)", content2):
+            return "${" + content2.strip() + "}$"
+        # Tách ra từng block nhỏ
+        # Tìm mọi biến (và chỉ số)
+        parts = re.split(r'(?=[A-Za-z]\^\{[^\}]+\}|[A-Za-z]|\\perp|//|,|=|\(|\)|[0-9]+)', content2)
+        parts = [p for p in parts if p.strip()]
+        latex = []
+        for p in parts:
+            p = p.strip()
+            if not p:
+                continue
+            # Nếu là biến có mũ/chỉ số
+            if re.match(r"^[A-Za-z]\^\{[^\}]+\}$", p):
+                latex.append("${" + p + "}$")
+            # Nếu là ký hiệu toán học
+            elif re.match(r"^\\perp|//|,|=|\(|\)|[0-9]+$", p):
+                latex.append("${" + p + "}$")
+            # Nếu là biến đơn, hoặc số đơn
+            elif re.match(r"^[A-Za-z0-9]$", p):
+                latex.append("${" + p + "}$")
+            # Nếu là block bắt đầu hoặc kết thúc
+            else:
+                latex.append(p)
+        # Ghép lại, bỏ ${}$ thừa
+        res = ' '.join(latex).replace('${}${', '${').replace('}$$', '}$').replace('${ }$', '')
+        # Bỏ ngoặc ${,}$ hoặc ${=}$ hoặc ${)}$ -> ,  hoặc = hoặc )
+        res = re.sub(r"\$\{([,=()])\}\$", r"\1", res)
+        # Gom các block nhỏ về một block nếu chỉ có một toán hạng
+        res = re.sub(r"\$\{([A-Za-z])\}\$ \$\{([A-Za-z])\}\$", r"${\1 \2}$", res)
+        return res
+
+    # Áp dụng cho mọi block ${...}$
+    text = re.sub(r"\$\{([^\}]+)\}$", fix_block, text)
     return text
     
 def fix_unbalanced_brackets_in_latex(text):
