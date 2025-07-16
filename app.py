@@ -444,6 +444,7 @@ with tab_pdf:
             cols[1].metric("Loại file", mime_type)
             cols[2].metric("Kích thước", f"{size_mb:.1f} MB")
             st.caption(f"Số trang: {num_pages}")
+
     if uploaded_file and st.button("🚀 Xử lý OCR PDF", type="primary", use_container_width=True):
         st.info("⏳ Đang xử lý OCR PDF... (vui lòng chờ)")
         with st.spinner("Đang nhận diện văn bản và trích xuất hình ảnh..."):
@@ -451,6 +452,12 @@ with tab_pdf:
             uploaded_file.seek(0)
             pdf_bytes = uploaded_file.read()
             images = extract_images_from_pdf(pdf_bytes)
+            # Đổi tên các hình về đúng định dạng img-X.jpeg X từ 0
+            for idx, fig in enumerate(images):
+                if fig["is_table"]:
+                    fig["name"] = f"table-{idx}.jpeg"
+                else:
+                    fig["name"] = f"img-{idx}.jpeg"
             result = client.convert(pdf_bytes, file_name, mime_type)
         if not result.get("success"):
             st.error("❌ Xử lý OCR PDF thất bại: " + str(result.get("error")))
@@ -459,60 +466,67 @@ with tab_pdf:
         st.session_state["ocr_images"] = images
         st.session_state["ocr_done"] = True
         st.success("✅ Đã nhận diện PDF thành công!")
+
     if st.session_state.get("ocr_done"):
-       raw_text = st.session_state.get("ocr_text_raw", "")
-       text_content = normalize_math_latex(raw_text)   # CHUẨN HÓA TOÁN
-       images = st.session_state.get("ocr_images", [])
-    
-       # Đặt lại tên img-X bắt đầu từ 0
-       img_idx = 0
-       for img in images:
-           if not img.get("is_table", False):
-               img["name"] = f"img-{img_idx}.jpeg"
-               img_idx += 1
-       table_idx = 0
-       for img in images:
-           if img.get("is_table", False):
-               img["name"] = f"table-{table_idx}.jpeg"
-               table_idx += 1
+        raw_text = st.session_state.get("ocr_text_raw", "")
+        images = st.session_state.get("ocr_images", [])
+        # Đổi các placeholder về đúng tên hình [HÌNH: img-X.jpeg]
+        def replace_placeholders(text, images):
+            img_idx = 0
+            table_idx = 0
+            def repl(match):
+                nonlocal img_idx, table_idx
+                if match.group(0) == "[HÌNH_PLACEHOLDER]":
+                    for k in range(img_idx, len(images)):
+                        if not images[k]["is_table"]:
+                            name = f"img-{k}.jpeg"
+                            img_idx = k + 1
+                            return f"[HÌNH: {name}]"
+                    return "[HÌNH: img-x.jpeg]"
+                elif match.group(0) == "[BẢNG_PLACEHOLDER]":
+                    for k in range(table_idx, len(images)):
+                        if images[k]["is_table"]:
+                            name = f"table-{k}.jpeg"
+                            table_idx = k + 1
+                            return f"[BẢNG: {name}]"
+                    return "[BẢNG: table-x.jpeg]"
+                else:
+                    return match.group(0)
+            text = re.sub(r"\[HÌNH_PLACEHOLDER\]|\[BẢNG_PLACEHOLDER\]", repl, raw_text)
+            return text
 
-    # mapping lại tag [HÌNH: ...] trong text, lần lượt thay thế thành [HÌNH: img-0.jpeg], ...
-    def map_figure_tags(text, images):
-        fig_tags = re.findall(r'\[HÌNH: [^\]]+\]', text)
-        figs = [img for img in images if not img.get("is_table", False)]
-        for idx, tag in enumerate(fig_tags):
-            if idx < len(figs):
-                text = text.replace(tag, f"[HÌNH: {figs[idx]['name']}]")
-        return text
+        # Thay placeholder đúng theo tên
+        replaced_text = replace_placeholders(raw_text, images)
+        # Chuẩn hóa LaTeX
+        text_content = normalize_math_latex(replaced_text)
 
-    tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
-    with tab1:
-        st.markdown("#### 📋 Kết quả OCR PDF:")
-        formatted_text = format_exam_markdown(text_content)
-        formatted_text = map_figure_tags(formatted_text, images)   # << CHÈN HÀM Ở ĐÂY!
-        st.text_area("Nội dung đã được phân tích:", formatted_text, height=350, label_visibility="collapsed")
-        st.download_button(
-            "📄 Tải văn bản (TXT)",
-            formatted_text,
-            file_name="ket_qua_ocr.txt",
-            mime="text/plain",
-            use_container_width=True,
-        )
-        if st.button("📝 Xuất ra Word", use_container_width=True, key="word_export"):
-            with st.spinner("Đang tạo file Word..."):
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                    insert_images_to_word_from_markdown(formatted_text, images, tmp_word.name)
-                with open(tmp_word.name, "rb") as f:
-                    word_data = f.read()
-                st.success("✅ Đã tạo file Word thành công!")
-                st.download_button(
-                    "⬇️ Tải về file Word",
-                    word_data,
-                    file_name="ket_qua_ocr.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    use_container_width=True
-                )
-                os.remove(tmp_word.name)
+        tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
+        with tab1:
+            st.markdown("#### 📋 Kết quả OCR PDF:")
+            formatted_text = format_exam_markdown(text_content)
+            st.text_area("Nội dung đã được phân tích:", formatted_text, height=350, label_visibility="collapsed")
+            st.download_button(
+                "📄 Tải văn bản (TXT)",
+                formatted_text,
+                file_name="ket_qua_ocr.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
+            if st.button("📝 Xuất ra Word", use_container_width=True, key="word_export"):
+                with st.spinner("Đang tạo file Word..."):
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
+                        insert_images_to_word_from_markdown(formatted_text, images, tmp_word.name)
+                    with open(tmp_word.name, "rb") as f:
+                        word_data = f.read()
+                    st.success("✅ Đã tạo file Word thành công!")
+                    st.download_button(
+                        "⬇️ Tải về file Word",
+                        word_data,
+                        file_name="ket_qua_ocr.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True
+                    )
+                    os.remove(tmp_word.name)
         with tab2:
             if images:
                 st.success(f"🖼️ Đã tìm thấy {len(images)} hình ảnh:")
@@ -537,6 +551,7 @@ with tab_pdf:
                 st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
     st.markdown("---")
     st.caption("✨ Hệ thống sử dụng AI nâng cao để nhận diện chính xác văn bản toán học và tự động mapping hình ảnh/bảng vào đúng vị trí")
+
 
 if st.sidebar.checkbox("ℹ️ Hiển thị thông tin kỹ thuật"):
     st.sidebar.write("**Phiên bản:** 1.5.0")
