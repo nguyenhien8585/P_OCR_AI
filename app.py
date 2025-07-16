@@ -13,6 +13,23 @@ from word_export import insert_images_to_word_from_markdown
 
 import re
 
+def fix_stray_open_latex_blocks(text):
+    """
+    Tự động thêm dấu }$ cho mọi block bắt đầu bằng ${ mà chưa kết thúc bằng }$
+    """
+    def replacer(match):
+        content = match.group(1)
+        # Nếu đã kết thúc bằng }, thêm $ nếu thiếu
+        if content.rstrip().endswith('}'):
+            return '${' + content.rstrip() + '}$'
+        else:
+            return '${' + content.rstrip() + '}$'
+    # Áp dụng cho mọi block bắt đầu ${ và kết thúc trước dòng xuống dòng hoặc hết file mà chưa có }$
+    return re.sub(r'\$\{([^}$\n]+)(?:\n|$)', lambda m: replacer(m) + '\n', text)
+
+# Cách dùng cuối pipeline:
+text_content = fix_stray_open_latex_blocks(text_content)
+
 def fix_all_unclosed_latex_blocks(text):
     """
     Tự động thêm dấu } vào trước $ cho tất cả block ${...$ còn thiếu }
@@ -716,6 +733,7 @@ with tab_pdf:
         text_content = fix_latex_block_errors(text_content)           # 8. Sửa lỗi đặc biệt cuối cùng cho block phức tạp
         text_content = fix_missing_closing_brace_in_latex(text_content)
         text_content = fix_all_unclosed_latex_blocks(text_content)
+        text_content = fix_stray_open_latex_blocks(text_content)
         images = st.session_state.get("ocr_images", [])
         tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
         with tab1:
