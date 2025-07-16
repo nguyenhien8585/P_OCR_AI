@@ -63,47 +63,86 @@ def normalize_math_latex_all(text):
     text = re.sub(r'\$\{([^\$]*)\}\$', lambda m: '${' + re.sub(r'[\{\}]+', '', m.group(1)) + '}$', text)
     return text
 
-import re
-
 def fix_math_special_cases(text):
-    # Sửa \overrightarrown => \overrightarrow{n}
-    text = re.sub(r'\\overrightarrown', r'\\overrightarrow{n}', text)
-    # Sửa ${\overrightarrow{n}}$ = ... thành ${\overrightarrow{n}}$ = ...
-    text = re.sub(r'\$\{\\overrightarrow\{([a-zA-Z])\}\}?\$\s*=\s*([\(\[]?[^\$]+)[\$\)]?', r'${\\overrightarrow{\1}}$ = \2', text)
-    # Sửa các vector dư ngoặc hoặc thiếu ngoặc: ((1;-1;0))} → (1;-1;0)
-    text = re.sub(r'\(\(([^()]+)\)\)', r'(\1)', text)
-    text = re.sub(r'\(([^()]+)\)\)', r'(\1)', text)
-    text = re.sub(r'\(\(([^()]+)\)', r'(\1', text)
-    # Sửa ${log_3 x = 2}}$ => ${log_3 x = 2}$
-    text = re.sub(r'(\$\{[^\}]+)\}\}\$', r'\1}$', text)
-    # Sửa ${\mathbbR}$ => ${\mathbb{R}}$
-    text = re.sub(r'\\mathbbR', r'\\mathbb{R}', text)
-    # Sửa ${\begincases ... \endcases}$ => ${\begin{cases} ... \end{cases}}$
-    text = re.sub(
-        r'\\begincases',
-        r'\\begin{cases}',
-        text
-    )
-    text = re.sub(
-        r'\\endcases',
-        r'\\end{cases}',
-        text
-    )
-    # Đảm bảo \begin{cases} có dấu } đúng
-    text = re.sub(r'\\begin\{cases\}', r'\\begin{cases}', text)
-    text = re.sub(r'\\end\{cases\}', r'\\end{cases}', text)
-    # Sửa thiếu hoặc thừa dấu ngoặc tích phân: int_1^2 (2+f(x)dx)}$  => int_1^2 (2+f(x))dx}$
-    text = re.sub(
-        r'(\$\{\\int[_\^0-9{}]+ \(2\+f\(x\))(?:\)?)dx\}\$',
-        lambda m: m.group(1) + '))dx}$',
-        text
-    )
-    # Sửa dư hoặc thiếu ngoặc tích phân, vd: (2+f(x)dx)}$ => (2+f(x))dx}$
-    text = re.sub(r'\(2\+f\(x\)dx\}\$', r'(2+f(x))dx}$', text)
-    # Sửa ${...}$ thiếu hoặc thừa dấu ngoặc cuối
-    text = re.sub(r'\$\{([^\$]*?)\}\}*\$', lambda m: '${' + m.group(1).rstrip('}').rstrip() + '}$', text)
-    return text
+    # B1: Đảm bảo mọi công thức đều ở dạng ${...}$
+    # Xóa các trường hợp ${...}${...} liền nhau, nối thành một
+    text = re.sub(r'\}\$\s*\$\{', '', text)
+    # Đảm bảo chỉ còn đúng cặp mở/đóng
+    def merge_nested_formula(m):
+        s = ''.join(re.findall(r'\$\{([^\$}]*)\}\$', m.group(0)))
+        return '${' + s + '}$'
+    text = re.sub(r'(\$\{[^\$]*\}\$)+', merge_nested_formula, text)
+    text = re.sub(r'\$\{\s*\}\$', '', text)
 
+    # Đổi các $...$ còn sót thành ${...}$
+    text = re.sub(r'\$(?!\{)([^\$]+?)\$', lambda m: '${' + m.group(1).strip() + '}$', text)
+
+    # B2: Sửa lỗi log_{...x} thành log_{...} x
+    text = re.sub(
+        r'\\?log_([^\}\s]+)\s*([a-zA-Z0-9\(])',
+        lambda m: '\\log_{' + m.group(1) + '} ' + m.group(2), text
+    )
+
+    # B3: Sửa các lỗi thiếu ngoặc của log, sin, cos, tan... trong ${...}$
+    text = re.sub(
+        r'\$\{\\(log|sin|cos|tan|cot|sec|csc)_([^\{\}\s]+)\s+([a-zA-Z0-9\\\^\_\(\)\[\]\s]+)\}',
+        lambda m: '${\\' + m.group(1) + '_{' + m.group(2) + '} ' + m.group(3).strip() + '}$', text
+    )
+
+    # B4: Sửa các lỗi hệ phương trình
+    text = re.sub(r'(?<!\\)begin\{cases\}', r'\\begin{cases}', text)
+    text = re.sub(r'(?<!\\)end\{cases\}', r'\\end{cases}', text)
+    # Bổ sung dấu } bị thiếu ở \begin{cases hoặc \end{cases}
+    text = re.sub(r'(\\begin\{cases)([^\}])', r'\1}\2', text)
+    text = re.sub(r'(\\end\{cases)([^\}])', r'\1}\2', text)
+    # Xóa các dấu ngoặc dư sau begin{cases}, end{cases}
+    text = re.sub(r'\\begin\{cases\}{2,}', r'\\begin{cases}', text)
+    text = re.sub(r'\\end\{cases\}{2,}', r'\\end{cases}', text)
+
+    # B5: Sửa vector: \overrightarrow{n = ...} => \overrightarrow{n} = ...
+    text = re.sub(
+        r'\\overrightarrow\{\s*([a-zA-Z])\s*=\s*([^\{\}]+)\}',
+        lambda m: r'\\overrightarrow{' + m.group(1).strip() + '} = ' + m.group(2).strip(),
+        text
+    )
+    # Sửa dư/dư ngoặc vector
+    text = re.sub(r'\\overrightarrow\{([^\}]+)\}\)', r'\\overrightarrow{\1}', text)
+    text = re.sub(r'\\overrightarrow\{([^\}]+)\}\}\)', r'\\overrightarrow{\1}', text)
+    # Sửa ${\overrightarrow{n = (1;-1;0)}}$ -> ${\overrightarrow{n}}$ = (1;-1;0)
+    text = re.sub(r'\$\{\\overrightarrow\{([a-zA-Z])\s*=\s*([^\}]+)\}\}\$', r'${\\overrightarrow{\1}}$ = \2', text)
+
+    # B6: Sửa các lỗi tích phân thừa/dư ngoặc: ${\int_1^2 (2+f(x) dx}$ => ${\int_1^2 (2+f(x))dx}$
+    text = re.sub(
+        r'\\int\s*_{([^\}]+)}\^([^\s\{]+)\s*\(([^\)]+)\s*dx\$\}', 
+        lambda m: '\\int_{' + m.group(1) + '}^' + m.group(2) + '(' + m.group(3).strip() + ')dx}$',
+        text
+    )
+    # Sửa mọi tích phân dạng ${\int_1^2 (2+f(x)dx}$ => ${\int_1^2 (2+f(x))dx}$
+    text = re.sub(r'\\int_([^\^]+)\^([^\s]+)\s*\(([^)]+)\s*dx\}', r'\\int_\1^\2 (\3)dx}', text)
+
+    # B7: Sửa $\mathbbR$ thành $\mathbb{R}$
+    text = re.sub(r'\\mathbbR', r'\\mathbb{R}', text)
+    text = re.sub(r'\\mathbb([A-Z])', r'\\mathbb{\1}', text)
+
+    # B8: Xóa dấu ngoặc dư, các }$ thành }$ hoặc ${...}}$ thành ${...}$, hoặc mở ngoặc dư
+    text = re.sub(r'\}\$\}', '}$', text)
+    text = re.sub(r'\$\{([^\}]+)\}\}', r'${\1}$', text)
+    text = re.sub(r'\$\{([^\$]+)\}\$\}', r'${\1}$', text)
+    text = re.sub(r'\${2,}', '${', text)
+    text = re.sub(r'\}{2,}', '}', text)
+
+    # B9: Đảm bảo không còn ${...${...}$ lồng nhau
+    while re.search(r'\$\{[^\$]*\$\{[^\$]*\}\$[^\$]*\}\$', text):
+        text = re.sub(r'\$\{([^\$]*)\$\{([^\$]*)\}\$([^\$]*)\}\$', lambda m: '${' + m.group(1) + m.group(2) + m.group(3) + '}$', text)
+
+    # B10: Xóa mọi ${ hoặc }$ đơn lẻ không có nội dung
+    text = re.sub(r'\$\{\s*\}\$', '', text)
+    text = re.sub(r'\$\{\s*\$', '', text)
+    text = re.sub(r'\$\s*\}\$', '', text)
+
+    # Đảm bảo mọi biểu thức đều nằm đúng ${...}$
+    return text
+    
 # ==================== CHUẨN HÓA LaTeX TOÁN ====================
 def fix_missing_backslash_cases(text):
     # Thêm \ vào begincases, endcases nếu thiếu (cho hệ phương trình)
