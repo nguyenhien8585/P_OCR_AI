@@ -126,8 +126,6 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
 
     lines = []
     buffer = ""
-
-    # Phân đoạn văn bản
     for line in text.split('\n'):
         stripped_line = line.strip()
         if stripped_line:
@@ -140,57 +138,53 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
     if buffer:
         lines.append(buffer)
 
-    # Map số thứ tự hình nếu có (img-1.jpeg -> hình cho câu 4, img-2.jpeg -> hình cho câu 6)
-    # Tùy theo tài liệu mà bạn mapping cho phù hợp:
-    # Ví dụ: img-1.jpeg cho câu 4, img-2.jpeg cho câu 6
     figures_sorted = sorted(
         [fig for fig in figures if fig.get('bbox')],
         key=lambda f: (f['bbox'][1], f['bbox'][0])
     )
-    # Hoặc bạn giữ nguyên thứ tự đã nhận diện
-    tag_per_question = {}  # Map số câu -> hình
 
-    for fig in figures_sorted:
-        # extract số thứ tự hình
-        match = re.match(r"img-(\d+)\.jpeg", fig['name'])
-        if match:
-            img_idx = int(match.group(1))
-            # giả sử ảnh 1 cho câu 4, ảnh 2 cho câu 6 (hoặc logic tương tự)
-            if img_idx == 1:
-                tag_per_question[4] = fig
-            elif img_idx == 2:
-                tag_per_question[6] = fig
-
-    # Tiến hành mapping hình vào văn bản
-    processed_lines = []
+    # 1. Map ảnh có từ khóa hình vẽ
     used_figures = set()
+    processed_lines = []
+    last_figure_line = -1
 
-    i = 0
-    while i < len(lines):
-        line = lines[i]
+    for idx, line in enumerate(lines):
         processed_lines.append(line)
-        # Tìm câu hỏi (dạng "Câu X.")
-        m = re.match(r"Câu\s*(\d+)[\.\:]", line)
-        if m:
-            qnum = int(m.group(1))
-            if qnum in tag_per_question and tag_per_question[qnum]['name'] not in used_figures:
-                fig = tag_per_question[qnum]
-                tag = f"[BẢNG: {fig['name']}]" if fig['is_table'] else f"[HÌNH: {fig['name']}]"
-                processed_lines.append(tag)
-                used_figures.add(fig['name'])
-        i += 1
+        # Chèn hình nếu phát hiện từ khóa hình vẽ hoặc "như hình vẽ" hoặc "(hình vẽ)" hoặc "(hình)"
+        if any(x in line.lower() for x in ["hình vẽ", "(hình", "hình bên", "xem hình", "đồ thị", "biểu đồ", "minh họa"]):
+            for fig in figures_sorted:
+                if fig['name'] not in used_figures:
+                    tag = f"[BẢNG: {fig['name']}]" if fig['is_table'] else f"[HÌNH: {fig['name']}]"
+                    processed_lines.append(tag)
+                    used_figures.add(fig['name'])
+                    last_figure_line = idx
+                    break
 
-    # Chèn các hình còn lại (nếu có, thường là hiếm gặp, hoặc mapping theo keyword như cũ)
+    # 2. Map các ảnh chưa dùng vào sau câu Toán học hình học (ví dụ câu 5)
+    # Giả định: ảnh số 2 là cho câu 5, có thể dựa vào vị trí bbox hoặc nội dung
+    for idx, line in enumerate(processed_lines):
+        if re.match(r"Câu\s*5[\.\:]", line) and len(figures_sorted) > 1:
+            # Chỉ gắn nếu ảnh số 2 chưa dùng
+            for fig in figures_sorted:
+                if fig['name'].endswith("2.jpeg") and fig['name'] not in used_figures:
+                    tag = f"[BẢNG: {fig['name']}]" if fig['is_table'] else f"[HÌNH: {fig['name']}]"
+                    # Nếu dòng sau không phải tag thì mới chèn
+                    if idx+1 >= len(processed_lines) or not processed_lines[idx+1].startswith("[HÌNH:"):
+                        processed_lines.insert(idx+1, tag)
+                        used_figures.add(fig['name'])
+                    break
+
+    # 3. Chèn các ảnh chưa dùng vào cuối nhưng trước các dòng trống cuối
     for fig in figures_sorted:
         if fig['name'] not in used_figures:
             tag = f"[BẢNG: {fig['name']}]" if fig['is_table'] else f"[HÌNH: {fig['name']}]"
-            # chèn ngay trước các dòng trống cuối
             insert_pos = len(processed_lines) - 1
             while insert_pos > 0 and not processed_lines[insert_pos].strip():
                 insert_pos -= 1
             processed_lines.insert(insert_pos + 1, tag)
 
     return '\n'.join(processed_lines)
+
 
 # --------- Key Gemini -----------
 GEMINI_API_KEYS = [
