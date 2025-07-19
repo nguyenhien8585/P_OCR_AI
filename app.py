@@ -9,7 +9,6 @@ import fitz  # PyMuPDF
 import pdf2image
 from docx import Document
 from docx.shared import Inches
-import google.generativeai as genai
 import requests
 from typing import List, Tuple, Optional
 import json
@@ -74,8 +73,6 @@ class OCRProcessor:
         """Setup API keys for Mistral and Gemini"""
         self.mistral_api_key = mistral_key
         self.gemini_api_key = gemini_key
-        if gemini_key:
-            genai.configure(api_key=gemini_key)
     
     def extract_images_from_pdf(self, pdf_file) -> List[Image.Image]:
         """Extract all images from PDF"""
@@ -185,7 +182,6 @@ class OCRProcessor:
             image.save(buffer, format='PNG')
             img_b64 = base64.b64encode(buffer.getvalue()).decode()
             
-            # Mistral API call (placeholder - replace with actual API endpoint)
             headers = {
                 'Authorization': f'Bearer {self.mistral_api_key}',
                 'Content-Type': 'application/json'
@@ -197,24 +193,63 @@ class OCRProcessor:
             - Bọc mọi công thức toán học bằng ${...}$
             - Giữ nguyên định dạng và bố cục văn bản
             - Hỗ trợ tiếng Việt và tiếng Anh
+            
+            Hãy phân tích hình ảnh và trả về văn bản đã được trích xuất với đầy đủ công thức được bọc LaTeX.
             """
             
-            # Note: This is a placeholder. Replace with actual Mistral vision API
-            # For now, return a sample response
-            extracted_text = "Văn bản được trích xuất bằng Mistral API (cần cấu hình API endpoint thực tế)"
+            payload = {
+                "model": "mistral-small-latest",
+                "temperature": 0.3,
+                "top_p": 1,
+                "max_tokens": 4000,
+                "stream": False,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": prompt
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{img_b64}"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "safe_prompt": True
+            }
             
-            return self.wrap_math_formulas(extracted_text)
+            response = requests.post(
+                "https://api.mistral.ai/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                extracted_text = result['choices'][0]['message']['content']
+                return self.wrap_math_formulas(extracted_text)
+            else:
+                return f"Lỗi Mistral API: {response.status_code} - {response.text}"
             
         except Exception as e:
             return f"Lỗi Mistral API: {str(e)}"
     
     def ocr_with_gemini(self, image: Image.Image) -> str:
-        """Perform OCR using Gemini API"""
+        """Perform OCR using Gemini 2.0 Flash API"""
         if not self.gemini_api_key:
             return "Gemini API key không được cung cấp"
         
         try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            # Convert image to base64
+            buffer = io.BytesIO()
+            image.save(buffer, format='PNG')
+            img_b64 = base64.b64encode(buffer.getvalue()).decode()
             
             prompt = """
             Trích xuất tất cả văn bản từ hình ảnh này một cách chính xác nhất. Yêu cầu đặc biệt:
@@ -229,11 +264,54 @@ class OCRProcessor:
             Hãy trả về văn bản đã được xử lý với tất cả công thức được bọc đúng định dạng.
             """
             
-            response = model.generate_content([prompt, image])
-            extracted_text = response.text
+            # Prepare request for Gemini 2.0 Flash
+            headers = {
+                'Content-Type': 'application/json',
+            }
             
-            # Apply additional math formula wrapping
-            return self.wrap_math_formulas(extracted_text)
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "text": prompt
+                            },
+                            {
+                                "inline_data": {
+                                    "mime_type": "image/png",
+                                    "data": img_b64
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0.2,
+                    "topK": 32,
+                    "topP": 1,
+                    "maxOutputTokens": 4096,
+                }
+            }
+            
+            # Make API call to Gemini 2.0 Flash
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self.gemini_api_key}"
+            
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if 'candidates' in result and len(result['candidates']) > 0:
+                    extracted_text = result['candidates'][0]['content']['parts'][0]['text']
+                    return self.wrap_math_formulas(extracted_text)
+                else:
+                    return "Không thể trích xuất văn bản từ phản hồi Gemini"
+            else:
+                return f"Lỗi Gemini API: {response.status_code} - {response.text}"
             
         except Exception as e:
             return f"Lỗi Gemini API: {str(e)}"
