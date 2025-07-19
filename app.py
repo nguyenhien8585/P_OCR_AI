@@ -458,7 +458,7 @@ class WordExporter:
         for para in paragraphs:
             if para.strip():
                 # Check if paragraph contains LaTeX formulas
-                if '${' in para and '}
+                if '${' in para and '}$'
 
 # Main App
 def main():
