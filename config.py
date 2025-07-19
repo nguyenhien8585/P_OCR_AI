@@ -1,17 +1,35 @@
+"""
+Configuration file for P_OCR PDF AI 2025
+"""
+
 import os
 
 # API Configuration
 class APIConfig:
     # Mistral AI API
-    MISTRAL_API_BASE_URL = "https://api.mistral.ai/v1"
-    MISTRAL_MODEL = "mistral-large-latest"
+    MISTRAL_API_BASE_URL = "https://api.mistral.ai/v1/chat/completions"
+    MISTRAL_MODEL = "mistral-small-latest"
     
     # Gemini AI API
-    GEMINI_MODEL = "gemini-1.5-flash"
+    GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+    GEMINI_MODEL = "gemini-2.0-flash"
     
     # API Keys from environment variables (for production)
     MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    
+    # Mistral API default parameters
+    MISTRAL_PARAMS = {
+        "model": MISTRAL_MODEL,
+        "temperature": 0.3,  # Lower for more consistent OCR
+        "top_p": 1,
+        "max_tokens": 4000,
+        "stream": False,
+        "presence_penalty": 0,
+        "frequency_penalty": 0,
+        "n": 1,
+        "safe_prompt": True
+    }
 
 # OCR Configuration
 class OCRConfig:
