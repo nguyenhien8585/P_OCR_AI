@@ -4,23 +4,230 @@ from PIL import Image
 import numpy as np
 import cv2
 import requests
-from PyPDF2 import PdfReader
 import json
+import time
+import logging
+from typing import List, Dict, Any
 
-from config import API_URL, API_KEY
-from ocr_client_api import EnhancedSmartOCRClient
-from extract_images import extract_images_from_pdf
-from word_export import insert_images_to_word_from_markdown
+# Import PDF processing
+try:
+    import fitz  # PyMuPDF
+    HAS_PYMUPDF = True
+except ImportError:
+    HAS_PYMUPDF = False
 
-import re
+try:
+    from PyPDF2 import PdfReader
+    HAS_PYPDF2 = True
+except ImportError:
+    HAS_PYPDF2 = False
 
+# Import Word export
+try:
+    from docx import Document
+    from docx.shared import Inches, Cm
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
+
+# ========== Cấu hình ==========
+MISTRAL_API_KEYS = [
+    "your_mistral_api_key_1",
+    "your_mistral_api_key_2", 
+    "your_mistral_api_key_3"
+]
+
+api_key_cycle = itertools.cycle(MISTRAL_API_KEYS)
+def get_next_api_key():
+    return next(api_key_cycle)
+
+MISTRAL_PROMPT = '''
+YÊU CẦU QUAN TRỌNG:
+1. GÕ LẠI CHÍNH XÁC:
+- Gõ lại toàn bộ văn bản trong ảnh, không bỏ sót từ, câu, đoạn nào.
+- Giữ nguyên cấu trúc xuống dòng, in đậm, in nghiêng (nếu có thể).
+2. ĐÁNH DẤU HÌNH/BẢNG:
+- Nếu có hình minh hoạ, ghi [HÌNH_PLACEHOLDER].
+- Nếu có bảng số liệu, ghi [BẢNG_PLACEHOLDER].
+3. VỊ TRÍ PLACEHOLDER:
+- Chèn placeholder ngay sau dòng có từ khóa (ví dụ: "xem hình dưới", "bảng số liệu", "bảng biến thiên", "biểu đồ", "hình vẽ", "bảng giá trị", "bảng tần số", v.v...),
+- Nếu không có từ khóa, chèn tại vị trí logic sát nhất với nội dung liên quan.
+4. CÔNG THỨC TOÁN HỌC:
+- Tất cả công thức, ký hiệu toán học dùng LaTeX inline: ${...}$.
+- Hệ phương trình: ${\begin{cases} ... \end{cases}}$.
+- Không dùng \(...\) hoặc \[...\].
+- Các công thức dạng latex không được thiếu dấu { } trên không được thiếu nếu có mở ngoặc thì phải có đóng ngoặc.
+Ví dụ: ${A B C D . A^{\prime B^{\prime C^{\prime} D^{\prime}}$ 
+- Ký hiệu hình học, số liệu đặc biệt (vd: ${Oxyz}$, ${A}$, ${0,1%}$, ...) cũng đặt trong ${...}$.
+5. BẢNG SỐ LIỆU:
+- Nếu có bảng số liệu, chuyển thành bảng Markdown nếu hợp lý.
+6. ĐỊNH DẠNG CÂU HỎI:
+- Trắc nghiệm (4 lựa chọn): Nhận diện đáp án dạng A., B., C., D. hoặc a), b), c), d) hoặc a., b., c., d.. Đảm bảo mỗi lựa chọn ở một dòng riêng.
+- Trắc nghiệm đúng/sai: Nếu gặp các đáp án bắt đầu bằng a), b), c), d) hoặc a., b., c., d., vẫn tách mỗi đáp án lên dòng riêng.
+- Trả lời ngắn: Trả lời: ________
+- Tự luận: ghi nguyên văn câu hỏi.
+
+LƯU Ý:
++ Không bỏ sót bất kỳ chi tiết nào.
++ Không tự ý sửa đổi nội dung.
++ Chỉ thực hiện đúng yêu cầu như trên.
+'''
+
+# ========== PDF Processing Functions ==========
+def extract_text_from_pdf_pymupdf(pdf_bytes: bytes) -> str:
+    """Trích xuất text từ PDF bằng PyMuPDF"""
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        text_content = ""
+        
+        for page_num in range(doc.page_count):
+            page = doc[page_num]
+            page_text = page.get_text()
+            text_content += f"\n--- Trang {page_num + 1} ---\n{page_text}\n"
+        
+        doc.close()
+        return text_content
+    except Exception as e:
+        raise Exception(f"Lỗi PyMuPDF: {str(e)}")
+
+def extract_text_from_pdf_pypdf2(pdf_bytes: bytes) -> str:
+    """Trích xuất text từ PDF bằng PyPDF2"""
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        text_content = ""
+        
+        for page_num, page in enumerate(reader.pages):
+            page_text = page.extract_text()
+            text_content += f"\n--- Trang {page_num + 1} ---\n{page_text}\n"
+        
+        return text_content
+    except Exception as e:
+        raise Exception(f"Lỗi PyPDF2: {str(e)}")
+
+def extract_text_from_pdf(pdf_bytes: bytes) -> Dict[str, Any]:
+    """Trích xuất text từ PDF với fallback methods"""
+    try:
+        # Thử PyMuPDF trước (tốt hơn)
+        if HAS_PYMUPDF:
+            text_content = extract_text_from_pdf_pymupdf(pdf_bytes)
+            return {
+                "success": True,
+                "text_content": text_content,
+                "method": "PyMuPDF"
+            }
+        
+        # Fallback sang PyPDF2
+        elif HAS_PYPDF2:
+            text_content = extract_text_from_pdf_pypdf2(pdf_bytes)
+            return {
+                "success": True,
+                "text_content": text_content,
+                "method": "PyPDF2"
+            }
+        
+        else:
+            return {
+                "success": False,
+                "error": "Không có thư viện PDF processing nào được cài đặt. Vui lòng cài PyMuPDF hoặc PyPDF2."
+            }
+            
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Lỗi xử lý PDF: {str(e)}"
+        }
+
+def extract_images_from_pdf(pdf_bytes: bytes) -> List[Dict[str, Any]]:
+    """Trích xuất hình ảnh từ PDF"""
+    if not HAS_PYMUPDF:
+        st.warning("PyMuPDF chưa được cài đặt. Không thể trích xuất hình ảnh từ PDF.")
+        return []
+    
+    images = []
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        
+        img_index = 0
+        table_index = 0
+        
+        for page_num in range(doc.page_count):
+            page = doc[page_num]
+            image_list = page.get_images()
+            
+            for img_idx, img in enumerate(image_list):
+                try:
+                    xref = img[0]
+                    pix = fitz.Pixmap(doc, xref)
+                    
+                    if pix.n - pix.alpha < 4:
+                        img_data = pix.tobytes("png")
+                    else:
+                        pix1 = fitz.Pixmap(fitz.csRGB, pix)
+                        img_data = pix1.tobytes("png")
+                        pix1 = None
+                    
+                    pix = None
+                    
+                    pil_image = Image.open(io.BytesIO(img_data))
+                    
+                    # Resize nếu quá lớn
+                    max_size = 1200
+                    if max(pil_image.size) > max_size:
+                        pil_image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+                    
+                    if pil_image.mode in ('RGBA', 'LA', 'P'):
+                        pil_image = pil_image.convert('RGB')
+                    
+                    img_buffer = io.BytesIO()
+                    pil_image.save(img_buffer, format='JPEG', quality=85, optimize=True)
+                    img_buffer.seek(0)
+                    
+                    img_b64 = base64.b64encode(img_buffer.getvalue()).decode()
+                    
+                    width, height = pil_image.size
+                    aspect_ratio = width / height
+                    
+                    is_table = (
+                        aspect_ratio > 2.0 or
+                        (width > 400 and height > 200) or
+                        (aspect_ratio > 1.5 and width > 300)
+                    )
+                    
+                    if is_table:
+                        table_index += 1
+                        name = f"table-{table_index}.jpeg"
+                    else:
+                        img_index += 1
+                        name = f"img-{img_index}.jpeg"
+                    
+                    images.append({
+                        "name": name,
+                        "base64": img_b64,
+                        "is_table": is_table,
+                        "page": page_num + 1,
+                        "size": (width, height),
+                        "aspect_ratio": aspect_ratio
+                    })
+                    
+                except Exception as e:
+                    logging.warning(f"Không thể trích xuất ảnh {img_idx} từ trang {page_num + 1}: {e}")
+                    continue
+        
+        doc.close()
+        images.sort(key=lambda x: (x['page'], x['name']))
+        return images
+        
+    except Exception as e:
+        logging.error(f"Lỗi khi trích xuất hình ảnh từ PDF: {e}")
+        return []
+
+# ========== LaTeX Processing Functions ==========
 def fix_broken_latex_blocks(text):
     # Ghép block bị tách như: ${A^{\prime}$}$} C^{\prime} -> ${A^{\prime} C^{\prime}}$
-    # B1: Gom các chuỗi kiểu ${abc}$}$} def ghi thành ${abc def}$
-    # Tìm các chuỗi `${...}$}$}` hoặc `${...}$}$}$ ... [chữ/số hoặc lệnh LaTeX]
     while True:
         new_text = re.sub(
-            r'\$\{([^}$]+)\}\}\$\}\}?([^\$]+)\$',  # ghép block + phần thừa đến dấu $
+            r'\$\{([^}$]+)\}\}\$\}\}?([^\$]+)\$',
             lambda m: '${' + m.group(1).strip() + ' ' + m.group(2).strip() + '}$',
             text
         )
@@ -28,30 +235,19 @@ def fix_broken_latex_blocks(text):
             break
         text = new_text
 
-    # Xử lý trường hợp còn lại: `${abc}$}$` hoặc `${abc}$}$}$`
     text = re.sub(r'\$\{([^}$]+)\}\}\$+', r'${\1}$', text)
-
-    # Nếu vẫn còn trường hợp `${abc}$}$` [text không có $] ở cuối dòng
     text = re.sub(r'\$\{([^}$]+)\}\}\$([^\n]+)', r'${\1 \2}$', text)
-
-    # Nếu có dấu }$}$}$ dư ở cuối, chỉ giữ 1 }
     text = re.sub(r'\}\$\}+', '}$', text)
     return text
 
 def clean_latex_blocks(text):
-    # 1. Ghép các block kiểu }$}${ thành 1: }$}{
     text = re.sub(r'\}\$\s*\$\{', ' ', text)
-    # 2. Xoá thừa ngoặc ở cuối block: }}}$ -> }$
     text = re.sub(r'\}{2,}\$', '}$', text)
-    # 3. Nếu vẫn còn $} ở giữa dòng (do block bị kết thúc sớm) => nối lại
     text = re.sub(r'\$\}(\w)', r'} \1', text)
-    # 4. Xoá ngoặc lẻ đứng riêng ${ và }$, $}{
     text = re.sub(r'\$\{[ \t\r\n]*\}\$', '', text)
-    # 5. Vá những block `${...$` thiếu ngoặc và `$...}$` thiếu `${`
-    #    (Cái này đã làm ở các hàm trước, giờ chỉ cần vá lần cuối)
+    
     def fix_block(m):
         s = m.group(1)
-        # Đếm số ngoặc { và }
         opens = s.count('{')
         closes = s.count('}')
         if opens > closes:
@@ -61,333 +257,29 @@ def clean_latex_blocks(text):
         if not s.endswith('}'):
             s += '}'
         return '${' + s + '}$'
-    # Chỉ fix các block kiểu ${...$ thiếu ngoặc, hoặc có thừa 1 ngoặc ở cuối
-    text = re.sub(r'\$\{([^}$\n]+)\$?', fix_block, text)
-    # 6. Xoá các dấu } dư lặp lại (nếu còn)
-    text = re.sub(r'\}{2,}\$', '}$', text)
-    return text
-
-def fix_all_unclosed_latex_blocks(text):
-    """
-    Vá mọi block LaTeX ${...$ thiếu } hoặc }$
-    """
-    def replacer(match):
-        content = match.group(1)
-        open_braces = content.count('{')
-        close_braces = content.count('}')
-        missing = open_braces - close_braces
-        if missing > 0:
-            content += '}' * missing
-        # Đảm bảo kết thúc bằng }
-        if not content.rstrip().endswith('}'):
-            content = content.rstrip() + '}'
-        return '${' + content + '}$'
-    # Vá mọi block: bắt đầu bằng ${ ... KHÔNG có kết thúc bằng }$
-    pattern = r'\$\{([^\}$\n]+)\$?'
-    text = re.sub(pattern, replacer, text)
-    return text
-
-def fix_missing_closing_brace_in_latex(text):
-    """
-    Thêm dấu } cho bất kỳ block LaTeX nào bắt đầu bằng ${ nhưng chưa kết thúc bằng }
-    """
-    def fix_block(match):
-        content = match.group(1)
-        # Nếu đã kết thúc bằng }, không sửa
-        if content.strip().endswith('}'):
-            return '${' + content + '$'
-        else:
-            return '${' + content + '}$'
-    # Áp dụng cho tất cả block bị thiếu } và có thể thiếu cả $
-    # Dạng phổ biến: ${...$
-    text = re.sub(r'\$\{([^}$]+)\$', fix_block, text)
-    return text
-
-def fix_unbalanced_brackets_in_latex(text):
-    """
-    Kiểm tra các block ${...$ thiếu ngoặc đóng } và tự động thêm vào trước dấu $
-    """
-    def fix_block(match):
-        content = match.group(1)
-        # Nếu số lượng { nhiều hơn }, thì bổ sung thêm } cho đủ
-        n_open = content.count('{')
-        n_close = content.count('}')
-        if n_open > n_close:
-            # Bổ sung } cho đủ
-            content = content + '}' * (n_open - n_close)
-        return '${' + content + '}$'
-    # Chỉ bắt các block kiểu ${...$ (không có } trước $)
-    text = re.sub(r'\$\{([^\}$]+)\$', fix_block, text)
-    return text
-
-def fix_latex_block_errors(text):
-    """
-    Sửa các lỗi block LaTeX hay gặp: thiếu/dư dấu ngoặc, dấu ^{\\prime}, chèn sai vị trí, lỗi ký hiệu toán học khi OCR.
-    """
-
-    # 1. Sửa các khối kiểu ${A^{\prime B}$ thành ${A^{\prime} B}$ (thiếu dấu })
-    def fix_missing_prime_brace(match):
-        expr = match.group(1)
-        # Sửa: A^{\prime B -> A^{\prime} B
-        expr = re.sub(r'([A-Za-z])\^\{\\prime ([A-Za-z])', r'\1^{\\prime} \2', expr)
-        return '${' + expr + '}$'
-    text = re.sub(r'\$\{([^}$]*[A-Za-z]\^\{\\prime [^}$]+)\}\$', fix_missing_prime_brace, text)
-
-    # 2. Sửa các block kiểu ${B C^{\prime \perp A^{\prime D}}}$ thành ${B C^{\prime} \perp A^{\prime} D}$
-    def fix_mixed_prime_perp(match):
-        expr = match.group(1)
-        # Tách các đoạn ^{\prime và thêm }
-        expr = re.sub(r'([A-Za-z])\^\{\\prime\b', r'\1^{\\prime}', expr)
-        return '${' + expr + '}$'
-    text = re.sub(r'\$\{([^}$]+)\}\$', fix_mixed_prime_perp, text)
-
-    # 3. Sửa các block thiếu } cuối: ${...$ -> ${...}$
-    text = re.sub(r'\$\{([^}$]+)\$', r'${\1}$', text)
-
-    # 4. Sửa block dư } cuối: ${...}}$ -> ${...}$
-    text = re.sub(r'\$\{([^}$]+)\}\}\$', r'${\1}$', text)
-
-    # 5. Sửa các block dư { đầu: ${{...}$ -> ${...}$
-    text = re.sub(r'\$\{\{([^}$]+)\}\$', r'${\1}$', text)
-
-    # 6. Sửa dấu ngoặc trái/phải trong \left( ... \right)
-    # Lưu ý: chỉ sửa nếu block có lệch ngoặc
-    def fix_left_right_bracket(match):
-        expr = match.group(1)
-        # Sửa (nhận diện ngoặc bị thiếu/dư)
-        expr = re.sub(r'\\left\(([^\)]*)\\right\)', r'\\left(\1\\right)', expr)
-        expr = re.sub(r'\\left\{([^\}]*)\\right\}', r'\\left\{\1\\right\}', expr)
-        return '${' + expr + '}$'
-    text = re.sub(r'\$\{([^}$]*\\left[({\[][^}$]*)\}\$', fix_left_right_bracket, text)
-
-    # 7. Đảm bảo block LaTeX luôn đủ ngoặc ${...}$ (cắt dư/dồn thiếu)
-    # Loại các block rỗng
-    text = re.sub(r'\$\{\s*\}\$', '', text)
-    # Nếu bị nhiều dấu $ liền kề, loại thừa
-    text = re.sub(r'\${{2,}', '${', text)
-    text = re.sub(r'}{2,}\$', '}$', text)
-
-    return text
-
-def fix_latex_block_parentheses(text):
-    import re
-    # 1. Sửa các block có ^{prime ... bị thiếu ngoặc hoặc toán tử bị dính vào
-    # Trường hợp ${A^{\prime C^{\prime \perp B D}}}$ => ${A^{\prime} C^{\prime} \perp B D}$
-    text = re.sub(
-        r'([A-Za-z])\^\{\\prime ([A-Za-z])\^\{\\prime \\perp ([A-Za-z]) ([A-Za-z])\}',
-        lambda m: f"{m.group(1)}^{{\\prime}} {m.group(2)}^{{\\prime}} \\perp {m.group(3)} {m.group(4)}", text
-    )
-    # Trường hợp ${A^{\prime C^{\prime ...}$ => ${A^{\prime} C^{\prime} ...}$
-    text = re.sub(
-        r'([A-Za-z])\^\{\\prime ([A-Za-z])\^\{\\prime',
-        lambda m: f"{m.group(1)}^{{\\prime}} {m.group(2)}^{{\\prime}}", text
-    )
-    # Trường hợp ${B C^{\prime \perp A^{\prime D}}}$ => ${B C^{\prime} \perp A^{\prime} D}$
-    text = re.sub(
-        r'([A-Za-z]) ([A-Za-z])\^\{\\prime \\perp ([A-Za-z])\^\{\\prime ([A-Za-z])\}',
-        lambda m: f"{m.group(1)} {m.group(2)}^{{\\prime}} \\perp {m.group(3)}^{{\\prime}} {m.group(4)}", text
-    )
-    # Trường hợp ${A^{\prime C^{\prime \perp B D}}}$ => ${A^{\prime} C^{\prime} \perp B D}$
-    text = re.sub(
-        r'([A-Za-z])\^\{\\prime ([A-Za-z])\^\{\\prime \\perp ([A-Za-z]) ([A-Za-z])\}',
-        lambda m: f"{m.group(1)}^{{\\prime}} {m.group(2)}^{{\\prime}} \\perp {m.group(3)} {m.group(4)}", text
-    )
-    # Trường hợp ${A^{\prime C^{\prime}}}$ => ${A^{\prime} C^{\prime}}$
-    text = re.sub(
-        r'([A-Za-z])\^\{\\prime ([A-Za-z])\^\{\\prime\}',
-        lambda m: f"{m.group(1)}^{{\\prime}} {m.group(2)}^{{\\prime}}", text
-    )
-    # Trường hợp \left(... B^{\prime} C\right)
-    text = re.sub(
-        r'\\left\(([A-Za-z] [A-Za-z]\^\{\\prime\}, [A-Za-z]\^\{\\prime\} [A-Za-z])\\right\)=90\^\{\\circ\}',
-        lambda m: f"\\left({m.group(1)}\\right)=90^{{\\circ}}", text
-    )
-    # Bỏ các ngoặc thừa }}$
-    text = re.sub(r'\}{2,}\$', '}$', text)
-    return text
-
-def fix_latex_super_sub_blocks(text):
-    # Sửa lỗi phổ biến với các chỉ số mũ, chỉ số dưới và các ký hiệu
-    # Ví dụ: ${B C^{\prime \perp A^{\prime D}}}$ -> ${B C^{\prime} \perp A^{\prime} D}$
-    def replace_func(m):
-        content = m.group(1)
-        # Tách các thành phần có mũ hoặc chỉ số ra thành từng cụm đúng
-        # Sửa mũ bị lẫn vào giữa như C^{\prime \perp A^{\prime D}} -> C^{\prime} \perp A^{\prime} D
-        # Bước 1: Tìm mọi cụm tên biến có mũ, tách riêng
-        # VD: C^{\prime \perp A^{\prime D}} => C^{\prime}, \perp, A^{\prime}, D
-        # Sửa: tìm các ...^{...} và tách ra, phần còn lại giữ nguyên
-        content = re.sub(
-            r"([A-Za-z])\^\{([^\}]+)\s",  # tìm mũ có thêm ký tự sau đó
-            lambda mm: f"{mm.group(1)}^{{{mm.group(2).strip()}}} ", content
-        )
-        # Tách lại: mọi C^{...}, A^{...} nằm liền nhau thì thêm } cách ra
-        # Sau đó xóa dư ngoặc đóng ở cuối
-        content = re.sub(r"([A-Za-z])\^\{([^\}]+)\}([A-Za-z])", r"\1^{\2} \3", content)
-        # Nếu vẫn còn nội dung } cuối cùng và không có { mở thì xóa
-        if content.count('{') < content.count('}'):
-            content = content.rstrip('}')
-        return "${" + content.strip() + "}$"
-
-    # Chỉ áp dụng với block dài có quá nhiều từ và dấu ^
-    pattern = re.compile(r"\$\{([A-Za-z0-9\s\\\^\{\}']+)\}$")
-    text = pattern.sub(replace_func, text)
-    return text
-
-def merge_latex_blocks_multiline(text):
-    # Ghép các block trên nhiều dòng về cùng một dòng
-    lines = text.split('\n')
-    new_lines = []
-    buffer = ""
-    for line in lines:
-        if line.count('${') == 1 and line.count('}$') == 0:
-            buffer += line + " "
-        elif buffer:
-            buffer += line
-            new_lines.append(buffer)
-            buffer = ""
-        else:
-            new_lines.append(line)
-    if buffer:
-        new_lines.append(buffer)
-    return '\n'.join(new_lines)
-
-def merge_split_latex_blocks(text):
-   # Tìm các block có thể lỗi kiểu ${...}$ dài > 2 từ/ký hiệu
-    def fix_block(m):
-        content = m.group(1)
-        # Thay thế toán tử // và \perp, =, , bằng ký tự đặc biệt tạm thời để tách ra
-        content = content.replace('//', '|//|').replace('\perp', '|\\perp|').replace(',', '|,|').replace('=', '|=|')
-        # Tách mọi nhóm có mũ/chỉ số: A^{\prime}, C^{\prime} -> [A^{\prime}, ...]
-        # Biến có mũ/chỉ số
-        tokens = re.findall(r"[A-Za-z](?:\^\{[^\}]+\})?", content)
-        # Toán tử, dấu hoặc số đơn (sau khi đã thay tạm bằng |...|)
-        ops = re.findall(r"\|\S+?\|", content)
-        others = re.findall(r"[0-9]+|[^\sA-Za-z\^\{\}|]+", content)
-        # Duyệt lại toàn bộ theo thứ tự
-        order = []
-        i = 0
-        j = 0
-        content2 = content
-        # Thay lại các ký hiệu đặc biệt
-        content2 = re.sub(r"\|//\|", r'//', content2)
-        content2 = re.sub(r"\|\\perp\|", r'\\perp', content2)
-        content2 = re.sub(r"\|,\|", r',', content2)
-        content2 = re.sub(r"\|=\|", r'=', content2)
-        # Nếu không chứa ^ hoặc \perp thì trả về như cũ
-        if not re.search(r"(\^\{|\^\\|\^\'|\\perp|//|,|=)", content2):
-            return "${" + content2.strip() + "}$"
-        # Tách ra từng block nhỏ
-        # Tìm mọi biến (và chỉ số)
-        parts = re.split(r'(?=[A-Za-z]\^\{[^\}]+\}|[A-Za-z]|\\perp|//|,|=|\(|\)|[0-9]+)', content2)
-        parts = [p for p in parts if p.strip()]
-        latex = []
-        for p in parts:
-            p = p.strip()
-            if not p:
-                continue
-            # Nếu là biến có mũ/chỉ số
-            if re.match(r"^[A-Za-z]\^\{[^\}]+\}$", p):
-                latex.append("${" + p + "}$")
-            # Nếu là ký hiệu toán học
-            elif re.match(r"^\\perp|//|,|=|\(|\)|[0-9]+$", p):
-                latex.append("${" + p + "}$")
-            # Nếu là biến đơn, hoặc số đơn
-            elif re.match(r"^[A-Za-z0-9]$", p):
-                latex.append("${" + p + "}$")
-            # Nếu là block bắt đầu hoặc kết thúc
-            else:
-                latex.append(p)
-        # Ghép lại, bỏ ${}$ thừa
-        res = ' '.join(latex).replace('${}${', '${').replace('}$$', '}$').replace('${ }$', '')
-        # Bỏ ngoặc ${,}$ hoặc ${=}$ hoặc ${)}$ -> ,  hoặc = hoặc )
-        res = re.sub(r"\$\{([,=()])\}\$", r"\1", res)
-        # Gom các block nhỏ về một block nếu chỉ có một toán hạng
-        res = re.sub(r"\$\{([A-Za-z])\}\$ \$\{([A-Za-z])\}\$", r"${\1 \2}$", res)
-        return res
-
-    # Áp dụng cho mọi block ${...}$
-    text = re.sub(r"\$\{([^\}]+)\}$", fix_block, text)
-    return text
     
-def markdown_image_to_hinh_tag(text):
-    # Chuyển ![img-0.jpeg](img-0.jpeg) thành [HÌNH: img-0.jpeg]
-    return re.sub(r'!\[.*?\]\((img-\d+\.jpeg)\)', r'[HÌNH: \1]', text)
-
-# ==================== CHUẨN HÓA LaTeX TOÁN ====================
-def fix_missing_backslash_cases(text):
-    # Thêm \ vào begincases, endcases nếu thiếu (cho hệ phương trình)
-    text = re.sub(r'\$\{\s*begincases', r'${\\begin{cases}', text)
-    text = re.sub(r'(?<!\\)begincases', r'\\begin{cases}', text)
-    text = re.sub(r'(?<!\\)endcases', r'\\end{cases}', text)
+    text = re.sub(r'\$\{([^}$\n]+)\$?', fix_block, text)
+    text = re.sub(r'\}{2,}\$', '}$', text)
     return text
 
 def normalize_math_latex(text):
-    # Gom các đoạn bị tách nhỏ thành ${...}$
     text = re.sub(r'\}\$\{', '', text)
-    text = re.sub(r'\$\{', '${', text)
-    text = re.sub(r'\}\$', '}$', text)
-
-    # Gom nhiều dấu ${...}${...}$ về thành ${...}$
     text = re.sub(r'\$\{([^\$]*)\}\$\{([^\$]*)\}\$', lambda m: '${' + m.group(1) + m.group(2) + '}$', text)
-
-    # Với trường hợp ...${abc${def} ghi thành ${abcdef}$
-    def merge_nested(match):
-        g = match.group(0)
-        g = g.replace('${', '').replace('}$', '')
-        return '${' + g.replace('}{', '') + '}$'
-    text = re.sub(r'(\$\{[^\$]*\}\$)+', merge_nested, text)
-
-    # Đổi mọi xuất hiện của log${...}${x hoặc sin${...}${x... về ${\log_{...} x}$
-    text = re.sub(
-        r'([a-zA-Z]+)\$\{([^\}]*)\}\$\{?([a-zA-Z0-9\\\^\_\{\}\(\)\[\]\s]+)\}?',
-        lambda m: '${\\' + m.group(1) + '_{' + m.group(2) + '} ' + m.group(3).strip() + '}$',
-        text
-    )
-
-    # Sửa lỗi ${{{...}$ hoặc ${{...}$ thành ${...}$ (xóa ngoặc thừa)
     text = re.sub(r'\$\{{2,}', '${', text)
     text = re.sub(r'\}{2,}\$', '}$', text)
-
-    # Nối lại các đoạn bị tách: ...}$...${... thành ${...}$
     text = re.sub(r'\}\$[\.\s]*\$\{', '', text)
-
-    # Đổi các $...$ còn sót thành ${...}$
     text = re.sub(r'\$(?!\{)([^\$]+?)\$', lambda m: '${' + m.group(1).strip() + '}$', text)
-
-    # Loại dấu ngoặc lẻ đầu/ cuối
-    text = re.sub(r'(^|\s)[\}\{]+', r'\1', text)
-    text = re.sub(r'[\}\{]+(\s|$)', r'\1', text)
-
-    # Nối liền 2 công thức cạnh nhau thành 1
-    def merge_multiple_formulae(text):
-        while True:
-            new_text = re.sub(r'\}\$\s*\$\{', ' ', text)
-            if new_text == text:
-                break
-            text = new_text
-        return text
-    text = merge_multiple_formulae(text)
-
-    # Loại bỏ dấu thừa giữa chữ và ${ hoặc }$
-    text = re.sub(r'([a-zA-Z0-9])\s*\$\{', r' ${', text)
-    text = re.sub(r'\}\$\s*([a-zA-Z0-9])', r'}$ \1', text)
-
-    # Loại bỏ mọi ${ hoặc }$ đơn lẻ không có nội dung
     text = re.sub(r'\$\{\s*\}\$', '', text)
     return text
 
-# ==================== ĐỊNH DẠNG ĐỀ CHUẨN GIÁO VIÊN ====================
 def format_exam_markdown(text):
-    # 1. Đưa mỗi [BẢNG: ...], [HÌNH: ...] về dòng riêng
     text = re.sub(r'([^\n])(\[BẢNG: [^\]]+\])', r'\1\n\2', text)
     text = re.sub(r'(\[BẢNG: [^\]]+\])([^\n])', r'\1\n\2', text)
     text = re.sub(r'([^\n])(\[HÌNH: [^\]]+\])', r'\1\n\2', text)
     text = re.sub(r'(\[HÌNH: [^\]]+\])([^\n])', r'\1\n\2', text)
-    # 2. Đưa Trang .../Mã đề ... về block riêng
     text = re.sub(r'(Trang\s*\d+\/\d+\s*-\s*Mã\s*đề\s*\d+)', r'\n\n---\n\1\n---\n', text, flags=re.IGNORECASE)
-    # 3. Đưa mỗi "Câu X." hoặc "Câu X:" lên đầu dòng
     text = re.sub(r'(?<!^)\s*(?=Câu\s*\d+[.:])', r'\n', text)
-    # 4. Tách block từng câu hỏi
+    
     blocks = re.split(r'(?=^Câu\s*\d+[.:])', text, flags=re.MULTILINE)
     result_blocks = []
     for blk in blocks:
@@ -398,7 +290,6 @@ def format_exam_markdown(text):
         blk = re.sub(r'(?<!\n)[ ]*B\.', r'\nB.', blk)
         blk = re.sub(r'(?<!\n)[ ]*C\.', r'\nC.', blk)
         blk = re.sub(r'(?<!\n)[ ]*D\.', r'\nD.', blk)
-        # Tách đáp án trắc nghiệm kiểu a), b), c), d)
         blk = re.sub(r'(?<!\n)[ ]*a\)', r'\na)', blk)
         blk = re.sub(r'(?<!\n)[ ]*b\)', r'\nb)', blk)
         blk = re.sub(r'(?<!\n)[ ]*c\)', r'\nc)', blk)
@@ -410,8 +301,7 @@ def format_exam_markdown(text):
     result = re.sub(r'\n{3,}', '\n\n', result)
     return result.strip()
 
-# ================== XỬ LÝ ẢNH, TÁCH HÌNH/BẢNG ==================
-
+# ========== Image Processing Functions ==========
 def filter_nested_boxes(candidates):
     filtered = []
     for i, box in enumerate(candidates):
@@ -501,8 +391,6 @@ def remove_all_figure_markdown(text):
     return text
 
 def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
-    import re
-    # Tiền xử lý đoạn văn bản thành dòng hợp lý
     lines = []
     buffer = ""
     for line in text.split('\n'):
@@ -569,57 +457,15 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
                     fig_idx += 1
     return '\n'.join(processed_lines)
 
-# --------- Mistral OCR API -----------
-MISTRAL_API_KEYS = [
-    "3OLLsQhSn7SFx4kBzEjeRJ7S4MikrdcO"
-]
-api_key_cycle = itertools.cycle(MISTRAL_API_KEYS)
-def get_next_api_key():
-    return next(api_key_cycle)
-
-MISTRAL_PROMPT = '''
-YÊU CẦU QUAN TRỌNG:
-1. GÕ LẠI CHÍNH XÁC:
-- Gõ lại toàn bộ văn bản trong ảnh, không bỏ sót từ, câu, đoạn nào.
-- Giữ nguyên cấu trúc xuống dòng, in đậm, in nghiêng (nếu có thể).
-2. ĐÁNH DẤU HÌNH/BẢNG:
-- Nếu có hình minh hoạ, ghi [HÌNH_PLACEHOLDER].
-- Nếu có bảng số liệu, ghi [BẢNG_PLACEHOLDER].
-3. VỊ TRÍ PLACEHOLDER:
-- Chèn placeholder ngay sau dòng có từ khóa (ví dụ: "xem hình dưới", "bảng số liệu", "bảng biến thiên", "biểu đồ", "hình vẽ", "bảng giá trị", "bảng tần số", v.v...),
-- Nếu không có từ khóa, chèn tại vị trí logic sát nhất với nội dung liên quan.
-4. CÔNG THỨC TOÁN HỌC:
-- Tất cả công thức, ký hiệu toán học dùng LaTeX inline: ${...}$.
-- Hệ phương trình: ${\begin{cases} ... \end{cases}}$.
-- Không dùng \(...\) hoặc \[...\].
-- Các công thức dạng latex không được thiếu dấu { } trên không được thiếu nếu có mở ngoặc thì phải có đóng ngoặc.
-Ví dụ: ${A B C D . A^{\prime B^{\prime C^{\prime} D^{\prime}}$ 
-- Ký hiệu hình học, số liệu đặc biệt (vd: ${Oxyz}$, ${A}$, ${0,1%}$, ...) cũng đặt trong ${...}$.
-5. BẢNG SỐ LIỆU:
-- Nếu có bảng số liệu, chuyển thành bảng Markdown nếu hợp lý.
-6. ĐỊNH DẠNG CÂU HỎI:
-- Trắc nghiệm (4 lựa chọn): Nhận diện đáp án dạng A., B., C., D. hoặc a), b), c), d) hoặc a., b., c., d.. Đảm bảo mỗi lựa chọn ở một dòng riêng.
-- Trắc nghiệm đúng/sai: Nếu gặp các đáp án bắt đầu bằng a), b), c), d) hoặc a., b., c., d., vẫn tách mỗi đáp án lên dòng riêng.
-- Trả lời ngắn: Trả lời: ________
-- Tự luận: ghi nguyên văn câu hỏi.
-
-LƯU Ý:
-+ Không bỏ sót bất kỳ chi tiết nào.
-+ Không tự ý sửa đổi nội dung.
-+ Chỉ thực hiện đúng yêu cầu như trên.
-'''
-
+# ========== Mistral API Functions ==========
 def mistral_generate_text(image_bytes, api_key):
-    """
-    Gọi Mistral API để OCR ảnh
-    """
+    """Gọi Mistral API để OCR ảnh"""
     api_url = "https://api.mistral.ai/v1/chat/completions"
     
-    # Encode ảnh thành base64
     b64_img = base64.b64encode(image_bytes).decode()
     
     payload = {
-        "model": "pixtral-12b-2409",  # Model vision của Mistral
+        "model": "pixtral-12b-2409",
         "messages": [
             {
                 "role": "user",
@@ -661,10 +507,153 @@ def mistral_generate_text(image_bytes, api_key):
     except Exception as e:
         raise Exception(f"Lỗi không xác định: {str(e)}")
 
-# ========== Giao diện ==========
+# ========== Word Export Functions ==========
+def process_latex_in_text(text: str) -> str:
+    """Chuyển LaTeX về dạng Unicode cho Word"""
+    latex_to_unicode = {
+        r'\alpha': 'α', r'\beta': 'β', r'\gamma': 'γ', r'\delta': 'δ',
+        r'\pi': 'π', r'\sigma': 'σ', r'\theta': 'θ', r'\lambda': 'λ',
+        r'\mu': 'μ', r'\phi': 'φ', r'\omega': 'ω', r'\infty': '∞',
+        r'\pm': '±', r'\mp': '∓', r'\times': '×', r'\div': '÷',
+        r'\leq': '≤', r'\geq': '≥', r'\neq': '≠', r'\approx': '≈',
+        r'\subset': '⊂', r'\supset': '⊃', r'\in': '∈', r'\notin': '∉',
+        r'\cup': '∪', r'\cap': '∩', r'\sum': '∑', r'\prod': '∏',
+        r'\int': '∫', r'\sqrt': '√', r'\prime': '′', r'\circ': '°',
+        r'\perp': '⊥', r'\parallel': '∥', r'\angle': '∠', r'\triangle': '△',
+    }
+    
+    for latex, unicode_char in latex_to_unicode.items():
+        text = text.replace(latex, unicode_char)
+    
+    text = re.sub(r'\$\{([^}]+)\}\$', r'\1', text)
+    text = re.sub(r'\$([^$]+)\$', r'\1', text)
+    text = re.sub(r'\\begin\{cases\}(.+?)\\end\{cases\}', r'{\1}', text, flags=re.DOTALL)
+    text = re.sub(r'\\left\((.+?)\\right\)', r'(\1)', text)
+    text = re.sub(r'\^\{([^}]+)\}', r'^(\1)', text)
+    text = re.sub(r'_\{([^}]+)\}', r'_(\1)', text)
+    text = re.sub(r'\\[a-zA-Z]+\{([^}]*)\}', r'\1', text)
+    text = re.sub(r'\\[a-zA-Z]+', '', text)
+    
+    return text
 
+def insert_images_to_word_from_markdown(markdown_text: str, figures: List[Dict[str, Any]], output_path: str):
+    """Tạo Word document từ markdown với hình ảnh"""
+    if not HAS_DOCX:
+        raise Exception("python-docx chưa được cài đặt. Vui lòng chạy: pip install python-docx")
+    
+    doc = Document()
+    image_map = {fig['name']: fig for fig in figures}
+    
+    lines = markdown_text.split('\n')
+    
+    for line in lines:
+        line = line.strip()
+        
+        if not line:
+            doc.add_paragraph()
+            continue
+            
+        # Xử lý tag hình ảnh/bảng
+        if line.startswith('[HÌNH:') or line.startswith('[BẢNG:'):
+            match = re.search(r'\[(HÌNH|BẢNG):\s*([^\]]+)\]', line)
+            if match:
+                img_type = match.group(1)
+                img_name = match.group(2).strip()
+                
+                if img_name in image_map:
+                    try:
+                        fig_data = image_map[img_name]
+                        img_bytes = base64.b64decode(fig_data['base64'])
+                        img_stream = io.BytesIO(img_bytes)
+                        
+                        pil_img = Image.open(img_stream)
+                        img_width, img_height = pil_img.size
+                        
+                        max_width = Inches(6)
+                        max_height = Inches(8)
+                        
+                        ratio = min(max_width.inches / (img_width / 72), max_height.inches / (img_height / 72))
+                        display_width = Inches(img_width / 72 * ratio)
+                        display_height = Inches(img_height / 72 * ratio)
+                        
+                        p = doc.add_paragraph()
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        
+                        img_stream.seek(0)
+                        run = p.add_run()
+                        run.add_picture(img_stream, width=display_width, height=display_height)
+                        
+                        caption_p = doc.add_paragraph()
+                        caption_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        caption_run = caption_p.add_run(f"{img_type}: {img_name}")
+                        caption_run.italic = True
+                        
+                        doc.add_paragraph()
+                        
+                    except Exception as e:
+                        p = doc.add_paragraph()
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        run = p.add_run(f"[{img_type}: {img_name} - Lỗi: {str(e)}]")
+                        run.italic = True
+                else:
+                    p = doc.add_paragraph()
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    run = p.add_run(f"[{img_type}: {img_name} - Không tìm thấy]")
+                    run.italic = True
+            continue
+            
+        # Xử lý các dòng text khác
+        if line.startswith('---') and line.endswith('---'):
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run(line.strip('-').strip())
+            run.bold = True
+        elif re.match(r'^Câu\s*\d+[.:]', line):
+            p = doc.add_paragraph()
+            match = re.match(r'^(Câu\s*\d+[.:])\s*(.*)', line)
+            if match:
+                question_num = match.group(1)
+                question_content = match.group(2)
+                run1 = p.add_run(question_num + ' ')
+                run1.bold = True
+                if question_content:
+                    run2 = p.add_run(process_latex_in_text(question_content))
+            else:
+                run = p.add_run(process_latex_in_text(line))
+                run.bold = True
+        elif re.match(r'^[A-Da-d][.)]\s', line):
+            p = doc.add_paragraph()
+            p.paragraph_format.left_indent = Inches(0.5)
+            match = re.match(r'^([A-Da-d][.)]\s*)(.*)', line)
+            if match:
+                choice_mark = match.group(1)
+                choice_content = match.group(2)
+                run1 = p.add_run(choice_mark)
+                run1.bold = True
+                if choice_content:
+                    run2 = p.add_run(process_latex_in_text(choice_content))
+            else:
+                run = p.add_run(process_latex_in_text(line))
+        else:
+            p = doc.add_paragraph()
+            run = p.add_run(process_latex_in_text(line))
+    
+    doc.save(output_path)
+
+# ========== Streamlit App ==========
 st.set_page_config(page_title="OCR PDF & Ảnh Toán – Mistral", layout="wide")
-st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown với Mistral AI - giữ công thức & bảng ✨")
+st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown với Mistral AI ✨")
+
+# Kiểm tra dependencies
+missing_deps = []
+if not HAS_PYMUPDF and not HAS_PYPDF2:
+    missing_deps.append("PyMuPDF hoặc PyPDF2 (cho xử lý PDF)")
+if not HAS_DOCX:
+    missing_deps.append("python-docx (cho xuất Word)")
+
+if missing_deps:
+    st.error(f"⚠️ Thiếu dependencies: {', '.join(missing_deps)}")
+    st.code(f"pip install {'PyMuPDF' if not HAS_PYMUPDF else ''} {'python-docx' if not HAS_DOCX else ''}")
 
 tab_img, tab_pdf = st.tabs(["🖼️ Ảnh", "📄 PDF"])
 
@@ -675,15 +664,18 @@ with tab_img:
         accept_multiple_files=True,
         help="Mỗi ảnh là 1 trang, minh hoạ & bảng sẽ được tách tự động."
     )
+    
     if uploaded_images:
         for img_idx, img_file in enumerate(uploaded_images):
             with st.expander(f"ℹ️ Thông tin file: {img_file.name}", expanded=True):
                 st.write(f"**Tên file:** {img_file.name}")
                 st.write(f"**Loại file:** {img_file.type}")
                 st.write(f"**Kích thước:** {img_file.size / 1024:.1f} KB")
+                
             ocr_key = f"ocr_{img_file.name}_{img_idx}"
             text_key = f"text_{img_file.name}_{img_idx}"
             fig_key = f"fig_{img_file.name}_{img_idx}"
+            
             if st.button(f"🚀 Xử lý ảnh với Mistral ({img_file.name})", key=ocr_key):
                 img_bytes = img_file.read()
                 
@@ -694,13 +686,24 @@ with tab_img:
                 api_key = get_next_api_key()
                 with st.spinner("Đang xử lý với Mistral AI..."):
                     try:
+                        if api_key == "your_mistral_api_key_1":
+                            st.error("⚠️ Vui lòng cấu hình Mistral API key trong code!")
+                            st.code("""
+# Thay thế trong code:
+MISTRAL_API_KEYS = [
+    "your_actual_api_key_here"
+]
+                            """)
+                            st.stop()
                         text = mistral_generate_text(img_bytes, api_key)
                     except Exception as e:
                         text = f"[Lỗi Mistral: {e}]"
                         st.error(f"Lỗi OCR: {e}")
                 
                 # Xử lý text
-                text = fix_missing_backslash_cases(text)
+                text = normalize_math_latex(text)
+                text = clean_latex_blocks(text)
+                text = fix_broken_latex_blocks(text)
                 text = remove_all_figure_markdown(text)
                 text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
                 formatted_text = format_exam_markdown(text)
@@ -723,27 +726,32 @@ with tab_img:
                     )
                     
                     figures = st.session_state[fig_key]
-                    if figures:
+                    if figures and HAS_DOCX:
                         if st.button("📝 Xuất ra Word",
                                    use_container_width=True,
                                    key=f"word-{img_file.name}-{img_idx}"):
-                            with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                                insert_images_to_word_from_markdown(
-                                    st.session_state[text_key],
-                                    figures,
-                                    tmp_word.name
+                            try:
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
+                                    insert_images_to_word_from_markdown(
+                                        st.session_state[text_key],
+                                        figures,
+                                        tmp_word.name
+                                    )
+                                with open(tmp_word.name, "rb") as f:
+                                    word_data = f.read()
+                                st.success("✅ Đã tạo file Word thành công!")
+                                st.download_button(
+                                    "⬇️ Tải về file Word",
+                                    word_data,
+                                    file_name=f"ket_qua_{img_file.name}.docx",
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    use_container_width=True
                                 )
-                            with open(tmp_word.name, "rb") as f:
-                                word_data = f.read()
-                            st.success("✅ Đã tạo file Word thành công!")
-                            st.download_button(
-                                "⬇️ Tải về file Word",
-                                word_data,
-                                file_name=f"ket_qua_{img_file.name}.docx",
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                use_container_width=True
-                            )
-                            os.remove(tmp_word.name)
+                                os.remove(tmp_word.name)
+                            except Exception as e:
+                                st.error(f"Lỗi tạo Word: {e}")
+                    elif not HAS_DOCX:
+                        st.info("Cài đặt python-docx để xuất Word: pip install python-docx")
                     else:
                         st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh để xuất Word.")
                         
@@ -769,63 +777,67 @@ with tab_img:
 with tab_pdf:
     st.markdown("#### 📝 OCR PDF Toán với Mistral AI, giữ công thức, ảnh minh hoạ")
     uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"], key="pdf_uploader")
-    num_pages = None
+    
     if uploaded_file:
         pdf_bytes = uploaded_file.read()
         file_name = uploaded_file.name
-        mime_type = "application/pdf"
         size_mb = len(pdf_bytes) / (1024 * 1024)
+        
+        # Hiển thị thông tin file
         try:
-            uploaded_file.seek(0)
-            reader = PdfReader(uploaded_file)
-            num_pages = len(reader.pages)
-            uploaded_file.seek(0)
+            if HAS_PYPDF2:
+                reader = PdfReader(io.BytesIO(pdf_bytes))
+                num_pages = len(reader.pages)
+            else:
+                num_pages = "?"
         except:
             num_pages = "?"
+            
         with st.expander("ℹ️ Thông tin file", expanded=True):
             cols = st.columns(3)
             cols[0].metric("Tên file", file_name)
-            cols[1].metric("Loại file", mime_type)
+            cols[1].metric("Loại file", "application/pdf")
             cols[2].metric("Kích thước", f"{size_mb:.1f} MB")
             st.caption(f"Số trang: {num_pages}")
 
-    if uploaded_file and st.button("🚀 Xử lý OCR PDF với Mistral", type="primary", use_container_width=True):
-        st.info("⏳ Đang xử lý OCR PDF với Mistral AI... (vui lòng chờ)")
-        with st.spinner("Đang nhận diện văn bản và trích xuất hình ảnh..."):
-            client = EnhancedSmartOCRClient(API_URL, API_KEY)
-            uploaded_file.seek(0)
-            pdf_bytes = uploaded_file.read()
-            images = extract_images_from_pdf(pdf_bytes)
-            result = client.convert(pdf_bytes, file_name, mime_type)
-        if not result.get("success"):
-            st.error("❌ Xử lý OCR PDF thất bại: " + str(result.get("error")))
+    if uploaded_file and st.button("🚀 Xử lý OCR PDF", type="primary", use_container_width=True):
+        if not (HAS_PYMUPDF or HAS_PYPDF2):
+            st.error("❌ Không có thư viện xử lý PDF. Vui lòng cài PyMuPDF: pip install PyMuPDF")
             st.stop()
-        st.session_state["ocr_text_raw"] = result["data"].get("text_content", "")
+            
+        st.info("⏳ Đang xử lý OCR PDF... (vui lòng chờ)")
+        with st.spinner("Đang nhận diện văn bản và trích xuất hình ảnh..."):
+            # Trích xuất text từ PDF
+            result = extract_text_from_pdf(pdf_bytes)
+            
+            if not result.get("success"):
+                st.error(f"❌ Xử lý PDF thất bại: {result.get('error')}")
+                st.stop()
+            
+            # Trích xuất hình ảnh
+            images = extract_images_from_pdf(pdf_bytes)
+            
+        st.session_state["ocr_text_raw"] = result.get("text_content", "")
         st.session_state["ocr_images"] = images
         st.session_state["ocr_done"] = True
-        st.success("✅ Đã nhận diện PDF thành công!")
+        st.session_state["pdf_method"] = result.get("method", "Unknown")
+        st.success(f"✅ Đã nhận diện PDF thành công bằng {result.get('method', 'Unknown')}!")
 
     if st.session_state.get("ocr_done"):
         raw_text = st.session_state.get("ocr_text_raw", "")
+        
         # Xử lý text với chuỗi các hàm sửa lỗi LaTeX
         text_content = normalize_math_latex(raw_text)
-        text_content = fix_latex_block_parentheses(text_content)
-        text_content = merge_split_latex_blocks(text_content)
-        text_content = merge_latex_blocks_multiline(text_content)
-        text_content = markdown_image_to_hinh_tag(text_content)
-        text_content = fix_unbalanced_brackets_in_latex(text_content)
-        text_content = fix_latex_super_sub_blocks(text_content)
-        text_content = fix_latex_block_errors(text_content)
-        text_content = fix_broken_latex_blocks(text_content)
-        text_content = fix_missing_closing_brace_in_latex(text_content)
-        text_content = fix_all_unclosed_latex_blocks(text_content)
         text_content = clean_latex_blocks(text_content)
+        text_content = fix_broken_latex_blocks(text_content)
         
         images = st.session_state.get("ocr_images", [])
+        method = st.session_state.get("pdf_method", "Unknown")
+        
         tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
         
         with tab1:
-            st.markdown("#### 📋 Kết quả OCR PDF với Mistral AI:")
+            st.markdown(f"#### 📋 Kết quả OCR PDF ({method}):")
             formatted_text = format_exam_markdown(text_content)
             st.text_area("Nội dung đã được phân tích:", formatted_text, height=350, label_visibility="collapsed")
             st.download_button(
@@ -835,21 +847,27 @@ with tab_pdf:
                 mime="text/plain",
                 use_container_width=True,
             )
-            if st.button("📝 Xuất ra Word", use_container_width=True, key="word_export"):
-                with st.spinner("Đang tạo file Word..."):
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
-                        insert_images_to_word_from_markdown(formatted_text, images, tmp_word.name)
-                    with open(tmp_word.name, "rb") as f:
-                        word_data = f.read()
-                    st.success("✅ Đã tạo file Word thành công!")
-                    st.download_button(
-                        "⬇️ Tải về file Word",
-                        word_data,
-                        file_name="ket_qua_ocr_mistral.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        use_container_width=True
-                    )
-                    os.remove(tmp_word.name)
+            
+            if HAS_DOCX and st.button("📝 Xuất ra Word", use_container_width=True, key="word_export"):
+                try:
+                    with st.spinner("Đang tạo file Word..."):
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_word:
+                            insert_images_to_word_from_markdown(formatted_text, images, tmp_word.name)
+                        with open(tmp_word.name, "rb") as f:
+                            word_data = f.read()
+                        st.success("✅ Đã tạo file Word thành công!")
+                        st.download_button(
+                            "⬇️ Tải về file Word",
+                            word_data,
+                            file_name="ket_qua_ocr_mistral.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            use_container_width=True
+                        )
+                        os.remove(tmp_word.name)
+                except Exception as e:
+                    st.error(f"Lỗi tạo Word: {e}")
+            elif not HAS_DOCX:
+                st.info("Cài đặt python-docx để xuất Word: pip install python-docx")
                     
         with tab2:
             if images:
@@ -872,33 +890,50 @@ with tab_pdf:
                     except Exception as e:
                         st.error(f"Không đọc được ảnh {fig['name']}: {e}")
             else:
-                st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
+                st.warning("Không tìm thấy ảnh minh hoạ trong PDF!")
                 
     st.markdown("---")
     st.caption("✨ Hệ thống sử dụng Mistral AI để nhận diện chính xác văn bản toán học và tự động mapping hình ảnh/bảng vào đúng vị trí")
 
 # Sidebar thông tin
 if st.sidebar.checkbox("ℹ️ Hiển thị thông tin kỹ thuật"):
-    st.sidebar.write("**Phiên bản:** 2.0.0 - Mistral AI")
+    st.sidebar.write("**Phiên bản:** 2.0.0 - Mistral AI Standalone")
     st.sidebar.write("**Cập nhật:** 2024-07-19")
     st.sidebar.write("**AI Engine:** Mistral Pixtral-12B")
-    st.sidebar.write("**Độ chính xác OCR:** ~98%")
-    st.sidebar.write("**Độ chính xác mapping hình ảnh:** ~99.9%")
-    st.sidebar.write("**Hệ thống tự động điều chỉnh:**")
-    st.sidebar.write("- Phân tích khoảng cách")
-    st.sidebar.write("- Nhận diện từ khóa")
-    st.sidebar.write("- Xác định ngữ cảnh")
-    st.sidebar.write("- Sửa lỗi LaTeX tự động")
-    
+    st.sidebar.write("**PDF Engine:** " + ("PyMuPDF" if HAS_PYMUPDF else "PyPDF2" if HAS_PYPDF2 else "Không có"))
+    st.sidebar.write("**Word Export:** " + ("Có" if HAS_DOCX else "Không"))
+    st.sidebar.write("**Dependencies:**")
+    st.sidebar.write(f"- PyMuPDF: {'✅' if HAS_PYMUPDF else '❌'}")
+    st.sidebar.write(f"- PyPDF2: {'✅' if HAS_PYPDF2 else '❌'}")
+    st.sidebar.write(f"- python-docx: {'✅' if HAS_DOCX else '❌'}")
+
 # Cấu hình API keys
 st.sidebar.markdown("### ⚙️ Cấu hình API")
 with st.sidebar.expander("Mistral API Keys", expanded=False):
+    if MISTRAL_API_KEYS[0] == "your_mistral_api_key_1":
+        st.warning("⚠️ Chưa cấu hình API key!")
+    else:
+        st.success("✅ API key đã được cấu hình")
     st.info("Thay đổi API keys trong source code")
     st.code("""
 MISTRAL_API_KEYS = [
-    "your_mistral_api_key_1",
-    "your_mistral_api_key_2", 
-    "your_mistral_api_key_3"
+    "3OLLsQhSn7SFx4kBzEjeRJ7S4MikrdcO"
 ]
     """)
     st.caption("Lấy API key tại: https://console.mistral.ai/")
+
+# Hướng dẫn cài đặt
+with st.sidebar.expander("📦 Hướng dẫn cài đặt", expanded=False):
+    st.code("""
+# Cài đặt dependencies
+pip install streamlit
+pip install PyMuPDF
+pip install python-docx
+pip install opencv-python
+pip install Pillow
+pip install numpy
+pip install requests
+
+# Chạy ứng dụng
+streamlit run app.py
+    """)
