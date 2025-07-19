@@ -96,27 +96,41 @@ class AdvancedImageProcessor:
     
     @staticmethod
     def is_illustration_image(image: Image.Image) -> bool:
-        """Determine if image is likely an illustration/diagram (not decoration)"""
+        """Determine if image is likely an illustration/diagram (more permissive)"""
         analysis = AdvancedImageProcessor.analyze_image_content(image)
         
-        # Criteria for illustration vs decoration
-        min_size = 150  # Minimum size for meaningful content
-        max_aspect_ratio = 5.0  # Avoid very thin/wide decorative elements
-        min_complexity = 0.02  # Minimum complexity score
-        min_contrast = 30  # Minimum contrast for meaningful content
+        # More permissive criteria for illustrations
+        min_size = 80  # Reduced minimum size
+        max_aspect_ratio = 8.0  # Allow wider aspect ratios
+        min_complexity = 0.005  # Much lower complexity threshold
+        min_contrast = 15  # Lower contrast threshold
         
-        is_illustration = (
-            # Size criteria
-            image.width >= min_size and 
-            image.height >= min_size and
-            # Aspect ratio criteria (not too extreme)
-            1/max_aspect_ratio <= analysis['aspect_ratio'] <= max_aspect_ratio and
-            # Content criteria
-            analysis['complexity_score'] >= min_complexity and
-            analysis['std_brightness'] >= min_contrast and
-            # Not mostly white/empty
-            not analysis['is_mostly_white']
-        )
+        # Debug information
+        st.write(f"**Debug ảnh {image.width}x{image.height}:**")
+        st.write(f"- Complexity: {analysis['complexity_score']:.4f} (min: {min_complexity})")
+        st.write(f"- Contrast: {analysis['std_brightness']:.1f} (min: {min_contrast})")
+        st.write(f"- Aspect ratio: {analysis['aspect_ratio']:.2f}")
+        st.write(f"- Mean brightness: {analysis['mean_brightness']:.1f}")
+        
+        # Multiple criteria - if any major criteria is met, keep the image
+        size_ok = image.width >= min_size and image.height >= min_size
+        aspect_ok = 1/max_aspect_ratio <= analysis['aspect_ratio'] <= max_aspect_ratio
+        has_content = analysis['complexity_score'] >= min_complexity or analysis['std_brightness'] >= min_contrast
+        not_empty = not analysis['is_mostly_white'] or analysis['mean_brightness'] < 250
+        
+        is_illustration = size_ok and aspect_ok and has_content and not_empty
+        
+        # Special cases - keep if it has any significant visual content
+        if not is_illustration:
+            # Keep if it has decent size and some contrast
+            if (image.width >= 100 and image.height >= 100 and 
+                analysis['std_brightness'] >= 10):
+                is_illustration = True
+                st.info(f"✅ Giữ ảnh theo tiêu chí đặc biệt (size + contrast)")
+        
+        result_text = "✅ GIỮ" if is_illustration else "❌ LOẠI BỎ"
+        st.write(f"**Kết quả: {result_text}**")
+        st.write("---")
         
         return is_illustration
     
@@ -453,8 +467,10 @@ class OCRProcessor:
         self.mistral_api_key = mistral_key
     
     def extract_images_from_pdf(self, pdf_file, enhance=True) -> List[Image.Image]:
-        """Extract high-quality illustrations from PDF (no decorations)"""
+        """Extract high-quality illustrations from PDF with detailed logging"""
         images = []
+        rejected_images = []
+        
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
                 tmp_file.write(pdf_file.read())
@@ -462,9 +478,13 @@ class OCRProcessor:
             
             pdf_document = fitz.open(tmp_path)
             
+            st.write("**🔍 Debug: Trích xuất ảnh từ PDF**")
+            
             for page_num in range(pdf_document.page_count):
                 page = pdf_document[page_num]
                 image_list = page.get_images()
+                
+                st.write(f"**Trang {page_num + 1}: Tìm thấy {len(image_list)} ảnh**")
                 
                 for img_index, img in enumerate(image_list):
                     try:
@@ -475,12 +495,21 @@ class OCRProcessor:
                             img_data = pix.tobytes("png")
                             img_pil = Image.open(io.BytesIO(img_data))
                             
+                            st.write(f"**Ảnh {img_index + 1} (trang {page_num + 1}):**")
+                            
                             # Use advanced analysis to filter images
                             if self.image_processor.is_illustration_image(img_pil):
                                 if enhance:
+                                    original_size = (img_pil.width, img_pil.height)
                                     img_pil = self.image_processor.process_image_for_ocr(img_pil)
+                                    new_size = (img_pil.width, img_pil.height)
+                                    st.success(f"✅ Đã xử lý: {original_size} → {new_size}")
+                                
                                 images.append(img_pil)
-                                st.info(f"✅ Đã trích xuất ảnh minh họa từ trang {page_num + 1}")
+                                st.success(f"✅ ĐÃ GIỮ ảnh {len(images)}")
+                            else:
+                                rejected_images.append((img_pil, page_num + 1, img_index + 1))
+                                st.error(f"❌ ĐÃ LOẠI BỎ")
                         
                         pix = None
                     except Exception as e:
@@ -489,6 +518,29 @@ class OCRProcessor:
             
             pdf_document.close()
             os.unlink(tmp_path)
+            
+            # Summary
+            st.write("**📊 Tổng kết trích xuất:**")
+            st.success(f"✅ **Giữ lại: {len(images)} ảnh**")
+            if rejected_images:
+                st.error(f"❌ **Loại bỏ: {len(rejected_images)} ảnh**")
+                
+                # Show rejected images for reference
+                if st.checkbox("🔍 Xem ảnh bị loại bỏ", key="show_rejected"):
+                    st.write("**Ảnh bị loại bỏ:**")
+                    for i, (rejected_img, page, img_idx) in enumerate(rejected_images[:3]):  # Show max 3
+                        col1, col2 = st.columns([1, 2])
+                        with col1:
+                            st.image(rejected_img, caption=f"Trang {page}, Ảnh {img_idx}")
+                        with col2:
+                            analysis = self.image_processor.analyze_image_content(rejected_img)
+                            st.write(f"Size: {rejected_img.width}×{rejected_img.height}")
+                            st.write(f"Complexity: {analysis['complexity_score']:.4f}")
+                            st.write(f"Contrast: {analysis['std_brightness']:.1f}")
+                            if st.button(f"🔄 Force giữ ảnh này", key=f"force_{i}"):
+                                images.append(rejected_img)
+                                st.success("✅ Đã thêm ảnh!")
+                                st.rerun()
             
         except Exception as e:
             st.error(f"Lỗi trích xuất ảnh từ PDF: {str(e)}")
@@ -526,25 +578,31 @@ class OCRProcessor:
             }
             
             prompt = """
-            Trích xuất văn bản từ hình ảnh với độ chính xác tối đa. YÊU CẦU:
+            Trích xuất văn bản từ hình ảnh với độ chính xác tối đa. YÊU CẦU NGHIÊM NGẶT:
             
-            1. **Văn bản thường**: Nhận diện chính xác 100% văn bản
+            1. **Văn bản thường**: Nhận diện chính xác 100% tất cả chữ
+            
             2. **Công thức toán học**: 
-               - Xác định chính xác các công thức, phương trình
-               - Nhận diện ký hiệu toán học: +, -, *, /, ^, =, √, ∫, ∑, α, β, π, etc.
-               - Công thức phải được bọc bằng ${...}$ (VD: ${x^2 + y^2 = z^2}$)
-            3. **Hình ảnh/biểu đồ**: 
-               - Khi gặp sơ đồ, biểu đồ, hình minh họa, đánh dấu: ![Hình X](imageX.png)
-               - X là số thứ tự (1, 2, 3...)
-            4. **Định dạng**: Giữ nguyên bố cục, xuống dòng, thụt lề
-            5. **Ngôn ngữ**: Hỗ trợ tiếng Việt và tiếng Anh
+               - Bọc MỌI công thức bằng ${...}$ 
+               - VD: ${x^2 + y^2 = z^2}$, ${a/b}$, ${√x}$, ${∫f(x)dx}$
+               
+            3. **Hình ảnh/biểu đồ/sơ đồ**: 
+               - KHI GẶP bất kỳ ảnh/biểu đồ/sơ đồ nào, PHẢI ghi chính xác:
+               ![Hình 1](image1.png)
+               ![Hình 2](image2.png) 
+               ![Hình 3](image3.png)
+               - Đánh số tuần tự 1, 2, 3...
+               - Đặt marker ở đúng vị trí ảnh xuất hiện
+               
+            4. **Định dạng**: Giữ nguyên xuống dòng, thụt lề
             
-            QUAN TRỌNG: 
-            - Công thức toán học PHẢI được bọc ${...}$
-            - Ảnh minh họa PHẢI được đánh dấu ![Hình X](imageX.png) 
-            - Không bỏ sót bất kỳ nội dung nào
+            QUAN TRỌNG:
+            - MỌI công thức toán PHẢI có ${...}$
+            - MỌI ảnh minh họa PHẢI có ![Hình X](imageX.png)
+            - Đặt marker đúng vị trí ảnh trong văn bản
+            - Không bỏ sót nội dung nào
             
-            Trả về văn bản đã xử lý hoàn chỉnh.
+            VD đúng: "Theo công thức ${E = mc^2}$, như thể hiện trong ![Hình 1](image1.png), ta thấy..."
             """
             
             payload = {
@@ -615,45 +673,560 @@ class WordExporter:
         # Split by paragraphs while preserving structure
         lines = text.split('\n')
         
-        for line in lines:
+        st.write("**Debug Word Export:**")
+        st.write(f"- Số dòng text: {len(lines)}")
+        st.write(f"- Số ảnh available: {len(images)}")
+        
+        # Find all image markers first
+        all_image_markers = re.findall(r'!\[Hình (\d+)\]\([^)]*\)', text)
+        st.write(f"- Image markers tìm thấy: {all_image_markers}")
+        
+        for line_num, line in enumerate(lines):
             if not line.strip():
                 self.doc.add_paragraph()  # Empty line
                 continue
             
-            # Check for image markers
-            image_pattern = r'!\[Hình (\d+)\]\(image\d+\.png\)'
-            matches = list(re.finditer(image_pattern, line))
+            # More flexible image pattern matching
+            image_pattern = r'!\[Hình\s*(\d+)\]\([^)]*\)'
+            matches = list(re.finditer(image_pattern, line, re.IGNORECASE))
             
             if matches:
+                st.write(f"Line {line_num}: Tìm thấy {len(matches)} image markers")
+                
                 # Process line with images
                 current_pos = 0
                 p = self.doc.add_paragraph()
                 
-                for match in matches:
+                for match_num, match in enumerate(matches):
                     # Add text before image
                     before_text = line[current_pos:match.start()].strip()
                     if before_text:
                         self._add_text_with_math_formatting(p, before_text)
+                        st.write(f"  - Added text before image: '{before_text[:50]}...'")
                     
-                    # Add image
+                    # Extract image number
                     image_num = int(match.group(1))
+                    st.write(f"  - Processing image marker: Hình {image_num}")
+                    
+                    # Insert image if available
                     if 1 <= image_num <= len(images):
-                        self._insert_image_optimally(p, images[image_num - 1], f"Hình {image_num}")
+                        img = images[image_num - 1]
+                        st.write(f"  - Inserting image {image_num} ({img.width}x{img.height})")
+                        self._insert_image_optimally(p, img, f"Hình {image_num}")
                     else:
-                        # Image reference not found
-                        ref_run = p.add_run(f"[Hình {image_num} - Chưa có]")
-                        ref_run.italic = True
-                        ref_run.font.color.rgb = None  # Gray color
+                        # Image not found, show placeholder
+                        st.warning(f"  - Image {image_num} not found! (Available: 1-{len(images)})")
+                        placeholder_run = p.add_run(f"\n[Hình {image_num} - Không tìm thấy]\n")
+                        placeholder_run.italic = True
+                        placeholder_run.bold = True
                     
                     current_pos = match.end()
                 
-                # Add remaining text
+                # Add remaining text after last image
                 remaining_text = line[current_pos:].strip()
                 if remaining_text:
                     self._add_text_with_math_formatting(p, remaining_text)
+                    st.write(f"  - Added remaining text: '{remaining_text[:50]}...'")
+            
             else:
-                # Regular line
-                if '${' in line and '}$' in line:
+                # Regular line without images
+                if '${' in line and '}
+    
+    def _add_paragraph_with_math_formatting(self, text: str):
+        """Add paragraph with proper LaTeX formatting"""
+        p = self.doc.add_paragraph()
+        self._add_text_with_math_formatting(p, text)
+    
+    def _add_text_with_math_formatting(self, paragraph, text: str):
+        """Add text with enhanced math formula formatting"""
+        # Split by LaTeX formulas
+        parts = re.split(r'(\$\{[^}]+\}\$)', text)
+        
+        for part in parts:
+            if part.startswith('${') and part.endswith('}$'):
+                # Math formula
+                formula_content = part[2:-2]  # Remove ${ and }$
+                run = paragraph.add_run(formula_content)
+                run.bold = True
+                run.italic = True
+                # Add background highlighting for formulas
+                # Note: python-docx doesn't support background color directly
+                # but we can make it visually distinct
+            else:
+                # Regular text
+                paragraph.add_run(part)
+    
+    def _insert_image_optimally(self, paragraph, img: Image.Image, caption: str):
+        """Insert image with optimal sizing and positioning - FIXED VERSION"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_img:
+                # Save image with high quality
+                img.save(tmp_img.name, 'PNG', quality=95, optimize=True)
+                
+                # Calculate optimal size
+                max_width_cm = 12
+                max_height_cm = 8
+                
+                # Convert pixels to cm (assuming 96 DPI)
+                img_width_cm = img.width / 96 * 2.54
+                img_height_cm = img.height / 96 * 2.54
+                
+                # Scale to fit within bounds while maintaining aspect ratio
+                scale_w = max_width_cm / img_width_cm if img_width_cm > max_width_cm else 1
+                scale_h = max_height_cm / img_height_cm if img_height_cm > max_height_cm else 1
+                scale = min(scale_w, scale_h, 1.0)  # Never upscale
+                
+                final_width = Cm(img_width_cm * scale)
+                
+                # Add line break before image
+                paragraph.add_run().add_break()
+                
+                # Insert image directly in the paragraph
+                run = paragraph.add_run()
+                run.add_picture(tmp_img.name, width=final_width)
+                
+                # Add line break after image
+                paragraph.add_run().add_break()
+                
+                # Add caption in the same paragraph
+                caption_run = paragraph.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                
+                # Add final line break
+                paragraph.add_run().add_break()
+                
+                # Set paragraph alignment to center
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                os.unlink(tmp_img.name)
+                
+                st.write(f"    ✅ Successfully inserted {caption} ({final_width.cm:.1f}cm wide)")
+                
+        except Exception as e:
+            # Fallback: add text description
+            error_run = paragraph.add_run(f"\n[{caption}: Lỗi chèn ảnh - {str(e)}]\n")
+            error_run.italic = True
+            error_run.bold = True
+            st.error(f"    ❌ Failed to insert {caption}: {str(e)}")
+    
+    def _add_unreferenced_images(self, text: str, images: List[Image.Image]):
+        """Add images that weren't referenced in text"""
+        # Find which images were referenced
+        referenced_nums = set()
+        for match in re.finditer(r'!\[Hình (\d+)\]', text):
+            referenced_nums.add(int(match.group(1)))
+        
+        unreferenced = []
+        for i, img in enumerate(images, 1):
+            if i not in referenced_nums:
+                unreferenced.append((i, img))
+        
+        if unreferenced:
+            self.doc.add_page_break()
+            self.doc.add_heading('Hình ảnh bổ sung (chưa được tham chiếu):', level=1)
+            
+            for img_num, img in unreferenced:
+                self._insert_standalone_image(img, f"Hình {img_num}")
+    
+    def _insert_standalone_image(self, img: Image.Image, caption: str):
+        """Insert standalone image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_img:
+                img.save(tmp_img.name, 'PNG', quality=95)
+                
+                # Optimal sizing for standalone images
+                max_width = Cm(16)
+                scale = min(max_width.cm / (img.width / 96 * 2.54), 1.0)
+                final_width = Cm(img.width / 96 * 2.54 * scale)
+                
+                # Caption
+                caption_p = self.doc.add_paragraph()
+                caption_run = caption_p.add_run(caption + ":")
+                caption_run.bold = True
+                caption_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Image
+                img_p = self.doc.add_paragraph()
+                img_run = img_p.add_run()
+                img_run.add_picture(tmp_img.name, width=final_width)
+                img_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                self.doc.add_paragraph()  # Spacing
+                
+                os.unlink(tmp_img.name)
+                
+        except Exception as e:
+            error_p = self.doc.add_paragraph(f'{caption}: Lỗi chèn ảnh - {str(e)}')
+            error_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_statistics(self, images: List[Image.Image], text: str):
+        """Add comprehensive statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Thống kê chi tiết:', level=1)
+        
+        # Calculate statistics
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình \d+\]', text))
+        paragraphs = len([p for p in text.split('\n') if p.strip()])
+        
+        # Image statistics
+        if images:
+            avg_width = sum(img.width for img in images) / len(images)
+            avg_height = sum(img.height for img in images) / len(images)
+            total_pixels = sum(img.width * img.height for img in images)
+        else:
+            avg_width = avg_height = total_pixels = 0
+        
+        # Create statistics table
+        stats_table = self.doc.add_table(rows=8, cols=2)
+        stats_table.style = 'Table Grid'
+        
+        stats_data = [
+            ['Tổng số từ:', f'{word_count:,}'],
+            ['Tổng ký tự:', f'{char_count:,}'],
+            ['Số đoạn văn:', f'{paragraphs}'],
+            ['Công thức LaTeX:', f'{formula_count}'],
+            ['Hình ảnh trích xuất:', f'{len(images)}'],
+            ['Tham chiếu ảnh:', f'{image_refs}'],
+            ['Kích thước ảnh TB:', f'{avg_width:.0f}×{avg_height:.0f}px' if images else 'N/A'],
+            ['Tổng pixel ảnh:', f'{total_pixels:,}' if images else 'N/A']
+        ]
+        
+        for i, (label, value) in enumerate(stats_data):
+            stats_table.cell(i, 0).text = label
+            stats_table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save document and return bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Main App
+def main():
+    # Header
+    st.markdown("""
+    <div class="main-header">
+        <h1>📄 P_OCR PDF AI 2025 - Enhanced Edition</h1>
+        <p>Ứng dụng OCR thông minh với Mistral AI</p>
+        <p>🎯 Cắt ảnh thông minh • 💯 LaTeX chính xác • 📍 Chèn đúng vị trí</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Initialize OCR processor
+    if 'ocr_processor' not in st.session_state:
+        st.session_state.ocr_processor = OCRProcessor()
+    
+    # Sidebar
+    with st.sidebar:
+        st.header("🔧 Cấu hình")
+        
+        mistral_key = st.text_input(
+            "Mistral API Key",
+            type="password",
+            help="Nhập API key của Mistral AI"
+        )
+        
+        if st.button("💾 Lưu cấu hình"):
+            st.session_state.ocr_processor.setup_api(mistral_key)
+            st.success("✅ Đã lưu cấu hình!")
+        
+        st.markdown("---")
+        
+        # Processing options
+        st.header("🖼️ Tùy chọn xử lý")
+        enhance_images = st.checkbox(
+            "Cải thiện chất lượng ảnh",
+            value=True,
+            help="Tự động cắt thông minh và cải thiện ảnh"
+        )
+        
+        st.markdown("---")
+        
+        # Enhanced features info
+        st.header("✨ Tính năng nâng cao")
+        st.markdown("""
+        **🎯 Cắt ảnh thông minh:**
+        - Phân biệt ảnh minh họa vs trang trí
+        - Bảo toàn nội dung quan trọng
+        - Loại bỏ border và noise
+        
+        **💯 LaTeX chính xác 100%:**
+        - Nhận diện công thức phức tạp
+        - Xử lý ký hiệu toán học
+        - Tránh false positives
+        
+        **📍 Chèn ảnh đúng vị trí:**
+        - Marker `![Hình X](imageX.png)`
+        - Resize thông minh
+        - Layout chuyên nghiệp
+        """)
+        
+        # Current session info
+        if 'extracted_images' in st.session_state:
+            st.markdown("---")
+            st.subheader("📊 Session hiện tại")
+            st.write(f"**Ảnh minh họa**: {len(st.session_state.extracted_images)}")
+            if 'extracted_text' in st.session_state:
+                formula_count = len(re.findall(r'\$\{[^}]+\}\$', st.session_state.extracted_text))
+                image_refs = len(re.findall(r'!\[Hình \d+\]', st.session_state.extracted_text))
+                st.write(f"**Công thức LaTeX**: {formula_count}")
+                st.write(f"**Tham chiếu ảnh**: {image_refs}")
+    
+    # Main content
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.header("📁 Upload File")
+        
+        uploaded_file = st.file_uploader(
+            "Chọn file PDF hoặc hình ảnh",
+            type=['pdf', 'png', 'jpg', 'jpeg'],
+            help="Hỗ trợ file PDF và hình ảnh"
+        )
+        
+        if uploaded_file is not None:
+            file_type = uploaded_file.type
+            st.info(f"📄 File: {uploaded_file.name} ({file_type})")
+            
+            if st.button("🚀 Bắt đầu OCR nâng cao", type="primary"):
+                with st.spinner("🔄 Đang xử lý với AI thông minh..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if file_type == "application/pdf":
+                            st.info("📄 Đang phân tích PDF...")
+                            
+                            # Extract high-quality illustrations only
+                            pdf_file_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_images_from_pdf(
+                                pdf_file_copy, enhance=enhance_images
+                            )
+                            st.success(f"🖼️ Đã trích xuất {len(extracted_images)} ảnh minh họa chất lượng cao")
+                            
+                            # Convert pages for OCR
+                            uploaded_file.seek(0)
+                            page_images = st.session_state.ocr_processor.convert_pdf_to_images(uploaded_file)
+                            
+                            # Enhanced OCR each page
+                            progress_bar = st.progress(0)
+                            for i, page_img in enumerate(page_images):
+                                st.info(f"🔍 OCR nâng cao trang {i+1}/{len(page_images)}...")
+                                
+                                if enhance_images:
+                                    page_img = st.session_state.ocr_processor.image_processor.enhance_image_quality(page_img)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_with_mistral(page_img)
+                                extracted_text += f"\n--- Trang {i+1} ---\n{page_text}\n"
+                                
+                                progress_bar.progress((i + 1) / len(page_images))
+                        
+                        else:
+                            st.info("🖼️ Đang xử lý hình ảnh với AI...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_processor.process_image_for_ocr(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_with_mistral(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ Hoàn thành OCR nâng cao!")
+                        
+                        # Show quick preview
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        if formula_count > 0:
+                            st.success(f"🔢 Đã nhận diện {formula_count} công thức LaTeX!")
+                        
+                        image_refs = len(re.findall(r'!\[Hình \d+\]', extracted_text))
+                        if image_refs > 0:
+                            st.success(f"📍 Đã đánh dấu {image_refs} vị trí chèn ảnh!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Lỗi: {str(e)}")
+    
+    with col2:
+        st.header("📊 Thống kê nâng cao")
+        
+        if 'extracted_text' in st.session_state:
+            text = st.session_state.extracted_text
+            
+            word_count = len(text.split())
+            char_count = len(text)
+            formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+            image_refs = len(re.findall(r'!\[Hình \d+\]', text))
+            
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.metric("Số từ", word_count)
+                st.metric("Công thức LaTeX", formula_count)
+            with col_b:
+                st.metric("Số ký tự", char_count)
+                st.metric("Tham chiếu ảnh", image_refs)
+            
+            if 'extracted_images' in st.session_state:
+                st.metric("Ảnh minh họa", len(st.session_state.extracted_images))
+                
+                # Quality indicators
+                if formula_count > 0:
+                    st.success("💯 LaTeX detected")
+                if image_refs > 0:
+                    st.success("📍 Images referenced")
+    
+    # Enhanced Results section
+    if 'extracted_text' in st.session_state:
+        st.markdown("---")
+        st.header("📋 Kết quả OCR nâng cao")
+        
+        # Display extracted text with enhancements
+        with st.expander("📝 Văn bản với LaTeX và markers", expanded=True):
+            text = st.session_state.extracted_text
+            
+            # Highlight different elements
+            # LaTeX formulas in bold
+            highlighted_text = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', text)
+            # Image markers in italic
+            highlighted_text = re.sub(r'(!\[Hình \d+\]\([^)]+\))', r'*\1*', highlighted_text)
+            
+            st.text_area(
+                "Nội dung (LaTeX: **bold**, Image markers: *italic*):",
+                highlighted_text,
+                height=400,
+                disabled=True
+            )
+            
+            # Show statistics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                formula_matches = re.findall(r'\$\{[^}]+\}\$', text)
+                st.write("**Công thức LaTeX tìm thấy:**")
+                for i, formula in enumerate(formula_matches[:5], 1):
+                    st.write(f"{i}. `{formula}`")
+                if len(formula_matches) > 5:
+                    st.write(f"... và {len(formula_matches) - 5} công thức khác")
+            
+            with col2:
+                image_matches = re.findall(r'!\[Hình (\d+)\]', text)
+                st.write("**Markers ảnh:**")
+                for img_num in image_matches[:5]:
+                    st.write(f"• Hình {img_num}")
+                if len(image_matches) > 5:
+                    st.write(f"... và {len(image_matches) - 5} ảnh khác")
+            
+            with col3:
+                st.write("**Chất lượng OCR:**")
+                st.write(f"✅ {len(text.split())} từ")
+                st.write(f"🔢 {len(formula_matches)} công thức")
+                st.write(f"📷 {len(image_matches)} ảnh refs")
+        
+        # Display extracted images with analysis
+        if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+            with st.expander(f"🖼️ Ảnh minh họa đã lọc ({len(st.session_state.extracted_images)} ảnh)", expanded=True):
+                
+                st.info("✨ Chỉ hiển thị ảnh minh họa (đã loại bỏ ảnh trang trí)")
+                
+                for i, img in enumerate(st.session_state.extracted_images):
+                    col1, col2 = st.columns([1, 2])
+                    
+                    with col1:
+                        st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                    
+                    with col2:
+                        # Image analysis
+                        analysis = st.session_state.ocr_processor.image_processor.analyze_image_content(img)
+                        
+                        st.write(f"**Hình {i+1} - Thông tin:**")
+                        st.write(f"• Kích thước: {img.width}×{img.height}px")
+                        st.write(f"• Tỷ lệ: {analysis['aspect_ratio']:.2f}")
+                        st.write(f"• Độ phức tạp: {analysis['complexity_score']:.3f}")
+                        st.write(f"• Độ tương phản: {analysis['std_brightness']:.1f}")
+                        
+                        if analysis['complexity_score'] > 0.05:
+                            st.success("🎯 Ảnh minh họa chất lượng cao")
+                        else:
+                            st.info("📊 Ảnh đơn giản/sơ đồ")
+                    
+                    st.markdown("---")
+        
+        # Enhanced Export section
+        st.markdown("---")
+        st.header("📤 Xuất Word chuyên nghiệp")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            include_stats = st.checkbox("Thêm thống kê chi tiết", value=True)
+        with col2:
+            st.info("🚀 Xuất với tính năng nâng cao")
+        
+        st.info("📍 **Chức năng tự động**: Ảnh được chèn đúng vị trí marker ![Hình X], LaTeX được format đặc biệt")
+        
+        col1, col2, col3 = st.columns([1, 1, 1])
+        
+        with col2:
+            if st.button("📄 Tạo Word nâng cao", type="primary"):
+                with st.spinner("📝 Đang tạo file Word với AI..."):
+                    try:
+                        exporter = WordExporter()
+                        
+                        images_to_export = []
+                        if 'extracted_images' in st.session_state:
+                            images_to_export = st.session_state.extracted_images
+                        
+                        exporter.add_content(st.session_state.extracted_text, images_to_export)
+                        
+                        if include_stats:
+                            exporter.add_statistics(images_to_export, st.session_state.extracted_text)
+                        
+                        word_bytes = exporter.save()
+                        
+                        # Enhanced success metrics
+                        st.success("🎉 File Word đã được tạo thành công!")
+                        
+                        col_a, col_b, col_c, col_d = st.columns(4)
+                        with col_a:
+                            st.metric("Văn bản", f"{len(st.session_state.extracted_text.split())} từ")
+                        with col_b:
+                            st.metric("LaTeX", f"{len(re.findall(r'\$\{[^}]+\}\$', st.session_state.extracted_text))}")
+                        with col_c:
+                            st.metric("Ảnh chèn", f"{len(images_to_export)}")
+                        with col_d:
+                            st.metric("File size", f"{len(word_bytes)/1024:.1f} KB")
+                        
+                        # Download button with enhanced naming
+                        filename = f"OCR_Enhanced_{uploaded_file.name.split('.')[0]}_{len(images_to_export)}imgs.docx"
+                        st.download_button(
+                            label="⬇️ Tải file Word (Enhanced)",
+                            data=word_bytes,
+                            file_name=filename,
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
+                        
+                        st.success("✅ **Tính năng đã áp dụng**: Cắt ảnh thông minh • LaTeX chính xác • Chèn đúng vị trí")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Lỗi: {str(e)}")
+    
+    # Enhanced Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style="text-align: center; color: #666; padding: 2rem;">
+        <p>🚀 <strong>P_OCR PDF AI 2025 - Enhanced Edition</strong></p>
+        <p>🎯 <strong>Smart Crop</strong> • 💯 <strong>100% LaTeX Accuracy</strong> • 📍 <strong>Precise Placement</strong></p>
+        <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+        <p>💻 Enhanced by AI Assistant</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main() in line:
                     self._add_paragraph_with_math_formatting(line)
                 else:
                     self.doc.add_paragraph(line.strip())
