@@ -571,9 +571,7 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
 
 # --------- Mistral OCR API -----------
 MISTRAL_API_KEYS = [
-    "your_mistral_api_key_1",
-    "your_mistral_api_key_2", 
-    "your_mistral_api_key_3"
+    "3OLLsQhSn7SFx4kBzEjeRJ7S4MikrdcO"
 ]
 api_key_cycle = itertools.cycle(MISTRAL_API_KEYS)
 def get_next_api_key():
