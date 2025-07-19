@@ -473,7 +473,94 @@ class OCRProcessor:
                 return f"Lỗi Gemini API: {response.status_code} - {response.text}"
             
         except Exception as e:
-            return f"Lỗi Gemini API: {str(e)}"
+    def analyze_image_content(self, image: Image.Image, model: str = "Gemini") -> dict:
+        """Analyze image content to determine optimal placement and description"""
+        if model == "Gemini" and not self.gemini_api_key:
+            return {"description": "Gemini API key không được cung cấp", "category": "unknown", "placement_hint": ""}
+        elif model == "Mistral" and not self.mistral_api_key:
+            return {"description": "Mistral API key không được cung cấp", "category": "unknown", "placement_hint": ""}
+        
+        try:
+            # Convert image to base64
+            buffer = io.BytesIO()
+            image.save(buffer, format='PNG')
+            img_b64 = base64.b64encode(buffer.getvalue()).decode()
+            
+            prompt = """
+            Phân tích hình ảnh này và cung cấp thông tin sau dạng JSON:
+            
+            {
+                "description": "Mô tả chi tiết nội dung ảnh (tiếng Việt)",
+                "category": "diagram|chart|photo|formula|table|illustration|other",
+                "placement_hint": "Gợi ý vị trí chèn phù hợp trong văn bản",
+                "related_keywords": ["từ khóa", "liên quan", "đến ảnh"],
+                "content_type": "mathematical|scientific|business|general"
+            }
+            
+            Hãy phân tích kỹ và đưa ra gợi ý vị trí chèn thông minh.
+            """
+            
+            if model == "Gemini":
+                # Gemini API call
+                headers = {'Content-Type': 'application/json'}
+                payload = {
+                    "contents": [{
+                        "parts": [
+                            {"text": prompt},
+                            {"inline_data": {"mime_type": "image/png", "data": img_b64}}
+                        ]
+                    }],
+                    "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1000}
+                }
+                
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self.gemini_api_key}"
+                response = requests.post(url, headers=headers, json=payload, timeout=60)
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    if 'candidates' in result and len(result['candidates']) > 0:
+                        content = result['candidates'][0]['content']['parts'][0]['text']
+                        try:
+                            return json.loads(content)
+                        except:
+                            return {"description": content, "category": "unknown", "placement_hint": ""}
+            
+            else:  # Mistral
+                headers = {
+                    'Authorization': f'Bearer {self.mistral_api_key}',
+                    'Content-Type': 'application/json'
+                }
+                
+                payload = {
+                    "model": "mistral-small-latest",
+                    "temperature": 0.1,
+                    "max_tokens": 1000,
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}}
+                        ]
+                    }]
+                }
+                
+                response = requests.post(
+                    "https://api.mistral.ai/v1/chat/completions",
+                    headers=headers, json=payload, timeout=60
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    content = result['choices'][0]['message']['content']
+                    try:
+                        return json.loads(content)
+                    except:
+                        return {"description": content, "category": "unknown", "placement_hint": ""}
+            
+            return {"description": "Không thể phân tích ảnh", "category": "unknown", "placement_hint": ""}
+            
+        except Exception as e:
+            return {"description": f"Lỗi phân tích ảnh: {str(e)}", "category": "unknown", "placement_hint": ""}
 
 class WordExporter:
     def __init__(self):
@@ -489,8 +576,8 @@ class WordExporter:
         section.top_margin = Cm(2)
         section.bottom_margin = Cm(2)
     
-    def add_content(self, text: str, images: List[Image.Image] = None, image_placement: str = "inline"):
-        """Add content to Word document with advanced image placement"""
+    def add_content(self, text: str, images: List[Image.Image] = None, image_analyses: List[dict] = None, image_placement: str = "inline"):
+        """Add content to Word document with AI-guided image placement"""
         # Add title
         title = self.doc.add_heading('Kết quả OCR - P_OCR PDF AI 2025', 0)
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -503,15 +590,97 @@ class WordExporter:
         # Add main content
         self.doc.add_heading('Nội dung văn bản được trích xuất:', level=1)
         
-        # Process text and handle LaTeX formulas
-        if image_placement == "inline" and images:
-            # Inline placement: mix text and images
+        # Process text and handle LaTeX formulas with smart image placement
+        if image_placement == "inline" and images and image_analyses:
+            # Smart placement: use AI analysis to position images
+            self._add_content_with_smart_placement(text, images, image_analyses)
+        elif image_placement == "inline" and images:
+            # Regular inline placement
             self._add_content_with_inline_images(text, images)
         else:
             # Separate sections for text and images
             self._add_text_content(text)
             if images:
-                self._add_images_section(images)
+                if image_analyses:
+                    self._add_images_section_with_analysis(images, image_analyses)
+                else:
+                    self._add_images_section(images)
+    
+    def _add_content_with_smart_placement(self, text: str, images: List[Image.Image], image_analyses: List[dict]):
+        """Add content with AI-guided smart image placement"""
+        paragraphs = text.split('\n')
+        used_images = set()
+        
+        for i, para in enumerate(paragraphs):
+            if para.strip():
+                self._add_paragraph_with_formulas(para.strip())
+                
+                # Check if any image should be placed after this paragraph
+                for img_idx, analysis in enumerate(image_analyses):
+                    if img_idx in used_images:
+                        continue
+                    
+                    # Check if paragraph content matches image keywords
+                    para_lower = para.lower()
+                    keywords = analysis.get('related_keywords', [])
+                    
+                    # Smart matching logic
+                    keyword_matches = sum(1 for keyword in keywords if keyword.lower() in para_lower)
+                    
+                    # Placement rules based on content type
+                    should_place = False
+                    
+                    if analysis.get('category') == 'formula' and ('${' in para or 'công thức' in para_lower):
+                        should_place = True
+                    elif analysis.get('category') == 'diagram' and ('sơ đồ' in para_lower or 'biểu đồ' in para_lower):
+                        should_place = True
+                    elif analysis.get('category') == 'chart' and ('biểu đồ' in para_lower or 'đồ thị' in para_lower):
+                        should_place = True
+                    elif analysis.get('category') == 'table' and ('bảng' in para_lower or 'table' in para_lower):
+                        should_place = True
+                    elif keyword_matches >= 2:  # At least 2 keyword matches
+                        should_place = True
+                    elif 'hình' in para_lower and str(img_idx + 1) in para:  # References like "Hình 1"
+                        should_place = True
+                    
+                    if should_place:
+                        # Add image with analysis-based caption
+                        caption = f"Hình {img_idx + 1}: {analysis.get('description', 'Hình minh họa')}"
+                        self._insert_image_with_caption(images[img_idx], caption)
+                        used_images.add(img_idx)
+                        break
+        
+        # Add remaining images at the end
+        for img_idx, img in enumerate(images):
+            if img_idx not in used_images:
+                analysis = image_analyses[img_idx] if img_idx < len(image_analyses) else {}
+                caption = f"Hình {img_idx + 1}: {analysis.get('description', 'Hình minh họa')}"
+                self._insert_image_with_caption(img, caption)
+    
+    def _add_images_section_with_analysis(self, images: List[Image.Image], image_analyses: List[dict]):
+        """Add dedicated images section with AI analysis descriptions"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Hình ảnh được trích xuất từ tài liệu:', level=1)
+        
+        for i, img in enumerate(images[:15]):  # Limit to 15 images
+            analysis = image_analyses[i] if i < len(image_analyses) else {}
+            
+            # Enhanced caption with analysis
+            description = analysis.get('description', 'Hình minh họa')
+            category = analysis.get('category', 'unknown')
+            
+            caption = f"Hình {i + 1} ({category}): {description}"
+            self._insert_image_with_caption(img, caption)
+            
+            # Add analysis details if available
+            if analysis.get('placement_hint'):
+                hint_p = self.doc.add_paragraph(f"💡 Gợi ý: {analysis['placement_hint']}")
+                hint_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                hint_p.runs[0].italic = True
+            
+            # Add page break after every 2 images to avoid overcrowding
+            if (i + 1) % 2 == 0 and i < len(images) - 1:
+                self.doc.add_page_break()
     
     def _add_text_content(self, text: str):
         """Add text content with proper formatting"""
@@ -686,12 +855,41 @@ def main():
         st.markdown("---")
         
         # AI Model selection
-        st.header("🤖 Chọn AI Model")
-        ai_model = st.selectbox(
+        st.header("🤖 Chọn AI Models")
+        
+        # OCR Model selection
+        st.subheader("📝 Model OCR (Trích xuất văn bản)")
+        ocr_model = st.selectbox(
             "Model OCR:",
             ["Gemini", "Mistral"],
-            help="Chọn AI model để thực hiện OCR"
+            help="Model để OCR và trích xuất văn bản từ PDF/ảnh"
         )
+        
+        # Image Analysis Model selection  
+        st.subheader("🖼️ Model phân tích ảnh (Vị trí chèn)")
+        image_model = st.selectbox(
+            "Model phân tích ảnh:",
+            ["Gemini", "Mistral"],
+            index=1 if ocr_model == "Gemini" else 0,  # Default to different model
+            help="Model để phân tích nội dung ảnh và xác định vị trí chèn phù hợp"
+        )
+        
+        # Show current selection
+        st.info(f"🔄 **OCR**: {ocr_model} | 🖼️ **Ảnh**: {image_model}")
+        
+        # Advanced options
+        with st.expander("⚙️ Tùy chọn nâng cao"):
+            smart_positioning = st.checkbox(
+                "Chèn ảnh thông minh theo nội dung",
+                value=True,
+                help="Sử dụng AI để phân tích nội dung ảnh và chèn vào vị trí phù hợp"
+            )
+            
+            image_context_analysis = st.checkbox(
+                "Phân tích ngữ cảnh ảnh",
+                value=True,
+                help="AI sẽ phân tích nội dung ảnh để hiểu và mô tả"
+            )
         
         # Image processing options
         st.header("🖼️ Tùy chọn xử lý ảnh")
@@ -711,15 +909,29 @@ def main():
         st.markdown("---")
         
         # Features info
-        st.header("✨ Tính năng")
+        st.header("✨ Tính năng v2.0")
         st.markdown("""
         - 📄 OCR PDF đa trang
         - 🖼️ OCR hình ảnh  
         - 🔢 Nhận diện công thức LaTeX
+        - 🤖 **Dual AI Models** 
         - ✨ Xử lý ảnh thông minh
-        - 📤 Xuất Word chuyên nghiệp
+        - 🎯 **Smart positioning**
+        - 📤 Xuất Word AI-powered
         - 🌐 Hỗ trợ tiếng Việt/Anh
         """)
+        
+        st.markdown("---")
+        
+        # Current session info
+        if 'ocr_model' in st.session_state:
+            st.subheader("📊 Session hiện tại")
+            st.write(f"**OCR**: {st.session_state.get('ocr_model', 'Chưa chọn')}")
+            st.write(f"**Ảnh**: {st.session_state.get('image_model', 'Chưa chọn')}")
+            if 'extracted_images' in st.session_state:
+                st.write(f"**Ảnh đã xử lý**: {len(st.session_state.extracted_images)}")
+            if 'image_analyses' in st.session_state:
+                st.write(f"**Ảnh đã phân tích**: {len(st.session_state.image_analyses)}")
     
     # Main content area
     col1, col2 = st.columns([2, 1])
@@ -740,12 +952,30 @@ def main():
             # Display file info
             st.info(f"📄 File: {uploaded_file.name} ({file_type})")
             
+            # Get current settings
+            current_ocr = ocr_model
+            current_image = image_model
+            current_enhance = enhance_images
+            current_smart = smart_positioning
+            current_placement = image_placement
+            
+            # Show current configuration
+            st.markdown(f"""
+            **🔧 Cấu hình hiện tại:**
+            - OCR Model: `{current_ocr}`
+            - Image Model: `{current_image}` 
+            - Cải thiện ảnh: `{'Bật' if current_enhance else 'Tắt'}`
+            - Smart positioning: `{'Bật' if current_smart else 'Tắt'}`
+            - Bố trí: `{'Xen kẽ' if current_placement == 'inline' else 'Riêng biệt'}`
+            """)
+            
             # Process file
             if st.button("🚀 Bắt đầu OCR", type="primary"):
                 with st.spinner("🔄 Đang xử lý..."):
                     try:
                         extracted_text = ""
                         extracted_images = []
+                        image_analyses = []
                         
                         if file_type == "application/pdf":
                             # Process PDF
@@ -763,37 +993,58 @@ def main():
                             
                             # Perform OCR on each page
                             for i, page_img in enumerate(page_images):
-                                st.info(f"🔍 Đang xử lý trang {i+1}/{len(page_images)}...")
+                                st.info(f"🔍 Đang xử lý trang {i+1}/{len(page_images)} với {ocr_model}...")
                                 
                                 # Enhance page image if requested
                                 if enhance_images:
                                     page_img = st.session_state.ocr_processor.image_processor.enhance_image(page_img)
                                 
-                                if ai_model == "Gemini":
+                                if ocr_model == "Gemini":
                                     page_text = st.session_state.ocr_processor.ocr_with_gemini(page_img)
                                 else:
                                     page_text = st.session_state.ocr_processor.ocr_with_mistral(page_img)
                                 
                                 extracted_text += f"\n--- Trang {i+1} ---\n{page_text}\n"
+                            
+                            # Analyze extracted images with second model if smart positioning enabled
+                            image_analyses = []
+                            if extracted_images and smart_positioning:
+                                st.info(f"🔍 Đang phân tích {len(extracted_images)} ảnh với {image_model}...")
+                                for i, img in enumerate(extracted_images):
+                                    st.info(f"🖼️ Phân tích ảnh {i+1}/{len(extracted_images)}...")
+                                    analysis = st.session_state.ocr_processor.analyze_image_content(img, image_model)
+                                    image_analyses.append(analysis)
                         
                         else:
                             # Process single image
-                            st.info("🖼️ Đang xử lý hình ảnh...")
+                            st.info(f"🖼️ Đang xử lý hình ảnh với {ocr_model}...")
                             image = Image.open(uploaded_file)
                             
                             # Enhance image if requested
                             if enhance_images:
                                 image = st.session_state.ocr_processor.image_processor.process_image_for_word(image)
                             
-                            if ai_model == "Gemini":
+                            if ocr_model == "Gemini":
                                 extracted_text = st.session_state.ocr_processor.ocr_with_gemini(image)
                             else:
                                 extracted_text = st.session_state.ocr_processor.ocr_with_mistral(image)
+                            
+                            # Analyze the single image if enabled
+                            image_analyses = []
+                            if smart_positioning:
+                                st.info(f"🔍 Đang phân tích ảnh với {image_model}...")
+                                analysis = st.session_state.ocr_processor.analyze_image_content(image, image_model)
+                                image_analyses.append(analysis)
+                                extracted_images = [image]  # Add to extracted images for processing
                         
                         # Store results in session state
                         st.session_state.extracted_text = extracted_text
                         st.session_state.extracted_images = extracted_images
+                        st.session_state.image_analyses = image_analyses
                         st.session_state.image_placement = image_placement
+                        st.session_state.ocr_model = ocr_model
+                        st.session_state.image_model = image_model
+                        st.session_state.smart_positioning = smart_positioning
                         
                         st.success("✅ Hoàn thành OCR!")
                         
@@ -840,14 +1091,37 @@ def main():
                 if enhance_images:
                     st.info("✨ Ảnh đã được cải thiện: cắt thông minh, tăng độ tương phản, độ nét")
                 
-                # Display images in grid
+                # Show AI analysis info
+                if 'image_analyses' in st.session_state and st.session_state.image_analyses:
+                    st.success(f"🤖 Đã phân tích bằng {st.session_state.get('image_model', 'AI')} để chèn thông minh")
+                
+                # Display images in grid with analysis
                 cols = st.columns(3)
                 for i, img in enumerate(st.session_state.extracted_images[:9]):  # Show max 9 images
                     with cols[i % 3]:
-                        st.image(img, caption=f"Ảnh {i+1} (Đã xử lý)", use_column_width=True)
+                        st.image(img, caption=f"Ảnh {i+1}", use_column_width=True)
                         
                         # Show image info
                         st.caption(f"Kích thước: {img.width}×{img.height}px")
+                        
+                        # Show AI analysis if available
+                        if 'image_analyses' in st.session_state and i < len(st.session_state.image_analyses):
+                            analysis = st.session_state.image_analyses[i]
+                            
+                            # Category badge
+                            category = analysis.get('category', 'unknown')
+                            if category != 'unknown':
+                                st.markdown(f"**🏷️ Loại:** `{category}`")
+                            
+                            # Description
+                            description = analysis.get('description', '')
+                            if description and len(description) > 10:
+                                st.markdown(f"**📝 Mô tả:** {description[:100]}{'...' if len(description) > 100 else ''}")
+                            
+                            # Placement hint
+                            hint = analysis.get('placement_hint', '')
+                            if hint:
+                                st.markdown(f"**💡 Vị trí:** {hint[:80]}{'...' if len(hint) > 80 else ''}")
                 
                 if len(st.session_state.extracted_images) > 9:
                     st.info(f"➕ Còn {len(st.session_state.extracted_images) - 9} ảnh khác sẽ được đưa vào Word")
@@ -866,7 +1140,14 @@ def main():
         # Preview placement
         if 'extracted_images' in st.session_state and st.session_state.extracted_images:
             placement = st.session_state.get('image_placement', 'separate')
-            if placement == 'inline':
+            smart_pos = st.session_state.get('smart_positioning', False)
+            
+            if placement == 'inline' and smart_pos:
+                ocr_model = st.session_state.get('ocr_model', 'Gemini')
+                img_model = st.session_state.get('image_model', 'Mistral')
+                st.info(f"🤖 **AI thông minh**: OCR với {ocr_model}, phân tích ảnh với {img_model}")
+                st.success("✨ Ảnh sẽ được chèn vào vị trí phù hợp dựa trên nội dung văn bản")
+            elif placement == 'inline':
                 st.info("📝 Ảnh sẽ được xen kẽ với văn bản trong tài liệu Word")
             else:
                 st.info("📝 Ảnh sẽ được đặt trong phần riêng biệt cuối tài liệu")
@@ -874,22 +1155,28 @@ def main():
         col1, col2, col3 = st.columns([1, 1, 1])
         
         with col2:
-            if st.button("📄 Tạo file Word chuyên nghiệp", type="primary"):
-                with st.spinner("📝 Đang tạo file Word với ảnh chất lượng cao..."):
+            if st.button("📄 Tạo file Word thông minh", type="primary"):
+                with st.spinner("📝 Đang tạo file Word với AI positioning..."):
                     try:
                         exporter = WordExporter()
                         
-                        # Get images and placement
+                        # Get images, analyses and placement
                         images_to_export = []
+                        image_analyses = []
+                        
                         if 'extracted_images' in st.session_state:
                             images_to_export = st.session_state.extracted_images
                         
+                        if 'image_analyses' in st.session_state:
+                            image_analyses = st.session_state.image_analyses
+                        
                         placement = st.session_state.get('image_placement', 'separate')
                         
-                        # Add content with advanced formatting
+                        # Add content with AI-guided placement
                         exporter.add_content(
                             st.session_state.extracted_text, 
                             images_to_export,
+                            image_analyses if image_analyses else None,
                             image_placement=placement
                         )
                         
@@ -904,19 +1191,25 @@ def main():
                         with col_a:
                             st.metric("Văn bản", f"{len(st.session_state.extracted_text.split())} từ")
                         with col_b:
-                            st.metric("Hình ảnh", f"{len(images_to_export)} ảnh")
+                            analyzed_count = len(image_analyses) if image_analyses else 0
+                            st.metric("Ảnh phân tích", f"{analyzed_count}/{len(images_to_export)}")
                         with col_c:
                             st.metric("Kích thước", f"{len(word_bytes)/1024:.1f} KB")
                         
+                        # Show AI models used
+                        ocr_model = st.session_state.get('ocr_model', 'Unknown')
+                        img_model = st.session_state.get('image_model', 'Unknown')
+                        st.success(f"✅ **AI Models**: OCR: {ocr_model} | Ảnh: {img_model}")
+                        
                         # Download button
                         st.download_button(
-                            label="⬇️ Tải file Word chuyên nghiệp",
+                            label="⬇️ Tải file Word thông minh",
                             data=word_bytes,
-                            file_name=f"OCR_Result_Enhanced_{uploaded_file.name.split('.')[0]}.docx",
+                            file_name=f"OCR_Smart_{uploaded_file.name.split('.')[0]}.docx",
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                         )
                         
-                        st.success("✅ File Word chuyên nghiệp đã được tạo với ảnh chất lượng cao!")
+                        st.success("🎉 File Word thông minh đã được tạo với AI positioning!")
                         
                     except Exception as e:
                         st.error(f"❌ Lỗi khi tạo file Word: {str(e)}")
@@ -925,8 +1218,8 @@ def main():
     st.markdown("---")
     st.markdown("""
     <div style="text-align: center; color: #666; padding: 2rem;">
-        <p>🚀 <strong>P_OCR PDF AI 2025 v1.1</strong> - Powered by Mistral & Gemini 2.0 Flash</p>
-        <p>✨ <strong>New:</strong> Smart Image Processing + Professional Word Export</p>
+        <p>🚀 <strong>P_OCR PDF AI 2025 v2.0</strong> - Dual AI Models: Mistral & Gemini 2.0 Flash</p>
+        <p>🤖 <strong>New:</strong> Dual AI Processing + Smart Image Positioning</p>
         <p>💻 Phát triển bởi AI Assistant | 📧 Hỗ trợ 24/7</p>
     </div>
     """, unsafe_allow_html=True)
