@@ -4,14 +4,18 @@ import io
 import os
 import re
 import tempfile
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 import fitz  # PyMuPDF
 import pdf2image
 from docx import Document
-from docx.shared import Inches
+from docx.shared import Inches, Cm
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.section import WD_SECTION
 import requests
 from typing import List, Tuple, Optional
 import json
+import numpy as np
+import cv2
 
 # Page configuration
 st.set_page_config(
@@ -64,7 +68,101 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-class OCRProcessor:
+class ImageProcessor:
+    """Class for advanced image processing"""
+    
+    @staticmethod
+    def enhance_image(image: Image.Image) -> Image.Image:
+        """Enhance image quality for better OCR"""
+        try:
+            # Convert to RGB if necessary
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            # Enhance contrast
+            enhancer = ImageEnhance.Contrast(image)
+            image = enhancer.enhance(1.2)
+            
+            # Enhance sharpness
+            enhancer = ImageEnhance.Sharpness(image)
+            image = enhancer.enhance(1.1)
+            
+            # Auto-level (improve brightness)
+            image = ImageOps.autocontrast(image)
+            
+            return image
+        except Exception as e:
+            st.warning(f"Không thể cải thiện chất lượng ảnh: {str(e)}")
+            return image
+    
+    @staticmethod
+    def smart_crop(image: Image.Image) -> Image.Image:
+        """Smart crop to remove unnecessary borders"""
+        try:
+            # Convert to numpy array for processing
+            img_array = np.array(image)
+            
+            # Convert to grayscale for edge detection
+            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+            
+            # Find edges
+            edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+            
+            # Find contours
+            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if contours:
+                # Find the largest contour (likely the main content)
+                largest_contour = max(contours, key=cv2.contourArea)
+                x, y, w, h = cv2.boundingRect(largest_contour)
+                
+                # Add some padding
+                padding = 20
+                x = max(0, x - padding)
+                y = max(0, y - padding)
+                w = min(image.width - x, w + 2 * padding)
+                h = min(image.height - y, h + 2 * padding)
+                
+                # Crop the image
+                cropped = image.crop((x, y, x + w, y + h))
+                
+                # Only return cropped if it's significantly smaller than original
+                if w * h < 0.8 * image.width * image.height:
+                    return cropped
+            
+            return image
+        except Exception as e:
+            st.warning(f"Không thể cắt ảnh thông minh: {str(e)}")
+            return image
+    
+    @staticmethod
+    def resize_for_word(image: Image.Image, max_width: int = 800) -> Image.Image:
+        """Resize image appropriately for Word document"""
+        try:
+            # Calculate new size maintaining aspect ratio
+            if image.width > max_width:
+                ratio = max_width / image.width
+                new_height = int(image.height * ratio)
+                image = image.resize((max_width, new_height), Image.Resampling.LANCZOS)
+            
+            return image
+        except Exception as e:
+            st.warning(f"Không thể resize ảnh: {str(e)}")
+            return image
+    
+    @staticmethod
+    def process_image_for_word(image: Image.Image) -> Image.Image:
+        """Complete image processing pipeline for Word insertion"""
+        # Step 1: Smart crop
+        image = ImageProcessor.smart_crop(image)
+        
+        # Step 2: Enhance quality
+        image = ImageProcessor.enhance_image(image)
+        
+        # Step 3: Resize for Word
+        image = ImageProcessor.resize_for_word(image)
+        
+        return image
     def __init__(self):
         self.mistral_api_key = None
         self.gemini_api_key = None
@@ -319,35 +417,871 @@ class OCRProcessor:
 class WordExporter:
     def __init__(self):
         self.doc = Document()
+        self.setup_document_style()
     
-    def add_content(self, text: str, images: List[Image.Image] = None):
-        """Add content to Word document"""
+    def setup_document_style(self):
+        """Setup document styling"""
+        # Set page margins
+        section = self.doc.sections[0]
+        section.left_margin = Cm(2)
+        section.right_margin = Cm(2)
+        section.top_margin = Cm(2)
+        section.bottom_margin = Cm(2)
+    
+    def add_content(self, text: str, images: List[Image.Image] = None, image_placement: str = "inline"):
+        """Add content to Word document with advanced image placement"""
         # Add title
         title = self.doc.add_heading('Kết quả OCR - P_OCR PDF AI 2025', 0)
-        title.alignment = 1  # Center alignment
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        # Add timestamp
+        from datetime import datetime
+        timestamp = self.doc.add_paragraph(f'Ngày tạo: {datetime.now().strftime("%d/%m/%Y %H:%M:%S")}')
+        timestamp.alignment = WD_ALIGN_PARAGRAPH.CENTER
         
         # Add main content
-        self.doc.add_heading('Nội dung văn bản:', level=1)
+        self.doc.add_heading('Nội dung văn bản được trích xuất:', level=1)
         
-        # Split text into paragraphs and process
+        # Process text and handle LaTeX formulas
+        if image_placement == "inline" and images:
+            # Inline placement: mix text and images
+            self._add_content_with_inline_images(text, images)
+        else:
+            # Separate sections for text and images
+            self._add_text_content(text)
+            if images:
+                self._add_images_section(images)
+    
+    def _add_text_content(self, text: str):
+        """Add text content with proper formatting"""
         paragraphs = text.split('\n')
         for para in paragraphs:
             if para.strip():
-                p = self.doc.add_paragraph(para)
+                # Check if paragraph contains LaTeX formulas
+                if '${' in para and '}
+
+# Main App
+def main():
+    # Header
+    st.markdown("""
+    <div class="main-header">
+        <h1>📄 P_OCR PDF AI 2025</h1>
+        <p>Ứng dụng OCR thông minh với AI Mistral & Gemini</p>
+        <p>Trích xuất văn bản, nhận diện công thức toán học LaTeX, xuất Word chuyên nghiệp</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Initialize OCR processor
+    if 'ocr_processor' not in st.session_state:
+        st.session_state.ocr_processor = OCRProcessor()
+    
+    # Sidebar for API configuration
+    with st.sidebar:
+        st.header("🔧 Cấu hình API")
         
-        # Add images if available
-        if images:
-            self.doc.add_heading('Hình ảnh trích xuất:', level=1)
-            for i, img in enumerate(images[:10]):  # Limit to 10 images
-                try:
-                    # Save image temporarily
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_img:
-                        img.save(tmp_img.name, 'PNG')
-                        self.doc.add_paragraph(f'Hình {i+1}:')
-                        self.doc.add_picture(tmp_img.name, width=Inches(4))
-                        os.unlink(tmp_img.name)
-                except Exception as e:
-                    self.doc.add_paragraph(f'Không thể thêm hình {i+1}: {str(e)}')
+        mistral_key = st.text_input(
+            "Mistral API Key",
+            type="password",
+            help="Nhập API key của Mistral AI"
+        )
+        
+        gemini_key = st.text_input(
+            "Gemini API Key", 
+            type="password",
+            help="Nhập API key của Google Gemini"
+        )
+        
+        if st.button("💾 Lưu cấu hình"):
+            st.session_state.ocr_processor.setup_apis(mistral_key, gemini_key)
+            st.success("✅ Đã lưu cấu hình API!")
+        
+        # Image processing options
+        st.header("🖼️ Tùy chọn xử lý ảnh")
+        enhance_images = st.checkbox(
+            "Cải thiện chất lượng ảnh",
+            value=True,
+            help="Tự động cắt, cải thiện độ tương phản và độ nét"
+        )
+        
+        image_placement = st.selectbox(
+            "Cách bố trí ảnh trong Word:",
+            ["inline", "separate"],
+            format_func=lambda x: "Xen kẽ với văn bản" if x == "inline" else "Phần riêng biệt",
+            help="Chọn cách sắp xếp ảnh trong tài liệu Word"
+        )
+        
+        st.markdown("---")
+        
+        # AI Model selection
+        st.header("🤖 Chọn AI Model")
+        ai_model = st.selectbox(
+            "Model OCR:",
+            ["Gemini", "Mistral"],
+            help="Chọn AI model để thực hiện OCR"
+        )
+        
+        st.markdown("---")
+        
+        # Features info
+        st.header("✨ Tính năng")
+        st.markdown("""
+        - 📄 OCR PDF đa trang
+        - 🖼️ OCR hình ảnh  
+        - 🔢 Nhận diện công thức LaTeX
+        - 📤 Xuất Word chuyên nghiệp
+        - 🌐 Hỗ trợ tiếng Việt/Anh
+        """)
+    
+    # Main content area
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.header("📁 Upload File")
+        
+        # File upload
+        uploaded_file = st.file_uploader(
+            "Chọn file PDF hoặc hình ảnh",
+            type=['pdf', 'png', 'jpg', 'jpeg'],
+            help="Hỗ trợ file PDF và hình ảnh (PNG, JPG, JPEG)"
+        )
+        
+        if uploaded_file is not None:
+            file_type = uploaded_file.type
+            
+            # Display file info
+            st.info(f"📄 File: {uploaded_file.name} ({file_type})")
+            
+            # Process file
+            if st.button("🚀 Bắt đầu OCR", type="primary"):
+                with st.spinner("🔄 Đang xử lý..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if file_type == "application/pdf":
+                            # Process PDF
+                            st.info("📄 Đang xử lý file PDF...")
+                            
+                            # Extract images from PDF
+                            pdf_file_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_images_from_pdf(
+                                pdf_file_copy, enhance=enhance_images
+                            )
+                            
+                            # Convert PDF pages to images for OCR
+                            uploaded_file.seek(0)  # Reset file pointer
+                            page_images = st.session_state.ocr_processor.convert_pdf_to_images(uploaded_file)
+                            
+                            # Perform OCR on each page
+                            for i, page_img in enumerate(page_images):
+                                st.info(f"🔍 Đang xử lý trang {i+1}/{len(page_images)}...")
+                                
+                                # Enhance page image if requested
+                                if enhance_images:
+                                    page_img = st.session_state.ocr_processor.image_processor.enhance_image(page_img)
+                                
+                                if ai_model == "Gemini":
+                                    page_text = st.session_state.ocr_processor.ocr_with_gemini(page_img)
+                                else:
+                                    page_text = st.session_state.ocr_processor.ocr_with_mistral(page_img)
+                                
+                                extracted_text += f"\n--- Trang {i+1} ---\n{page_text}\n"
+                        
+                        else:
+                            # Process single image
+                            st.info("🖼️ Đang xử lý hình ảnh...")
+                            image = Image.open(uploaded_file)
+                            
+                            # Enhance image if requested
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_processor.process_image_for_word(image)
+                            
+                            if ai_model == "Gemini":
+                                extracted_text = st.session_state.ocr_processor.ocr_with_gemini(image)
+                            else:
+                                extracted_text = st.session_state.ocr_processor.ocr_with_mistral(image)
+                        
+                        # Store results in session state
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        st.session_state.image_placement = image_placement
+                        
+                        st.success("✅ Hoàn thành OCR!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Lỗi khi xử lý: {str(e)}")
+    
+    with col2:
+        st.header("📊 Thống kê")
+        
+        if 'extracted_text' in st.session_state:
+            text = st.session_state.extracted_text
+            
+            # Statistics
+            word_count = len(text.split())
+            char_count = len(text)
+            formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+            
+            st.metric("Số từ", word_count)
+            st.metric("Số ký tự", char_count)
+            st.metric("Công thức LaTeX", formula_count)
+            
+            if 'extracted_images' in st.session_state:
+                st.metric("Hình ảnh trích xuất", len(st.session_state.extracted_images))
+    
+    # Results section
+    if 'extracted_text' in st.session_state:
+        st.markdown("---")
+        st.header("📋 Kết quả OCR")
+        
+        # Display extracted text
+        with st.expander("📝 Văn bản đã trích xuất", expanded=True):
+            st.text_area(
+                "Nội dung:",
+                st.session_state.extracted_text,
+                height=300,
+                disabled=True
+            )
+        
+        # Display extracted images
+        if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+            with st.expander(f"🖼️ Hình ảnh đã xử lý ({len(st.session_state.extracted_images)} ảnh)", expanded=True):
+                
+                # Show processing info
+                if enhance_images:
+                    st.info("✨ Ảnh đã được cải thiện: cắt thông minh, tăng độ tương phản, độ nét")
+                
+                # Display images in grid
+                cols = st.columns(3)
+                for i, img in enumerate(st.session_state.extracted_images[:9]):  # Show max 9 images
+                    with cols[i % 3]:
+                        st.image(img, caption=f"Ảnh {i+1} (Đã xử lý)", use_column_width=True)
+                        
+                        # Show image info
+                        st.caption(f"Kích thước: {img.width}×{img.height}px")
+                
+                if len(st.session_state.extracted_images) > 9:
+                    st.info(f"➕ Còn {len(st.session_state.extracted_images) - 9} ảnh khác sẽ được đưa vào Word")
+        
+        # Export to Word
+        st.markdown("---")
+        st.header("📤 Xuất Word")
+        
+        # Export options
+        col1, col2 = st.columns(2)
+        with col1:
+            include_stats = st.checkbox("Thêm thống kê tài liệu", value=True)
+        with col2:
+            include_timestamp = st.checkbox("Thêm thời gian tạo", value=True)
+        
+        # Preview placement
+        if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+            placement = st.session_state.get('image_placement', 'separate')
+            if placement == 'inline':
+                st.info("📝 Ảnh sẽ được xen kẽ với văn bản trong tài liệu Word")
+            else:
+                st.info("📝 Ảnh sẽ được đặt trong phần riêng biệt cuối tài liệu")
+        
+        col1, col2, col3 = st.columns([1, 1, 1])
+        
+        with col2:
+            if st.button("📄 Tạo file Word chuyên nghiệp", type="primary"):
+                with st.spinner("📝 Đang tạo file Word với ảnh chất lượng cao..."):
+                    try:
+                        exporter = WordExporter()
+                        
+                        # Get images and placement
+                        images_to_export = []
+                        if 'extracted_images' in st.session_state:
+                            images_to_export = st.session_state.extracted_images
+                        
+                        placement = st.session_state.get('image_placement', 'separate')
+                        
+                        # Add content with advanced formatting
+                        exporter.add_content(
+                            st.session_state.extracted_text, 
+                            images_to_export,
+                            image_placement=placement
+                        )
+                        
+                        # Add statistics if requested
+                        if include_stats:
+                            exporter.add_image_statistics(images_to_export, st.session_state.extracted_text)
+                        
+                        word_bytes = exporter.save()
+                        
+                        # Success metrics
+                        col_a, col_b, col_c = st.columns(3)
+                        with col_a:
+                            st.metric("Văn bản", f"{len(st.session_state.extracted_text.split())} từ")
+                        with col_b:
+                            st.metric("Hình ảnh", f"{len(images_to_export)} ảnh")
+                        with col_c:
+                            st.metric("Kích thước", f"{len(word_bytes)/1024:.1f} KB")
+                        
+                        # Download button
+                        st.download_button(
+                            label="⬇️ Tải file Word chuyên nghiệp",
+                            data=word_bytes,
+                            file_name=f"OCR_Result_Enhanced_{uploaded_file.name.split('.')[0]}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
+                        
+                        st.success("✅ File Word chuyên nghiệp đã được tạo với ảnh chất lượng cao!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Lỗi khi tạo file Word: {str(e)}")
+    
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style="text-align: center; color: #666; padding: 2rem;">
+        <p>🚀 <strong>P_OCR PDF AI 2025 v1.1</strong> - Powered by Mistral & Gemini 2.0 Flash</p>
+        <p>✨ <strong>New:</strong> Smart Image Processing + Professional Word Export</p>
+        <p>💻 Phát triển bởi AI Assistant | 📧 Hỗ trợ 24/7</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main() in para:
+                    self._add_paragraph_with_formulas(para)
+                else:
+                    p = self.doc.add_paragraph(para.strip())
+    
+    def _add_paragraph_with_formulas(self, text: str):
+        """Add paragraph with LaTeX formulas highlighted"""
+        p = self.doc.add_paragraph()
+        
+        # Split text by LaTeX formulas
+        parts = re.split(r'(\$\{[^}]+\}\$)', text)
+        
+        for part in parts:
+            if part.startswith('${') and part.endswith('}
+
+# Main App
+def main():
+    # Header
+    st.markdown("""
+    <div class="main-header">
+        <h1>📄 P_OCR PDF AI 2025</h1>
+        <p>Ứng dụng OCR thông minh với AI Mistral & Gemini</p>
+        <p>Trích xuất văn bản, nhận diện công thức toán học LaTeX, xuất Word chuyên nghiệp</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Initialize OCR processor
+    if 'ocr_processor' not in st.session_state:
+        st.session_state.ocr_processor = OCRProcessor()
+    
+    # Sidebar for API configuration
+    with st.sidebar:
+        st.header("🔧 Cấu hình API")
+        
+        mistral_key = st.text_input(
+            "Mistral API Key",
+            type="password",
+            help="Nhập API key của Mistral AI"
+        )
+        
+        gemini_key = st.text_input(
+            "Gemini API Key", 
+            type="password",
+            help="Nhập API key của Google Gemini"
+        )
+        
+        if st.button("💾 Lưu cấu hình"):
+            st.session_state.ocr_processor.setup_apis(mistral_key, gemini_key)
+            st.success("✅ Đã lưu cấu hình API!")
+        
+        st.markdown("---")
+        
+        # AI Model selection
+        st.header("🤖 Chọn AI Model")
+        ai_model = st.selectbox(
+            "Model OCR:",
+            ["Gemini", "Mistral"],
+            help="Chọn AI model để thực hiện OCR"
+        )
+        
+        st.markdown("---")
+        
+        # Features info
+        st.header("✨ Tính năng")
+        st.markdown("""
+        - 📄 OCR PDF đa trang
+        - 🖼️ OCR hình ảnh  
+        - 🔢 Nhận diện công thức LaTeX
+        - 📤 Xuất Word chuyên nghiệp
+        - 🌐 Hỗ trợ tiếng Việt/Anh
+        """)
+    
+    # Main content area
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.header("📁 Upload File")
+        
+        # File upload
+        uploaded_file = st.file_uploader(
+            "Chọn file PDF hoặc hình ảnh",
+            type=['pdf', 'png', 'jpg', 'jpeg'],
+            help="Hỗ trợ file PDF và hình ảnh (PNG, JPG, JPEG)"
+        )
+        
+        if uploaded_file is not None:
+            file_type = uploaded_file.type
+            
+            # Display file info
+            st.info(f"📄 File: {uploaded_file.name} ({file_type})")
+            
+            # Process file
+            if st.button("🚀 Bắt đầu OCR", type="primary"):
+                with st.spinner("🔄 Đang xử lý..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if file_type == "application/pdf":
+                            # Process PDF
+                            st.info("📄 Đang xử lý file PDF...")
+                            
+                            # Extract images from PDF
+                            pdf_file_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_images_from_pdf(pdf_file_copy)
+                            
+                            # Convert PDF pages to images for OCR
+                            uploaded_file.seek(0)  # Reset file pointer
+                            page_images = st.session_state.ocr_processor.convert_pdf_to_images(uploaded_file)
+                            
+                            # Perform OCR on each page
+                            for i, page_img in enumerate(page_images):
+                                st.info(f"🔍 Đang xử lý trang {i+1}/{len(page_images)}...")
+                                
+                                if ai_model == "Gemini":
+                                    page_text = st.session_state.ocr_processor.ocr_with_gemini(page_img)
+                                else:
+                                    page_text = st.session_state.ocr_processor.ocr_with_mistral(page_img)
+                                
+                                extracted_text += f"\n--- Trang {i+1} ---\n{page_text}\n"
+                        
+                        else:
+                            # Process single image
+                            st.info("🖼️ Đang xử lý hình ảnh...")
+                            image = Image.open(uploaded_file)
+                            
+                            if ai_model == "Gemini":
+                                extracted_text = st.session_state.ocr_processor.ocr_with_gemini(image)
+                            else:
+                                extracted_text = st.session_state.ocr_processor.ocr_with_mistral(image)
+                        
+                        # Store results in session state
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ Hoàn thành OCR!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Lỗi khi xử lý: {str(e)}")
+    
+    with col2:
+        st.header("📊 Thống kê")
+        
+        if 'extracted_text' in st.session_state:
+            text = st.session_state.extracted_text
+            
+            # Statistics
+            word_count = len(text.split())
+            char_count = len(text)
+            formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+            
+            st.metric("Số từ", word_count)
+            st.metric("Số ký tự", char_count)
+            st.metric("Công thức LaTeX", formula_count)
+            
+            if 'extracted_images' in st.session_state:
+                st.metric("Hình ảnh trích xuất", len(st.session_state.extracted_images))
+    
+    # Results section
+    if 'extracted_text' in st.session_state:
+        st.markdown("---")
+        st.header("📋 Kết quả OCR")
+        
+        # Display extracted text
+        with st.expander("📝 Văn bản đã trích xuất", expanded=True):
+            st.text_area(
+                "Nội dung:",
+                st.session_state.extracted_text,
+                height=300,
+                disabled=True
+            )
+        
+        # Display extracted images
+        if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+            with st.expander(f"🖼️ Hình ảnh trích xuất ({len(st.session_state.extracted_images)} ảnh)"):
+                cols = st.columns(3)
+                for i, img in enumerate(st.session_state.extracted_images[:9]):  # Show max 9 images
+                    with cols[i % 3]:
+                        st.image(img, caption=f"Ảnh {i+1}", use_column_width=True)
+        
+        # Export to Word
+        st.markdown("---")
+        st.header("📤 Xuất Word")
+        
+        col1, col2, col3 = st.columns([1, 1, 1])
+        
+        with col2:
+            if st.button("📄 Tạo file Word", type="primary"):
+                with st.spinner("📝 Đang tạo file Word..."):
+                    try:
+                        exporter = WordExporter()
+                        
+                        images_to_export = []
+                        if 'extracted_images' in st.session_state:
+                            images_to_export = st.session_state.extracted_images
+                        
+                        exporter.add_content(st.session_state.extracted_text, images_to_export)
+                        word_bytes = exporter.save()
+                        
+                        # Download button
+                        st.download_button(
+                            label="⬇️ Tải file Word",
+                            data=word_bytes,
+                            file_name=f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
+                        
+                        st.success("✅ File Word đã được tạo!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Lỗi khi tạo file Word: {str(e)}")
+    
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style="text-align: center; color: #666; padding: 2rem;">
+        <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Powered by Mistral & Gemini AI</p>
+        <p>💻 Phát triển bởi AI Assistant | 📧 Hỗ trợ 24/7</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main()):
+                # This is a LaTeX formula - make it bold and italic
+                run = p.add_run(part)
+                run.bold = True
+                run.italic = True
+            else:
+                # Regular text
+                p.add_run(part)
+    
+    def _add_content_with_inline_images(self, text: str, images: List[Image.Image]):
+        """Add content with images placed inline where appropriate"""
+        paragraphs = text.split('\n')
+        image_index = 0
+        
+        for i, para in enumerate(paragraphs):
+            if para.strip():
+                self._add_paragraph_with_formulas(para.strip())
+                
+                # Insert image after every few paragraphs
+                if image_index < len(images) and (i + 1) % 3 == 0:
+                    self._insert_image_with_caption(images[image_index], f"Hình {image_index + 1}")
+                    image_index += 1
+        
+        # Add remaining images at the end
+        while image_index < len(images):
+            self._insert_image_with_caption(images[image_index], f"Hình {image_index + 1}")
+            image_index += 1
+    
+    def _add_images_section(self, images: List[Image.Image]):
+        """Add dedicated images section"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Hình ảnh được trích xuất từ tài liệu:', level=1)
+        
+        for i, img in enumerate(images[:15]):  # Limit to 15 images
+            self._insert_image_with_caption(img, f"Hình {i + 1}")
+            
+            # Add page break after every 3 images to avoid overcrowding
+            if (i + 1) % 3 == 0 and i < len(images) - 1:
+                self.doc.add_page_break()
+    
+    def _insert_image_with_caption(self, img: Image.Image, caption: str):
+        """Insert image with proper sizing and caption"""
+        try:
+            # Save image temporarily with high quality
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_img:
+                # Save with high quality
+                img.save(tmp_img.name, 'PNG', quality=95, optimize=True)
+                
+                # Calculate appropriate size
+                max_width = Cm(14)  # Maximum width in cm
+                max_height = Cm(10)  # Maximum height in cm
+                
+                # Calculate scaling to fit within bounds
+                width_ratio = max_width.cm / (img.width / 96)  # Convert pixels to cm (96 DPI)
+                height_ratio = max_height.cm / (img.height / 96)
+                scale_ratio = min(width_ratio, height_ratio, 1.0)  # Don't upscale
+                
+                final_width = Cm(img.width / 96 * scale_ratio)
+                final_height = Cm(img.height / 96 * scale_ratio)
+                
+                # Add caption paragraph
+                caption_p = self.doc.add_paragraph()
+                caption_run = caption_p.add_run(caption + ":")
+                caption_run.bold = True
+                caption_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                img_p = self.doc.add_paragraph()
+                img_run = img_p.add_run()
+                img_run.add_picture(tmp_img.name, width=final_width, height=final_height)
+                img_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add spacing
+                self.doc.add_paragraph()
+                
+                # Clean up
+                os.unlink(tmp_img.name)
+                
+        except Exception as e:
+            # Fallback: add text description
+            error_p = self.doc.add_paragraph(f'{caption}: Không thể chèn ảnh - {str(e)}')
+            error_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_image_statistics(self, images: List[Image.Image], text: str):
+        """Add statistics section"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Thống kê tài liệu:', level=1)
+        
+        # Text statistics
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\
+
+# Main App
+def main():
+    # Header
+    st.markdown("""
+    <div class="main-header">
+        <h1>📄 P_OCR PDF AI 2025</h1>
+        <p>Ứng dụng OCR thông minh với AI Mistral & Gemini</p>
+        <p>Trích xuất văn bản, nhận diện công thức toán học LaTeX, xuất Word chuyên nghiệp</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Initialize OCR processor
+    if 'ocr_processor' not in st.session_state:
+        st.session_state.ocr_processor = OCRProcessor()
+    
+    # Sidebar for API configuration
+    with st.sidebar:
+        st.header("🔧 Cấu hình API")
+        
+        mistral_key = st.text_input(
+            "Mistral API Key",
+            type="password",
+            help="Nhập API key của Mistral AI"
+        )
+        
+        gemini_key = st.text_input(
+            "Gemini API Key", 
+            type="password",
+            help="Nhập API key của Google Gemini"
+        )
+        
+        if st.button("💾 Lưu cấu hình"):
+            st.session_state.ocr_processor.setup_apis(mistral_key, gemini_key)
+            st.success("✅ Đã lưu cấu hình API!")
+        
+        st.markdown("---")
+        
+        # AI Model selection
+        st.header("🤖 Chọn AI Model")
+        ai_model = st.selectbox(
+            "Model OCR:",
+            ["Gemini", "Mistral"],
+            help="Chọn AI model để thực hiện OCR"
+        )
+        
+        st.markdown("---")
+        
+        # Features info
+        st.header("✨ Tính năng")
+        st.markdown("""
+        - 📄 OCR PDF đa trang
+        - 🖼️ OCR hình ảnh  
+        - 🔢 Nhận diện công thức LaTeX
+        - 📤 Xuất Word chuyên nghiệp
+        - 🌐 Hỗ trợ tiếng Việt/Anh
+        """)
+    
+    # Main content area
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.header("📁 Upload File")
+        
+        # File upload
+        uploaded_file = st.file_uploader(
+            "Chọn file PDF hoặc hình ảnh",
+            type=['pdf', 'png', 'jpg', 'jpeg'],
+            help="Hỗ trợ file PDF và hình ảnh (PNG, JPG, JPEG)"
+        )
+        
+        if uploaded_file is not None:
+            file_type = uploaded_file.type
+            
+            # Display file info
+            st.info(f"📄 File: {uploaded_file.name} ({file_type})")
+            
+            # Process file
+            if st.button("🚀 Bắt đầu OCR", type="primary"):
+                with st.spinner("🔄 Đang xử lý..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if file_type == "application/pdf":
+                            # Process PDF
+                            st.info("📄 Đang xử lý file PDF...")
+                            
+                            # Extract images from PDF
+                            pdf_file_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_images_from_pdf(pdf_file_copy)
+                            
+                            # Convert PDF pages to images for OCR
+                            uploaded_file.seek(0)  # Reset file pointer
+                            page_images = st.session_state.ocr_processor.convert_pdf_to_images(uploaded_file)
+                            
+                            # Perform OCR on each page
+                            for i, page_img in enumerate(page_images):
+                                st.info(f"🔍 Đang xử lý trang {i+1}/{len(page_images)}...")
+                                
+                                if ai_model == "Gemini":
+                                    page_text = st.session_state.ocr_processor.ocr_with_gemini(page_img)
+                                else:
+                                    page_text = st.session_state.ocr_processor.ocr_with_mistral(page_img)
+                                
+                                extracted_text += f"\n--- Trang {i+1} ---\n{page_text}\n"
+                        
+                        else:
+                            # Process single image
+                            st.info("🖼️ Đang xử lý hình ảnh...")
+                            image = Image.open(uploaded_file)
+                            
+                            if ai_model == "Gemini":
+                                extracted_text = st.session_state.ocr_processor.ocr_with_gemini(image)
+                            else:
+                                extracted_text = st.session_state.ocr_processor.ocr_with_mistral(image)
+                        
+                        # Store results in session state
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ Hoàn thành OCR!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Lỗi khi xử lý: {str(e)}")
+    
+    with col2:
+        st.header("📊 Thống kê")
+        
+        if 'extracted_text' in st.session_state:
+            text = st.session_state.extracted_text
+            
+            # Statistics
+            word_count = len(text.split())
+            char_count = len(text)
+            formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+            
+            st.metric("Số từ", word_count)
+            st.metric("Số ký tự", char_count)
+            st.metric("Công thức LaTeX", formula_count)
+            
+            if 'extracted_images' in st.session_state:
+                st.metric("Hình ảnh trích xuất", len(st.session_state.extracted_images))
+    
+    # Results section
+    if 'extracted_text' in st.session_state:
+        st.markdown("---")
+        st.header("📋 Kết quả OCR")
+        
+        # Display extracted text
+        with st.expander("📝 Văn bản đã trích xuất", expanded=True):
+            st.text_area(
+                "Nội dung:",
+                st.session_state.extracted_text,
+                height=300,
+                disabled=True
+            )
+        
+        # Display extracted images
+        if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+            with st.expander(f"🖼️ Hình ảnh trích xuất ({len(st.session_state.extracted_images)} ảnh)"):
+                cols = st.columns(3)
+                for i, img in enumerate(st.session_state.extracted_images[:9]):  # Show max 9 images
+                    with cols[i % 3]:
+                        st.image(img, caption=f"Ảnh {i+1}", use_column_width=True)
+        
+        # Export to Word
+        st.markdown("---")
+        st.header("📤 Xuất Word")
+        
+        col1, col2, col3 = st.columns([1, 1, 1])
+        
+        with col2:
+            if st.button("📄 Tạo file Word", type="primary"):
+                with st.spinner("📝 Đang tạo file Word..."):
+                    try:
+                        exporter = WordExporter()
+                        
+                        images_to_export = []
+                        if 'extracted_images' in st.session_state:
+                            images_to_export = st.session_state.extracted_images
+                        
+                        exporter.add_content(st.session_state.extracted_text, images_to_export)
+                        word_bytes = exporter.save()
+                        
+                        # Download button
+                        st.download_button(
+                            label="⬇️ Tải file Word",
+                            data=word_bytes,
+                            file_name=f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
+                        
+                        st.success("✅ File Word đã được tạo!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Lỗi khi tạo file Word: {str(e)}")
+    
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style="text-align: center; color: #666; padding: 2rem;">
+        <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Powered by Mistral & Gemini AI</p>
+        <p>💻 Phát triển bởi AI Assistant | 📧 Hỗ trợ 24/7</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main(), text))
+        line_count = len([line for line in text.split('\n') if line.strip()])
+        
+        stats_table = self.doc.add_table(rows=5, cols=2)
+        stats_table.style = 'Table Grid'
+        
+        stats_data = [
+            ['Số từ:', f'{word_count:,}'],
+            ['Số ký tự:', f'{char_count:,}'],
+            ['Số dòng:', f'{line_count:,}'],
+            ['Công thức LaTeX:', f'{formula_count}'],
+            ['Hình ảnh trích xuất:', f'{len(images)}']
+        ]
+        
+        for i, (label, value) in enumerate(stats_data):
+            stats_table.cell(i, 0).text = label
+            stats_table.cell(i, 1).text = value
     
     def save(self) -> bytes:
         """Save document and return bytes"""
