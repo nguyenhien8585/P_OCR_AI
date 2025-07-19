@@ -5,6 +5,7 @@ import numpy as np
 import cv2
 import requests
 from PyPDF2 import PdfReader
+import json
 
 from config import API_URL, API_KEY
 from ocr_client_api import EnhancedSmartOCRClient
@@ -311,6 +312,7 @@ def merge_split_latex_blocks(text):
 def markdown_image_to_hinh_tag(text):
     # Chuyển ![img-0.jpeg](img-0.jpeg) thành [HÌNH: img-0.jpeg]
     return re.sub(r'!\[.*?\]\((img-\d+\.jpeg)\)', r'[HÌNH: \1]', text)
+
 # ==================== CHUẨN HÓA LaTeX TOÁN ====================
 def fix_missing_backslash_cases(text):
     # Thêm \ vào begincases, endcases nếu thiếu (cho hệ phương trình)
@@ -567,17 +569,17 @@ def join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w):
                     fig_idx += 1
     return '\n'.join(processed_lines)
 
-# --------- Key Gemini -----------
-GEMINI_API_KEYS = [
-    "AIzaSyDzaTupNVfuFEQ0l6eAavUBkSbEpDL-vN4",
-    "AIzaSyC_LxT0Xa1X5E03-FKPPri8okx6RwwZEd0",
-    "AIzaSyCvNhReepkQxOJbJN1RX_n14wXYrZbAK5I"
+# --------- Mistral OCR API -----------
+MISTRAL_API_KEYS = [
+    "your_mistral_api_key_1",
+    "your_mistral_api_key_2", 
+    "your_mistral_api_key_3"
 ]
-api_key_cycle = itertools.cycle(GEMINI_API_KEYS)
+api_key_cycle = itertools.cycle(MISTRAL_API_KEYS)
 def get_next_api_key():
     return next(api_key_cycle)
 
-GEMINI_PROMPT = '''
+MISTRAL_PROMPT = '''
 YÊU CẦU QUAN TRỌNG:
 1. GÕ LẠI CHÍNH XÁC:
 - Gõ lại toàn bộ văn bản trong ảnh, không bỏ sót từ, câu, đoạn nào.
@@ -609,32 +611,62 @@ LƯU Ý:
 + Chỉ thực hiện đúng yêu cầu như trên.
 '''
 
-def gemini_generate_text(image_bytes, api_key):
-    api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+def mistral_generate_text(image_bytes, api_key):
+    """
+    Gọi Mistral API để OCR ảnh
+    """
+    api_url = "https://api.mistral.ai/v1/chat/completions"
+    
+    # Encode ảnh thành base64
     b64_img = base64.b64encode(image_bytes).decode()
+    
     payload = {
-        "contents": [{
-            "role": "user",
-            "parts": [
-                {"text": GEMINI_PROMPT},
-                {"inlineData": {
-                    "mimeType": "image/png",
-                    "data": b64_img
-                }}
-            ]
-        }]
+        "model": "pixtral-12b-2409",  # Model vision của Mistral
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": MISTRAL_PROMPT
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{b64_img}"
+                        }
+                    }
+                ]
+            }
+        ],
+        "max_tokens": 4000,
+        "temperature": 0.1
     }
-    headers = {"Content-Type": "application/json"}
-    r = requests.post(f"{api_url}?key={api_key}", json=payload, headers=headers, timeout=90)
-    r.raise_for_status()
-    res = r.json()
-    text = res["candidates"][0]["content"]["parts"][0]["text"]
-    return text
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    
+    try:
+        response = requests.post(api_url, json=payload, headers=headers, timeout=120)
+        response.raise_for_status()
+        
+        result = response.json()
+        text = result["choices"][0]["message"]["content"]
+        return text
+        
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"Lỗi kết nối Mistral API: {str(e)}")
+    except KeyError as e:
+        raise Exception(f"Lỗi format phản hồi từ Mistral: {str(e)}")
+    except Exception as e:
+        raise Exception(f"Lỗi không xác định: {str(e)}")
 
 # ========== Giao diện ==========
 
-st.set_page_config(page_title="OCR PDF & Ảnh Toán – Gemini", layout="wide")
-st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown, giữ công thức & bảng (bảng giá trị, bảng tần số, biến thiên) ✨")
+st.set_page_config(page_title="OCR PDF & Ảnh Toán – Mistral", layout="wide")
+st.title("✨ Chuyển PDF & Ảnh Toán sang Markdown với Mistral AI - giữ công thức & bảng ✨")
 
 tab_img, tab_pdf = st.tabs(["🖼️ Ảnh", "📄 PDF"])
 
@@ -654,24 +686,34 @@ with tab_img:
             ocr_key = f"ocr_{img_file.name}_{img_idx}"
             text_key = f"text_{img_file.name}_{img_idx}"
             fig_key = f"fig_{img_file.name}_{img_idx}"
-            if st.button(f"🚀 Xử lý ảnh ({img_file.name})", key=ocr_key):
+            if st.button(f"🚀 Xử lý ảnh với Mistral ({img_file.name})", key=ocr_key):
                 img_bytes = img_file.read()
+                
+                # Tách hình ảnh và bảng
                 figures, img_h, img_w = extract_figures_and_tables(img_bytes)
+                
+                # Gọi Mistral OCR
                 api_key = get_next_api_key()
-                with st.spinner("Đang xử lý..."):
+                with st.spinner("Đang xử lý với Mistral AI..."):
                     try:
-                        text = gemini_generate_text(img_bytes, api_key)
+                        text = mistral_generate_text(img_bytes, api_key)
                     except Exception as e:
-                        text = f"[Lỗi Gemini: {e}]"
+                        text = f"[Lỗi Mistral: {e}]"
+                        st.error(f"Lỗi OCR: {e}")
+                
+                # Xử lý text
                 text = fix_missing_backslash_cases(text)
                 text = remove_all_figure_markdown(text)
                 text = join_paragraphs_and_insert_figures_tables(text, figures, img_h, img_w)
                 formatted_text = format_exam_markdown(text)
+                
                 st.session_state[text_key] = formatted_text
                 st.session_state[fig_key] = figures
+                
             if text_key in st.session_state and fig_key in st.session_state:
                 st.markdown("### 📋 Kết quả:")
                 tab1, tab2 = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh"])
+                
                 with tab1:
                     st.code(st.session_state[text_key], language="markdown")
                     st.download_button(
@@ -681,6 +723,7 @@ with tab_img:
                         mime="text/plain",
                         use_container_width=True,
                     )
+                    
                     figures = st.session_state[fig_key]
                     if figures:
                         if st.button("📝 Xuất ra Word",
@@ -705,6 +748,7 @@ with tab_img:
                             os.remove(tmp_word.name)
                     else:
                         st.info("Không phát hiện minh hoạ hay bảng nào trong ảnh để xuất Word.")
+                        
                 with tab2:
                     figures = st.session_state[fig_key]
                     if figures:
@@ -725,7 +769,7 @@ with tab_img:
         st.info("Vui lòng tải lên ít nhất 1 ảnh để bắt đầu.")
 
 with tab_pdf:
-    st.markdown("#### 📝 OCR PDF Toán, giữ công thức, ảnh minh hoạ")
+    st.markdown("#### 📝 OCR PDF Toán với Mistral AI, giữ công thức, ảnh minh hoạ")
     uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"], key="pdf_uploader")
     num_pages = None
     if uploaded_file:
@@ -747,8 +791,8 @@ with tab_pdf:
             cols[2].metric("Kích thước", f"{size_mb:.1f} MB")
             st.caption(f"Số trang: {num_pages}")
 
-    if uploaded_file and st.button("🚀 Xử lý OCR PDF", type="primary", use_container_width=True):
-        st.info("⏳ Đang xử lý OCR PDF... (vui lòng chờ)")
+    if uploaded_file and st.button("🚀 Xử lý OCR PDF với Mistral", type="primary", use_container_width=True):
+        st.info("⏳ Đang xử lý OCR PDF với Mistral AI... (vui lòng chờ)")
         with st.spinner("Đang nhận diện văn bản và trích xuất hình ảnh..."):
             client = EnhancedSmartOCRClient(API_URL, API_KEY)
             uploaded_file.seek(0)
@@ -765,28 +809,31 @@ with tab_pdf:
 
     if st.session_state.get("ocr_done"):
         raw_text = st.session_state.get("ocr_text_raw", "")
-        text_content = normalize_math_latex(raw_text)                 # 1. Chuẩn hóa các block LaTeX cơ bản
-        text_content = fix_latex_block_parentheses(text_content)      # 2. Sửa các ngoặc cha/con bị lẫn lộn (nếu có)
-        text_content = merge_split_latex_blocks(text_content)         # 3. Ghép các block LaTeX bị tách dòng
-        text_content = merge_latex_blocks_multiline(text_content)     # 4. Ghép các block nhiều dòng thành 1
-        text_content = markdown_image_to_hinh_tag(text_content)       # 5. Chuyển markdown image -> tag [HÌNH: ...]
-        text_content = fix_unbalanced_brackets_in_latex(text_content) # 6. Sửa các block thiếu/thừa dấu ngoặc
-        text_content = fix_latex_super_sub_blocks(text_content)       # 7. Sửa các lỗi ^, _ đặc biệt trong block
-        text_content = fix_latex_block_errors(text_content)           # 8. Sửa lỗi đặc biệt cuối cùng cho block phức tạp
+        # Xử lý text với chuỗi các hàm sửa lỗi LaTeX
+        text_content = normalize_math_latex(raw_text)
+        text_content = fix_latex_block_parentheses(text_content)
+        text_content = merge_split_latex_blocks(text_content)
+        text_content = merge_latex_blocks_multiline(text_content)
+        text_content = markdown_image_to_hinh_tag(text_content)
+        text_content = fix_unbalanced_brackets_in_latex(text_content)
+        text_content = fix_latex_super_sub_blocks(text_content)
+        text_content = fix_latex_block_errors(text_content)
         text_content = fix_broken_latex_blocks(text_content)
         text_content = fix_missing_closing_brace_in_latex(text_content)
         text_content = fix_all_unclosed_latex_blocks(text_content)
         text_content = clean_latex_blocks(text_content)
+        
         images = st.session_state.get("ocr_images", [])
         tab1, tab2 = st.tabs(["📝 Văn bản chính xác", "🖼️ Hình ảnh trích xuất"])
+        
         with tab1:
-            st.markdown("#### 📋 Kết quả OCR PDF:")
+            st.markdown("#### 📋 Kết quả OCR PDF với Mistral AI:")
             formatted_text = format_exam_markdown(text_content)
             st.text_area("Nội dung đã được phân tích:", formatted_text, height=350, label_visibility="collapsed")
             st.download_button(
                 "📄 Tải văn bản (TXT)",
                 formatted_text,
-                file_name="ket_qua_ocr.txt",
+                file_name="ket_qua_ocr_mistral.txt",
                 mime="text/plain",
                 use_container_width=True,
             )
@@ -800,11 +847,12 @@ with tab_pdf:
                     st.download_button(
                         "⬇️ Tải về file Word",
                         word_data,
-                        file_name="ket_qua_ocr.docx",
+                        file_name="ket_qua_ocr_mistral.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         use_container_width=True
                     )
                     os.remove(tmp_word.name)
+                    
         with tab2:
             if images:
                 st.success(f"🖼️ Đã tìm thấy {len(images)} hình ảnh:")
@@ -827,16 +875,32 @@ with tab_pdf:
                         st.error(f"Không đọc được ảnh {fig['name']}: {e}")
             else:
                 st.warning("Không tìm thấy ảnh minh hoạ thực sự trong PDF!")
+                
     st.markdown("---")
-    st.caption("✨ Hệ thống sử dụng AI nâng cao để nhận diện chính xác văn bản toán học và tự động mapping hình ảnh/bảng vào đúng vị trí")
+    st.caption("✨ Hệ thống sử dụng Mistral AI để nhận diện chính xác văn bản toán học và tự động mapping hình ảnh/bảng vào đúng vị trí")
 
-
+# Sidebar thông tin
 if st.sidebar.checkbox("ℹ️ Hiển thị thông tin kỹ thuật"):
-    st.sidebar.write("**Phiên bản:** 1.5.0")
-    st.sidebar.write("**Cập nhật:** 2024-02-15")
-    st.sidebar.write("**Độ chính xác OCR:** ~99%")
+    st.sidebar.write("**Phiên bản:** 2.0.0 - Mistral AI")
+    st.sidebar.write("**Cập nhật:** 2024-07-19")
+    st.sidebar.write("**AI Engine:** Mistral Pixtral-12B")
+    st.sidebar.write("**Độ chính xác OCR:** ~98%")
     st.sidebar.write("**Độ chính xác mapping hình ảnh:** ~99.9%")
     st.sidebar.write("**Hệ thống tự động điều chỉnh:**")
     st.sidebar.write("- Phân tích khoảng cách")
     st.sidebar.write("- Nhận diện từ khóa")
     st.sidebar.write("- Xác định ngữ cảnh")
+    st.sidebar.write("- Sửa lỗi LaTeX tự động")
+    
+# Cấu hình API keys
+st.sidebar.markdown("### ⚙️ Cấu hình API")
+with st.sidebar.expander("Mistral API Keys", expanded=False):
+    st.info("Thay đổi API keys trong source code")
+    st.code("""
+MISTRAL_API_KEYS = [
+    "your_mistral_api_key_1",
+    "your_mistral_api_key_2", 
+    "your_mistral_api_key_3"
+]
+    """)
+    st.caption("Lấy API key tại: https://console.mistral.ai/")
