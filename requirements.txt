@@ -1,11 +1,11 @@
 
-streamlit>=1.28.0
-pillow>=9.5.0
-PyMuPDF>=1.23.0
-pdf2image>=3.1.0
-python-docx>=0.8.11
-google-generativeai>=0.3.0
-requests>=2.31.0
-poppler-utils>=0.1.0
-numpy>=1.24.0
-opencv-python>=4.8.0
+streamlit
+pillow
+PyMuPDF
+pdf2image
+python-docx
+google-generativeai
+requests
+poppler-utils
+numpy
+opencv-python
