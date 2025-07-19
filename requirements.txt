@@ -1,10 +1,8 @@
-
 streamlit
 pillow
 PyMuPDF
 pdf2image
 python-docx
-google-generativeai
 requests
 poppler-utils
 numpy
