@@ -15,7 +15,14 @@ import requests
 from typing import List, Tuple, Optional
 import json
 import numpy as np
-import cv2
+
+# Try to import OpenCV, fallback if not available
+try:
+    import cv2
+    OPENCV_AVAILABLE = True
+except ImportError:
+    OPENCV_AVAILABLE = False
+    st.warning("⚠️ OpenCV không có sẵn. Tính năng Smart Crop sẽ bị tắt.")
 
 # Page configuration
 st.set_page_config(
@@ -98,6 +105,10 @@ class ImageProcessor:
     @staticmethod
     def smart_crop(image: Image.Image) -> Image.Image:
         """Smart crop to remove unnecessary borders"""
+        if not OPENCV_AVAILABLE:
+            # Fallback: simple border detection using PIL
+            return ImageProcessor.simple_crop(image)
+        
         try:
             # Convert to numpy array for processing
             img_array = np.array(image)
@@ -133,6 +144,43 @@ class ImageProcessor:
             return image
         except Exception as e:
             st.warning(f"Không thể cắt ảnh thông minh: {str(e)}")
+            return image
+    
+    @staticmethod
+    def simple_crop(image: Image.Image) -> Image.Image:
+        """Simple crop using PIL only (fallback when OpenCV not available)"""
+        try:
+            # Convert to grayscale to detect borders
+            gray = image.convert('L')
+            
+            # Get image as numpy array
+            img_array = np.array(gray)
+            
+            # Find non-white pixels
+            coords = np.argwhere(img_array < 250)  # Non-white pixels
+            
+            if len(coords) > 0:
+                # Find bounding box
+                y0, x0 = coords.min(axis=0)
+                y1, x1 = coords.max(axis=0)
+                
+                # Add padding
+                padding = 20
+                x0 = max(0, x0 - padding)
+                y0 = max(0, y0 - padding)
+                x1 = min(image.width, x1 + padding)
+                y1 = min(image.height, y1 + padding)
+                
+                # Crop
+                cropped = image.crop((x0, y0, x1, y1))
+                
+                # Only return if significantly smaller
+                if (x1-x0) * (y1-y0) < 0.8 * image.width * image.height:
+                    return cropped
+            
+            return image
+        except Exception as e:
+            st.warning(f"Không thể thực hiện simple crop: {str(e)}")
             return image
     
     @staticmethod
@@ -175,7 +223,7 @@ class OCRProcessor:
         self.mistral_api_key = mistral_key
         self.gemini_api_key = gemini_key
     
-    def extract_images_from_pdf(self, pdf_file, enhance: bool = True) -> List[Image.Image]:
+    def extract_images_from_pdf(self, pdf_file, enhance=True) -> List[Image.Image]:
         """Extract and process all images from PDF"""
         images = []
         try:
