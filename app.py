@@ -473,6 +473,8 @@ class OCRProcessor:
                 return f"Lỗi Gemini API: {response.status_code} - {response.text}"
             
         except Exception as e:
+            return f"Lỗi Gemini API: {str(e)}"
+    
     def analyze_image_content(self, image: Image.Image, model: str = "Gemini") -> dict:
         """Analyze image content to determine optimal placement and description"""
         if model == "Gemini" and not self.gemini_api_key:
@@ -606,6 +608,53 @@ class WordExporter:
                 else:
                     self._add_images_section(images)
     
+    def _add_text_content(self, text: str):
+        """Add text content with proper formatting"""
+        paragraphs = text.split('\n')
+        for para in paragraphs:
+            if para.strip():
+                # Check if paragraph contains LaTeX formulas
+                if '${' in para and '}$' in para:
+                    self._add_paragraph_with_formulas(para)
+                else:
+                    p = self.doc.add_paragraph(para.strip())
+    
+    def _add_paragraph_with_formulas(self, text: str):
+        """Add paragraph with LaTeX formulas highlighted"""
+        p = self.doc.add_paragraph()
+        
+        # Split text by LaTeX formulas
+        parts = re.split(r'(\$\{[^}]+\}\$)', text)
+        
+        for part in parts:
+            if part.startswith('${') and part.endswith('}$'):
+                # This is a LaTeX formula - make it bold and italic
+                run = p.add_run(part)
+                run.bold = True
+                run.italic = True
+            else:
+                # Regular text
+                p.add_run(part)
+    
+    def _add_content_with_inline_images(self, text: str, images: List[Image.Image]):
+        """Add content with images placed inline where appropriate"""
+        paragraphs = text.split('\n')
+        image_index = 0
+        
+        for i, para in enumerate(paragraphs):
+            if para.strip():
+                self._add_paragraph_with_formulas(para.strip())
+                
+                # Insert image after every few paragraphs
+                if image_index < len(images) and (i + 1) % 3 == 0:
+                    self._insert_image_with_caption(images[image_index], f"Hình {image_index + 1}")
+                    image_index += 1
+        
+        # Add remaining images at the end
+        while image_index < len(images):
+            self._insert_image_with_caption(images[image_index], f"Hình {image_index + 1}")
+            image_index += 1
+    
     def _add_content_with_smart_placement(self, text: str, images: List[Image.Image], image_analyses: List[dict]):
         """Add content with AI-guided smart image placement"""
         paragraphs = text.split('\n')
@@ -657,6 +706,18 @@ class WordExporter:
                 caption = f"Hình {img_idx + 1}: {analysis.get('description', 'Hình minh họa')}"
                 self._insert_image_with_caption(img, caption)
     
+    def _add_images_section(self, images: List[Image.Image]):
+        """Add dedicated images section"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Hình ảnh được trích xuất từ tài liệu:', level=1)
+        
+        for i, img in enumerate(images[:15]):  # Limit to 15 images
+            self._insert_image_with_caption(img, f"Hình {i + 1}")
+            
+            # Add page break after every 3 images to avoid overcrowding
+            if (i + 1) % 3 == 0 and i < len(images) - 1:
+                self.doc.add_page_break()
+    
     def _add_images_section_with_analysis(self, images: List[Image.Image], image_analyses: List[dict]):
         """Add dedicated images section with AI analysis descriptions"""
         self.doc.add_page_break()
@@ -680,65 +741,6 @@ class WordExporter:
             
             # Add page break after every 2 images to avoid overcrowding
             if (i + 1) % 2 == 0 and i < len(images) - 1:
-                self.doc.add_page_break()
-    
-    def _add_text_content(self, text: str):
-        """Add text content with proper formatting"""
-        paragraphs = text.split('\n')
-        for para in paragraphs:
-            if para.strip():
-                # Check if paragraph contains LaTeX formulas
-                if '${' in para and '}$' in para:
-                    self._add_paragraph_with_formulas(para)
-                else:
-                    p = self.doc.add_paragraph(para.strip())
-    
-    def _add_paragraph_with_formulas(self, text: str):
-        """Add paragraph with LaTeX formulas highlighted"""
-        p = self.doc.add_paragraph()
-        
-        # Split text by LaTeX formulas
-        parts = re.split(r'(\$\{[^}]+\}\$)', text)
-        
-        for part in parts:
-            if part.startswith('${') and part.endswith('}$'):
-                # This is a LaTeX formula - make it bold and italic
-                run = p.add_run(part)
-                run.bold = True
-                run.italic = True
-            else:
-                # Regular text
-                p.add_run(part)
-    
-    def _add_content_with_inline_images(self, text: str, images: List[Image.Image]):
-        """Add content with images placed inline where appropriate"""
-        paragraphs = text.split('\n')
-        image_index = 0
-        
-        for i, para in enumerate(paragraphs):
-            if para.strip():
-                self._add_paragraph_with_formulas(para.strip())
-                
-                # Insert image after every few paragraphs
-                if image_index < len(images) and (i + 1) % 3 == 0:
-                    self._insert_image_with_caption(images[image_index], f"Hình {image_index + 1}")
-                    image_index += 1
-        
-        # Add remaining images at the end
-        while image_index < len(images):
-            self._insert_image_with_caption(images[image_index], f"Hình {image_index + 1}")
-            image_index += 1
-    
-    def _add_images_section(self, images: List[Image.Image]):
-        """Add dedicated images section"""
-        self.doc.add_page_break()
-        self.doc.add_heading('Hình ảnh được trích xuất từ tài liệu:', level=1)
-        
-        for i, img in enumerate(images[:15]):  # Limit to 15 images
-            self._insert_image_with_caption(img, f"Hình {i + 1}")
-            
-            # Add page break after every 3 images to avoid overcrowding
-            if (i + 1) % 3 == 0 and i < len(images) - 1:
                 self.doc.add_page_break()
     
     def _insert_image_with_caption(self, img: Image.Image, caption: str):
