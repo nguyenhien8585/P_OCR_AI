@@ -913,10 +913,10 @@ def main():
         st.markdown("""
         - 📄 OCR PDF đa trang
         - 🖼️ OCR hình ảnh  
+        - 🤖 **Dual AI Models**
         - 🔢 Nhận diện công thức LaTeX
-        - 🤖 **Dual AI Models** 
-        - ✨ Xử lý ảnh thông minh
         - 🎯 **Smart positioning**
+        - ✨ Xử lý ảnh thông minh
         - 📤 Xuất Word AI-powered
         - 🌐 Hỗ trợ tiếng Việt/Anh
         """)
