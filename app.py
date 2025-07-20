@@ -279,7 +279,7 @@ class OCRProcessor:
 
 1. **Regular text**: Recognize all text accurately
 2. **Math formulas**: Wrap ALL formulas with ${...}$
-   Examples: ${x^2 + y^2 = z^2}$, ${a/b}$, ${√x}$
+   Examples: ${x^2 + y^2 = z^2}$, ${a/b}$, ${\sqrt{x}}$, ${\int f(x)dx}$
 3. **Images/diagrams**: When you see any diagram, chart, or illustration, write:
    ![Hình 1](image1.png)
    ![Hình 2](image2.png)
@@ -403,12 +403,13767 @@ class WordExporter:
             return
         
         # Split by LaTeX formulas
-        parts = re.split(r'(\$\{[^}]+\}\$)', text)
+        parts = re.split(r'(\$[^$]+\$)', text)
         
         for part in parts:
-            if part.startswith('${') and part.endswith('}$'):
+            if part.startswith('
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$[^$]+\
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$[^$]+\
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$[^$]+\
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and part.endswith('
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$[^$]+\
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and len(part) > 2:
                 # Math formula
-                formula = part[2:-2]  # Remove ${ and }$
+                formula = part[1:-1]  # Remove $ and $
+                run = paragraph.add_run(formula)
+                run.bold = True
+                run.italic = True
+            else:
+                # Regular text
+                if part:
+                    paragraph.add_run(part)
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+, text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and part.endswith('
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and len(part) > 2:
+                # Math formula
+                formula = part[1:-1]  # Remove $ and $
+                run = paragraph.add_run(formula)
+                run.bold = True
+                run.italic = True
+            else:
+                # Regular text
+                if part:
+                    paragraph.add_run(part)
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+, text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and part.endswith('
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and len(part) > 2:
+                # Math formula
+                formula = part[1:-1]  # Remove $ and $
+                run = paragraph.add_run(formula)
+                run.bold = True
+                run.italic = True
+            else:
+                # Regular text
+                if part:
+                    paragraph.add_run(part)
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+, text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and part.endswith('
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and len(part) > 2:
+                # Math formula
+                formula = part[1:-1]  # Remove $ and $
+                run = paragraph.add_run(formula)
+                run.bold = True
+                run.italic = True
+            else:
+                # Regular text
+                if part:
+                    paragraph.add_run(part)
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+, text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and len(part) > 2:
+                # Math formula
+                formula = part[1:-1]  # Remove $ and $
+                run = paragraph.add_run(formula)
+                run.bold = True
+                run.italic = True
+            else:
+                # Regular text
+                if part:
+                    paragraph.add_run(part)
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+, text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and part.endswith('
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and len(part) > 2:
+                # Math formula
+                formula = part[1:-1]  # Remove $ and $
+                run = paragraph.add_run(formula)
+                run.bold = True
+                run.italic = True
+            else:
+                # Regular text
+                if part:
+                    paragraph.add_run(part)
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+, text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and part.endswith('
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and len(part) > 2:
+                # Math formula
+                formula = part[1:-1]  # Remove $ and $
+                run = paragraph.add_run(formula)
+                run.bold = True
+                run.italic = True
+            else:
+                # Regular text
+                if part:
+                    paragraph.add_run(part)
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+, text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and part.endswith('
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and len(part) > 2:
+                # Math formula
+                formula = part[1:-1]  # Remove $ and $
+                run = paragraph.add_run(formula)
+                run.bold = True
+                run.italic = True
+            else:
+                # Regular text
+                if part:
+                    paragraph.add_run(part)
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+, text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and part.endswith('
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$[^$]+\
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and len(part) > 2:
+                # Math formula
+                formula = part[1:-1]  # Remove $ and $
+                run = paragraph.add_run(formula)
+                run.bold = True
+                run.italic = True
+            else:
+                # Regular text
+                if part:
+                    paragraph.add_run(part)
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+, text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and part.endswith('
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and len(part) > 2:
+                # Math formula
+                formula = part[1:-1]  # Remove $ and $
+                run = paragraph.add_run(formula)
+                run.bold = True
+                run.italic = True
+            else:
+                # Regular text
+                if part:
+                    paragraph.add_run(part)
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+, text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and part.endswith('
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and len(part) > 2:
+                # Math formula
+                formula = part[1:-1]  # Remove $ and $
+                run = paragraph.add_run(formula)
+                run.bold = True
+                run.italic = True
+            else:
+                # Regular text
+                if part:
+                    paragraph.add_run(part)
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+, text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and part.endswith('
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and len(part) > 2:
+                # Math formula
+                formula = part[1:-1]  # Remove $ and $
+                run = paragraph.add_run(formula)
+                run.bold = True
+                run.italic = True
+            else:
+                # Regular text
+                if part:
+                    paragraph.add_run(part)
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+, text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and len(part) > 2:
+                # Math formula
+                formula = part[1:-1]  # Remove $ and $
+                run = paragraph.add_run(formula)
+                run.bold = True
+                run.italic = True
+            else:
+                # Regular text
+                if part:
+                    paragraph.add_run(part)
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+, text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and part.endswith('
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and len(part) > 2:
+                # Math formula
+                formula = part[1:-1]  # Remove $ and $
+                run = paragraph.add_run(formula)
+                run.bold = True
+                run.italic = True
+            else:
+                # Regular text
+                if part:
+                    paragraph.add_run(part)
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+, text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and part.endswith('
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and len(part) > 2:
+                # Math formula
+                formula = part[1:-1]  # Remove $ and $
+                run = paragraph.add_run(formula)
+                run.bold = True
+                run.italic = True
+            else:
+                # Regular text
+                if part:
+                    paragraph.add_run(part)
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+, text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and part.endswith('
+    
+    def _insert_image(self, img: Image.Image, caption: str):
+        """Insert image with caption"""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                img.save(tmp.name, 'PNG', quality=95)
+                
+                # Calculate size
+                max_width_cm = 12.0
+                img_width_cm = (img.width / 96) * 2.54
+                scale = min(max_width_cm / img_width_cm, 1.0) if img_width_cm > max_width_cm else 1.0
+                final_width = Cm(img_width_cm * scale)
+                
+                # Create paragraph
+                p = self.doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Add image
+                p.add_run().add_break()
+                run = p.add_run()
+                run.add_picture(tmp.name, width=final_width)
+                p.add_run().add_break()
+                
+                # Add caption
+                caption_run = p.add_run(f"({caption})")
+                caption_run.italic = True
+                caption_run.bold = True
+                p.add_run().add_break()
+                
+                os.unlink(tmp.name)
+                
+        except Exception as e:
+            # Fallback placeholder
+            p = self.doc.add_paragraph()
+            run = p.add_run(f"[{caption}: Error inserting image]")
+            run.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    def add_stats(self, text: str, images: List[Image.Image]):
+        """Add statistics"""
+        self.doc.add_page_break()
+        self.doc.add_heading('Statistics:', level=1)
+        
+        # Calculate stats
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        # Create table
+        table = self.doc.add_table(rows=5, cols=2)
+        table.style = 'Table Grid'
+        
+        stats = [
+            ['Words:', f'{word_count:,}'],
+            ['Characters:', f'{char_count:,}'],
+            ['LaTeX Formulas:', f'{formula_count}'],
+            ['Images Extracted:', f'{len(images)}'],
+            ['Image References:', f'{image_refs}']
+        ]
+        
+        for i, (label, value) in enumerate(stats):
+            table.cell(i, 0).text = label
+            table.cell(i, 1).text = value
+    
+    def save(self) -> bytes:
+        """Save and return document bytes"""
+        buffer = io.BytesIO()
+        self.doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+# Initialize session state
+if 'ocr_processor' not in st.session_state:
+    st.session_state.ocr_processor = OCRProcessor()
+
+# Header
+st.markdown("""
+<div class="main-header">
+    <h1>📄 P_OCR PDF AI 2025</h1>
+    <p>Smart OCR with Mistral AI</p>
+    <p>🎯 Smart Crop • 💯 LaTeX Accuracy • 📍 Precise Placement</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    api_key = st.text_input(
+        "Mistral API Key",
+        type="password",
+        help="Enter your Mistral AI API key"
+    )
+    
+    if st.button("💾 Save Config"):
+        st.session_state.ocr_processor.set_api_key(api_key)
+        st.success("✅ Configuration saved!")
+    
+    st.markdown("---")
+    
+    st.header("🖼️ Options")
+    enhance_images = st.checkbox("Enhance image quality", value=True)
+    
+    st.markdown("---")
+    
+    st.header("✨ Features")
+    st.markdown("""
+    **🎯 Smart Cropping:**
+    - Distinguish illustrations vs decorations
+    - Preserve important content
+    - Remove borders and noise
+    
+    **💯 LaTeX Accuracy:**
+    - Detect complex formulas
+    - Handle math symbols
+    - Prevent false positives
+    
+    **📍 Precise Placement:**
+    - Marker `![Hình X](imageX.png)`
+    - Smart resizing
+    - Professional layout
+    """)
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.header("📁 Upload File")
+    
+    uploaded_file = st.file_uploader(
+        "Choose PDF or image file",
+        type=['pdf', 'png', 'jpg', 'jpeg']
+    )
+    
+    if uploaded_file:
+        st.info(f"📄 File: {uploaded_file.name}")
+        
+        if st.button("🚀 Start Enhanced OCR", type="primary"):
+            if not api_key:
+                st.error("❌ Please enter Mistral API Key!")
+            else:
+                with st.spinner("🔄 Processing with AI..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if uploaded_file.type == "application/pdf":
+                            st.info("📄 Analyzing PDF...")
+                            
+                            # Extract images
+                            pdf_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_pdf_images(
+                                pdf_copy, enhance=enhance_images
+                            )
+                            
+                            st.success(f"🖼️ Extracted {len(extracted_images)} illustrations")
+                            
+                            # Convert pages
+                            uploaded_file.seek(0)
+                            pages = st.session_state.ocr_processor.pdf_to_images(uploaded_file)
+                            
+                            # OCR pages
+                            progress = st.progress(0)
+                            for i, page in enumerate(pages):
+                                st.info(f"🔍 OCR page {i+1}/{len(pages)}...")
+                                
+                                if enhance_images:
+                                    page = st.session_state.ocr_processor.image_proc.enhance_image(page)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_image(page)
+                                extracted_text += f"\n--- Page {i+1} ---\n{page_text}\n"
+                                
+                                progress.progress((i + 1) / len(pages))
+                        
+                        else:
+                            st.info("🖼️ Processing image...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_proc.enhance_image(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_image(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ OCR completed!")
+                        
+                        # Analysis
+                        formula_count = len(re.findall(r'\$\{[^}]+\}\$', extracted_text))
+                        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', extracted_text))
+                        
+                        if formula_count > 0:
+                            st.success(f"🔢 Found {formula_count} LaTeX formulas!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Found {image_refs} image markers!")
+                        
+                        if len(extracted_images) == image_refs and image_refs > 0:
+                            st.success("🎯 Perfect match: Images and markers aligned!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+with col2:
+    st.header("📊 Statistics")
+    
+    if 'extracted_text' in st.session_state:
+        text = st.session_state.extracted_text
+        
+        word_count = len(text.split())
+        char_count = len(text)
+        formula_count = len(re.findall(r'\$\{[^}]+\}\$', text))
+        image_refs = len(re.findall(r'!\[Hình\s*\d+\]', text))
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Words", word_count)
+            st.metric("LaTeX", formula_count)
+        with col_b:
+            st.metric("Characters", char_count)
+            st.metric("Image Refs", image_refs)
+        
+        if 'extracted_images' in st.session_state:
+            st.metric("Images", len(st.session_state.extracted_images))
+
+# Results section
+if 'extracted_text' in st.session_state:
+    st.markdown("---")
+    st.header("📋 OCR Results")
+    
+    # Text display
+    with st.expander("📝 Text with LaTeX and markers", expanded=True):
+        text = st.session_state.extracted_text
+        
+        # Highlight
+        highlighted = text
+        highlighted = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted)
+        highlighted = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted)
+        
+        st.text_area(
+            "Content (LaTeX: **bold**, Image markers: ***bold-italic***):",
+            highlighted,
+            height=300,
+            disabled=True
+        )
+        
+        # Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            formulas = re.findall(r'\$\{[^}]+\}\$', text)
+            st.write("**LaTeX Formulas:**")
+            for i, formula in enumerate(formulas[:3], 1):
+                st.write(f"{i}. `{formula}`")
+            if len(formulas) > 3:
+                st.write(f"... and {len(formulas) - 3} more")
+        
+        with col2:
+            markers = re.findall(r'!\[Hình\s*(\d+)\]', text)
+            st.write("**Image Markers:**")
+            for num in markers[:3]:
+                st.write(f"• Hình {num}")
+            if len(markers) > 3:
+                st.write(f"... and {len(markers) - 3} more")
+    
+    # Images display
+    if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+        with st.expander(f"🖼️ Extracted Images ({len(st.session_state.extracted_images)})", expanded=False):
+            for i, img in enumerate(st.session_state.extracted_images):
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                
+                with col2:
+                    analysis = st.session_state.ocr_processor.image_proc.analyze_image(img)
+                    st.write(f"**Hình {i+1}:**")
+                    st.write(f"• Size: {img.width}×{img.height}px")
+                    st.write(f"• Aspect: {analysis['aspect_ratio']:.2f}")
+                    st.write(f"• Complexity: {analysis['complexity']:.3f}")
+                    st.write(f"• Contrast: {analysis['contrast']:.1f}")
+    
+    # Export section
+    st.markdown("---")
+    st.header("📤 Export to Word")
+    
+    include_stats = st.checkbox("Include statistics", value=True)
+    
+    if st.button("📄 Create Word Document", type="primary"):
+        with st.spinner("📝 Creating Word document..."):
+            try:
+                exporter = WordExporter()
+                
+                images = st.session_state.get('extracted_images', [])
+                exporter.add_content(st.session_state.extracted_text, images)
+                
+                if include_stats:
+                    exporter.add_stats(st.session_state.extracted_text, images)
+                
+                word_bytes = exporter.save()
+                
+                st.success("🎉 Word document created!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Words", len(st.session_state.extracted_text.split()))
+                with col_b:
+                    st.metric("Images", len(images))
+                with col_c:
+                    st.metric("Size", f"{len(word_bytes)/1024:.1f} KB")
+                
+                # Download
+                filename = f"OCR_Result_{uploaded_file.name.split('.')[0]}.docx"
+                st.download_button(
+                    label="⬇️ Download Word Document",
+                    data=word_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Export error: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 1rem;">
+    <p>🚀 <strong>P_OCR PDF AI 2025</strong> - Enhanced OCR with AI</p>
+    <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+</div>
+""", unsafe_allow_html=True)
+) and len(part) > 2:
+                # Math formula
+                formula = part[1:-1]  # Remove $ and $
                 run = paragraph.add_run(formula)
                 run.bold = True
                 run.italic = True
