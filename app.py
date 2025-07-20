@@ -839,16 +839,899 @@ class WordExporter:
         return buffer.getvalue()
 
 # Global patterns for validation
-FORMULA_PATTERN = r'\$\{[^}]+\}\$'
-IMAGE_MARKER_PATTERN = r'!\[Hình\s*\d+\]'
+FORMULA_PATTERN = r'(\$\{[^}]+\}\$)'  # Added capturing group
+IMAGE_MARKER_PATTERN = r'(!\[Hình\s*\d+\])'  # Added capturing group
 
 def count_formulas(text: str) -> int:
     """Count LaTeX formulas in text"""
-    return len(re.findall(FORMULA_PATTERN, text))
+    return len(re.findall(r'\$\{[^}]+\}\
+
+def main():
+    """Main application"""
+    # Header
+    st.markdown("""
+    <div class="main-header">
+        <h1>📄 P_OCR PDF AI 2025 - Enhanced Edition</h1>
+        <p>Ứng dụng OCR thông minh với Mistral AI</p>
+        <p>🎯 Cắt ảnh thông minh • 💯 LaTeX chính xác • 📍 Chèn đúng vị trí</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Initialize processor
+    if 'ocr_processor' not in st.session_state:
+        st.session_state.ocr_processor = OCRProcessor()
+    
+    # Sidebar
+    with st.sidebar:
+        st.header("🔧 Cấu hình")
+        
+        mistral_key = st.text_input(
+            "Mistral API Key",
+            type="password",
+            help="Nhập API key của Mistral AI"
+        )
+        
+        if st.button("💾 Lưu cấu hình"):
+            st.session_state.ocr_processor.setup_api(mistral_key)
+            st.success("✅ Đã lưu cấu hình!")
+        
+        st.markdown("---")
+        
+        # Options
+        st.header("🖼️ Tùy chọn xử lý")
+        enhance_images = st.checkbox(
+            "Cải thiện chất lượng ảnh",
+            value=True,
+            help="Tự động cắt thông minh và cải thiện ảnh"
+        )
+        
+        debug_mode = st.checkbox(
+            "Chế độ debug",
+            value=False,
+            help="Hiển thị thông tin debug chi tiết"
+        )
+        
+        st.markdown("---")
+        
+        # Features info
+        st.header("✨ Tính năng nâng cao")
+        st.markdown("""
+        **🎯 Cắt ảnh thông minh:**
+        - Phân biệt ảnh minh họa vs trang trí
+        - Bảo toàn nội dung quan trọng
+        - Loại bỏ border và noise
+        
+        **💯 LaTeX chính xác:**
+        - Nhận diện công thức phức tạp
+        - Xử lý ký hiệu toán học
+        - Tránh false positives
+        
+        **📍 Chèn ảnh đúng vị trí:**
+        - Marker `![Hình X](imageX.png)`
+        - Resize thông minh
+        - Layout chuyên nghiệp
+        """)
+        
+        # Session info
+        if 'extracted_images' in st.session_state:
+            st.markdown("---")
+            st.subheader("📊 Session hiện tại")
+            st.write(f"**Ảnh minh họa**: {len(st.session_state.extracted_images)}")
+            if 'extracted_text' in st.session_state:
+                formula_count = count_formulas(st.session_state.extracted_text)
+                image_refs = count_image_markers(st.session_state.extracted_text)
+                st.write(f"**Công thức LaTeX**: {formula_count}")
+                st.write(f"**Tham chiếu ảnh**: {image_refs}")
+    
+    # Main content
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.header("📁 Upload File")
+        
+        uploaded_file = st.file_uploader(
+            "Chọn file PDF hoặc hình ảnh",
+            type=['pdf', 'png', 'jpg', 'jpeg'],
+            help="Hỗ trợ file PDF và hình ảnh"
+        )
+        
+        if uploaded_file is not None:
+            file_type = uploaded_file.type
+            st.info(f"📄 File: {uploaded_file.name} ({file_type})")
+            
+            if st.button("🚀 Bắt đầu OCR nâng cao", type="primary"):
+                if not mistral_key:
+                    st.error("❌ Vui lòng nhập Mistral API Key!")
+                    return
+                
+                with st.spinner("🔄 Đang xử lý với AI thông minh..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if file_type == "application/pdf":
+                            st.info("📄 Đang phân tích PDF...")
+                            
+                            # Extract illustrations
+                            pdf_file_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_images_from_pdf(
+                                pdf_file_copy, enhance=enhance_images, debug=debug_mode
+                            )
+                            
+                            if len(extracted_images) == 0:
+                                st.warning("⚠️ Không tìm thấy ảnh minh họa nào!")
+                            else:
+                                st.success(f"🖼️ Đã trích xuất {len(extracted_images)} ảnh minh họa")
+                            
+                            # Convert pages for OCR
+                            uploaded_file.seek(0)
+                            page_images = st.session_state.ocr_processor.convert_pdf_to_images(uploaded_file)
+                            
+                            # OCR each page
+                            st.info(f"🔍 Bắt đầu OCR {len(page_images)} trang...")
+                            progress_bar = st.progress(0)
+                            
+                            for i, page_img in enumerate(page_images):
+                                st.info(f"🔍 OCR trang {i+1}/{len(page_images)}...")
+                                
+                                if enhance_images:
+                                    page_img = st.session_state.ocr_processor.image_processor.enhance_image_quality(page_img)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_with_mistral(page_img)
+                                
+                                # Check for markers
+                                page_markers = count_image_markers(page_text)
+                                if page_markers > 0:
+                                    st.success(f"✅ Trang {i+1}: Tìm thấy {page_markers} image markers")
+                                
+                                extracted_text += f"\n--- Trang {i+1} ---\n{page_text}\n"
+                                progress_bar.progress((i + 1) / len(page_images))
+                        
+                        else:
+                            st.info("🖼️ Đang xử lý hình ảnh với AI...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_processor.process_image_for_ocr(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_with_mistral(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ Hoàn thành OCR nâng cao!")
+                        
+                        # Analysis
+                        formula_count = count_formulas(extracted_text)
+                        image_refs = count_image_markers(extracted_text)
+                        
+                        # Check mismatches
+                        if len(extracted_images) > 0 and image_refs == 0:
+                            st.warning("⚠️ **Có ảnh nhưng không có image markers trong text!**")
+                        elif len(extracted_images) != image_refs and image_refs > 0:
+                            st.warning(f"⚠️ **Số lượng không khớp**: {len(extracted_images)} ảnh vs {image_refs} markers")
+                        
+                        # Success metrics
+                        if formula_count > 0:
+                            st.success(f"🔢 Đã nhận diện {formula_count} công thức LaTeX!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Đã đánh dấu {image_refs} vị trí chèn ảnh!")
+                        
+                        if len(extracted_images) > 0 and image_refs > 0 and len(extracted_images) == image_refs:
+                            st.success("🎯 **Perfect match**: Số ảnh và markers khớp hoàn toàn!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Lỗi: {str(e)}")
+    
+    with col2:
+        st.header("📊 Thống kê nâng cao")
+        
+        if 'extracted_text' in st.session_state:
+            text = st.session_state.extracted_text
+            
+            word_count = len(text.split())
+            char_count = len(text)
+            formula_count = count_formulas(text)
+            image_refs = count_image_markers(text)
+            
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.metric("Số từ", word_count)
+                st.metric("Công thức LaTeX", formula_count)
+            with col_b:
+                st.metric("Số ký tự", char_count)
+                st.metric("Tham chiếu ảnh", image_refs)
+            
+            if 'extracted_images' in st.session_state:
+                st.metric("Ảnh minh họa", len(st.session_state.extracted_images))
+                
+                # Quality indicators
+                if formula_count > 0:
+                    st.success("💯 LaTeX detected")
+                if image_refs > 0:
+                    st.success("📍 Images referenced")
+    
+    # Results section
+    if 'extracted_text' in st.session_state:
+        st.markdown("---")
+        st.header("📋 Kết quả OCR nâng cao")
+        
+        # Text display
+        with st.expander("📝 Văn bản với LaTeX và markers", expanded=True):
+            text = st.session_state.extracted_text
+            
+            # Highlight text
+            highlighted_text = text
+            # Use capturing groups for replacement
+            highlighted_text = re.sub(r'(\$\{[^}]+\}\$)', r'**\1**', highlighted_text)
+            highlighted_text = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted_text)
+            
+            st.text_area(
+                "Nội dung (LaTeX: **bold**, Image markers: ***bold-italic***):",
+                highlighted_text,
+                height=400,
+                disabled=True
+            )
+            
+            # Analysis
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                # Use non-capturing pattern for finding
+                formula_matches = re.findall(r'\$\{[^}]+\}\
+            
+            with col2:
+                image_matches = re.findall(r'!\[Hình\s*(\d+)\]', text)
+                st.write("**Markers ảnh:**")
+                for img_num in image_matches[:3]:
+                    st.write(f"• Hình {img_num}")
+                if len(image_matches) > 3:
+                    st.write(f"... và {len(image_matches) - 3} ảnh khác")
+            
+            with col3:
+                st.write("**Chất lượng OCR:**")
+                st.write(f"✅ {len(text.split())} từ")
+                st.write(f"🔢 {len(formula_matches)} công thức")
+                st.write(f"📷 {len(image_matches)} refs")
+                
+                # Validation
+                if 'extracted_images' in st.session_state:
+                    img_count = len(st.session_state.extracted_images)
+                    marker_count = len(image_matches)
+                    if img_count == marker_count and img_count > 0:
+                        st.success("🎯 Perfect!")
+                    elif marker_count == 0:
+                        st.error("❌ No markers!")
+                    elif img_count != marker_count:
+                        st.warning(f"⚠️ Mismatch!")
+        
+        # Images display
+        if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+            with st.expander(f"🖼️ Ảnh minh họa ({len(st.session_state.extracted_images)} ảnh)", expanded=False):
+                for i, img in enumerate(st.session_state.extracted_images):
+                    col1, col2 = st.columns([1, 2])
+                    
+                    with col1:
+                        st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                    
+                    with col2:
+                        analysis = st.session_state.ocr_processor.image_processor.analyze_image_content(img)
+                        st.write(f"**Hình {i+1}:**")
+                        st.write(f"• Size: {img.width}×{img.height}px")
+                        st.write(f"• Ratio: {analysis['aspect_ratio']:.2f}")
+                        st.write(f"• Complexity: {analysis['complexity_score']:.3f}")
+                        st.write(f"• Contrast: {analysis['std_brightness']:.1f}")
+                    
+                    st.markdown("---")
+        
+        # Export section
+        st.markdown("---")
+        st.header("📤 Xuất Word chuyên nghiệp")
+        
+        # Pre-export analysis
+        if 'extracted_text' in st.session_state and 'extracted_images' in st.session_state:
+            text = st.session_state.extracted_text
+            images = st.session_state.extracted_images
+            
+            marker_pattern = r'!\[Hình\s*(\d+)\]\([^)]*\)'
+            found_markers = re.findall(marker_pattern, text, re.IGNORECASE)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**📊 Thống kê xuất:**")
+                st.write(f"• Ảnh có sẵn: {len(images)}")
+                st.write(f"• Markers tìm thấy: {len(found_markers)}")
+            
+            with col2:
+                st.write("**🎯 Tình trạng:**")
+                if len(images) == len(found_markers) and len(found_markers) > 0:
+                    st.success("✅ Perfect match!")
+                elif len(found_markers) == 0:
+                    st.warning("⚠️ Không có markers")
+                elif len(images) < len(found_markers):
+                    st.error("❌ Thiếu ảnh")
+                else:
+                    st.info("ℹ️ Thừa ảnh")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            include_stats = st.checkbox("Thêm thống kê chi tiết", value=True)
+        with col2:
+            st.info("🚀 Xuất với tính năng nâng cao")
+        
+        if st.button("📄 Tạo Word nâng cao", type="primary"):
+            with st.spinner("📝 Đang tạo file Word..."):
+                try:
+                    exporter = WordExporter()
+                    
+                    images_to_export = st.session_state.get('extracted_images', [])
+                    exporter.add_content(st.session_state.extracted_text, images_to_export)
+                    
+                    if include_stats:
+                        exporter.add_statistics(images_to_export, st.session_state.extracted_text)
+                    
+                    word_bytes = exporter.save()
+                    
+                    st.success("🎉 File Word đã được tạo thành công!")
+                    
+                    # Metrics
+                    col_a, col_b, col_c, col_d = st.columns(4)
+                    with col_a:
+                        st.metric("Văn bản", f"{len(st.session_state.extracted_text.split())} từ")
+                    with col_b:
+                        st.metric("LaTeX", count_formulas(st.session_state.extracted_text))
+                    with col_c:
+                        st.metric("Ảnh chèn", len(images_to_export))
+                    with col_d:
+                        st.metric("File size", f"{len(word_bytes)/1024:.1f} KB")
+                    
+                    # Download
+                    filename = f"OCR_Enhanced_{uploaded_file.name.split('.')[0]}.docx"
+                    st.download_button(
+                        label="⬇️ Tải file Word (Enhanced)",
+                        data=word_bytes,
+                        file_name=filename,
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+                    
+                    st.success("✅ **Tính năng đã áp dụng**: Cắt ảnh thông minh • LaTeX chính xác • Chèn đúng vị trí")
+                    
+                except Exception as e:
+                    st.error(f"❌ Lỗi tạo Word: {str(e)}")
+    
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style="text-align: center; color: #666; padding: 2rem;">
+        <p>🚀 <strong>P_OCR PDF AI 2025 - Enhanced Edition</strong></p>
+        <p>🎯 <strong>Smart Crop</strong> • 💯 <strong>LaTeX Accuracy</strong> • 📍 <strong>Precise Placement</strong></p>
+        <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main()
+, text))  # Use non-capturing pattern for counting
 
 def count_image_markers(text: str) -> int:
     """Count image markers in text"""
-    return len(re.findall(IMAGE_MARKER_PATTERN, text))
+    return len(re.findall(r'!\[Hình\s*\d+\]', text))  # Use non-capturing pattern for counting
+
+def main():
+    """Main application"""
+    # Header
+    st.markdown("""
+    <div class="main-header">
+        <h1>📄 P_OCR PDF AI 2025 - Enhanced Edition</h1>
+        <p>Ứng dụng OCR thông minh với Mistral AI</p>
+        <p>🎯 Cắt ảnh thông minh • 💯 LaTeX chính xác • 📍 Chèn đúng vị trí</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Initialize processor
+    if 'ocr_processor' not in st.session_state:
+        st.session_state.ocr_processor = OCRProcessor()
+    
+    # Sidebar
+    with st.sidebar:
+        st.header("🔧 Cấu hình")
+        
+        mistral_key = st.text_input(
+            "Mistral API Key",
+            type="password",
+            help="Nhập API key của Mistral AI"
+        )
+        
+        if st.button("💾 Lưu cấu hình"):
+            st.session_state.ocr_processor.setup_api(mistral_key)
+            st.success("✅ Đã lưu cấu hình!")
+        
+        st.markdown("---")
+        
+        # Options
+        st.header("🖼️ Tùy chọn xử lý")
+        enhance_images = st.checkbox(
+            "Cải thiện chất lượng ảnh",
+            value=True,
+            help="Tự động cắt thông minh và cải thiện ảnh"
+        )
+        
+        debug_mode = st.checkbox(
+            "Chế độ debug",
+            value=False,
+            help="Hiển thị thông tin debug chi tiết"
+        )
+        
+        st.markdown("---")
+        
+        # Features info
+        st.header("✨ Tính năng nâng cao")
+        st.markdown("""
+        **🎯 Cắt ảnh thông minh:**
+        - Phân biệt ảnh minh họa vs trang trí
+        - Bảo toàn nội dung quan trọng
+        - Loại bỏ border và noise
+        
+        **💯 LaTeX chính xác:**
+        - Nhận diện công thức phức tạp
+        - Xử lý ký hiệu toán học
+        - Tránh false positives
+        
+        **📍 Chèn ảnh đúng vị trí:**
+        - Marker `![Hình X](imageX.png)`
+        - Resize thông minh
+        - Layout chuyên nghiệp
+        """)
+        
+        # Session info
+        if 'extracted_images' in st.session_state:
+            st.markdown("---")
+            st.subheader("📊 Session hiện tại")
+            st.write(f"**Ảnh minh họa**: {len(st.session_state.extracted_images)}")
+            if 'extracted_text' in st.session_state:
+                formula_count = count_formulas(st.session_state.extracted_text)
+                image_refs = count_image_markers(st.session_state.extracted_text)
+                st.write(f"**Công thức LaTeX**: {formula_count}")
+                st.write(f"**Tham chiếu ảnh**: {image_refs}")
+    
+    # Main content
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.header("📁 Upload File")
+        
+        uploaded_file = st.file_uploader(
+            "Chọn file PDF hoặc hình ảnh",
+            type=['pdf', 'png', 'jpg', 'jpeg'],
+            help="Hỗ trợ file PDF và hình ảnh"
+        )
+        
+        if uploaded_file is not None:
+            file_type = uploaded_file.type
+            st.info(f"📄 File: {uploaded_file.name} ({file_type})")
+            
+            if st.button("🚀 Bắt đầu OCR nâng cao", type="primary"):
+                if not mistral_key:
+                    st.error("❌ Vui lòng nhập Mistral API Key!")
+                    return
+                
+                with st.spinner("🔄 Đang xử lý với AI thông minh..."):
+                    try:
+                        extracted_text = ""
+                        extracted_images = []
+                        
+                        if file_type == "application/pdf":
+                            st.info("📄 Đang phân tích PDF...")
+                            
+                            # Extract illustrations
+                            pdf_file_copy = io.BytesIO(uploaded_file.read())
+                            extracted_images = st.session_state.ocr_processor.extract_images_from_pdf(
+                                pdf_file_copy, enhance=enhance_images, debug=debug_mode
+                            )
+                            
+                            if len(extracted_images) == 0:
+                                st.warning("⚠️ Không tìm thấy ảnh minh họa nào!")
+                            else:
+                                st.success(f"🖼️ Đã trích xuất {len(extracted_images)} ảnh minh họa")
+                            
+                            # Convert pages for OCR
+                            uploaded_file.seek(0)
+                            page_images = st.session_state.ocr_processor.convert_pdf_to_images(uploaded_file)
+                            
+                            # OCR each page
+                            st.info(f"🔍 Bắt đầu OCR {len(page_images)} trang...")
+                            progress_bar = st.progress(0)
+                            
+                            for i, page_img in enumerate(page_images):
+                                st.info(f"🔍 OCR trang {i+1}/{len(page_images)}...")
+                                
+                                if enhance_images:
+                                    page_img = st.session_state.ocr_processor.image_processor.enhance_image_quality(page_img)
+                                
+                                page_text = st.session_state.ocr_processor.ocr_with_mistral(page_img)
+                                
+                                # Check for markers
+                                page_markers = count_image_markers(page_text)
+                                if page_markers > 0:
+                                    st.success(f"✅ Trang {i+1}: Tìm thấy {page_markers} image markers")
+                                
+                                extracted_text += f"\n--- Trang {i+1} ---\n{page_text}\n"
+                                progress_bar.progress((i + 1) / len(page_images))
+                        
+                        else:
+                            st.info("🖼️ Đang xử lý hình ảnh với AI...")
+                            image = Image.open(uploaded_file)
+                            
+                            if enhance_images:
+                                image = st.session_state.ocr_processor.image_processor.process_image_for_ocr(image)
+                            
+                            extracted_text = st.session_state.ocr_processor.ocr_with_mistral(image)
+                        
+                        # Store results
+                        st.session_state.extracted_text = extracted_text
+                        st.session_state.extracted_images = extracted_images
+                        
+                        st.success("✅ Hoàn thành OCR nâng cao!")
+                        
+                        # Analysis
+                        formula_count = count_formulas(extracted_text)
+                        image_refs = count_image_markers(extracted_text)
+                        
+                        # Check mismatches
+                        if len(extracted_images) > 0 and image_refs == 0:
+                            st.warning("⚠️ **Có ảnh nhưng không có image markers trong text!**")
+                        elif len(extracted_images) != image_refs and image_refs > 0:
+                            st.warning(f"⚠️ **Số lượng không khớp**: {len(extracted_images)} ảnh vs {image_refs} markers")
+                        
+                        # Success metrics
+                        if formula_count > 0:
+                            st.success(f"🔢 Đã nhận diện {formula_count} công thức LaTeX!")
+                        
+                        if image_refs > 0:
+                            st.success(f"📍 Đã đánh dấu {image_refs} vị trí chèn ảnh!")
+                        
+                        if len(extracted_images) > 0 and image_refs > 0 and len(extracted_images) == image_refs:
+                            st.success("🎯 **Perfect match**: Số ảnh và markers khớp hoàn toàn!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Lỗi: {str(e)}")
+    
+    with col2:
+        st.header("📊 Thống kê nâng cao")
+        
+        if 'extracted_text' in st.session_state:
+            text = st.session_state.extracted_text
+            
+            word_count = len(text.split())
+            char_count = len(text)
+            formula_count = count_formulas(text)
+            image_refs = count_image_markers(text)
+            
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.metric("Số từ", word_count)
+                st.metric("Công thức LaTeX", formula_count)
+            with col_b:
+                st.metric("Số ký tự", char_count)
+                st.metric("Tham chiếu ảnh", image_refs)
+            
+            if 'extracted_images' in st.session_state:
+                st.metric("Ảnh minh họa", len(st.session_state.extracted_images))
+                
+                # Quality indicators
+                if formula_count > 0:
+                    st.success("💯 LaTeX detected")
+                if image_refs > 0:
+                    st.success("📍 Images referenced")
+    
+    # Results section
+    if 'extracted_text' in st.session_state:
+        st.markdown("---")
+        st.header("📋 Kết quả OCR nâng cao")
+        
+        # Text display
+        with st.expander("📝 Văn bản với LaTeX và markers", expanded=True):
+            text = st.session_state.extracted_text
+            
+            # Highlight text
+            highlighted_text = text
+            highlighted_text = re.sub(FORMULA_PATTERN, r'**\1**', highlighted_text)
+            highlighted_text = re.sub(r'(!\[Hình\s*\d+\]\([^)]*\))', r'***\1***', highlighted_text)
+            
+            st.text_area(
+                "Nội dung (LaTeX: **bold**, Image markers: ***bold-italic***):",
+                highlighted_text,
+                height=400,
+                disabled=True
+            )
+            
+            # Analysis
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                formula_matches = re.findall(FORMULA_PATTERN, text)
+                st.write("**Công thức LaTeX:**")
+                for i, formula in enumerate(formula_matches[:3], 1):
+                    st.write(f"{i}. `{formula}`")
+                if len(formula_matches) > 3:
+                    st.write(f"... và {len(formula_matches) - 3} công thức khác")
+            
+            with col2:
+                image_matches = re.findall(r'!\[Hình\s*(\d+)\]', text)
+                st.write("**Markers ảnh:**")
+                for img_num in image_matches[:3]:
+                    st.write(f"• Hình {img_num}")
+                if len(image_matches) > 3:
+                    st.write(f"... và {len(image_matches) - 3} ảnh khác")
+            
+            with col3:
+                st.write("**Chất lượng OCR:**")
+                st.write(f"✅ {len(text.split())} từ")
+                st.write(f"🔢 {len(formula_matches)} công thức")
+                st.write(f"📷 {len(image_matches)} refs")
+                
+                # Validation
+                if 'extracted_images' in st.session_state:
+                    img_count = len(st.session_state.extracted_images)
+                    marker_count = len(image_matches)
+                    if img_count == marker_count and img_count > 0:
+                        st.success("🎯 Perfect!")
+                    elif marker_count == 0:
+                        st.error("❌ No markers!")
+                    elif img_count != marker_count:
+                        st.warning(f"⚠️ Mismatch!")
+        
+        # Images display
+        if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+            with st.expander(f"🖼️ Ảnh minh họa ({len(st.session_state.extracted_images)} ảnh)", expanded=False):
+                for i, img in enumerate(st.session_state.extracted_images):
+                    col1, col2 = st.columns([1, 2])
+                    
+                    with col1:
+                        st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                    
+                    with col2:
+                        analysis = st.session_state.ocr_processor.image_processor.analyze_image_content(img)
+                        st.write(f"**Hình {i+1}:**")
+                        st.write(f"• Size: {img.width}×{img.height}px")
+                        st.write(f"• Ratio: {analysis['aspect_ratio']:.2f}")
+                        st.write(f"• Complexity: {analysis['complexity_score']:.3f}")
+                        st.write(f"• Contrast: {analysis['std_brightness']:.1f}")
+                    
+                    st.markdown("---")
+        
+        # Export section
+        st.markdown("---")
+        st.header("📤 Xuất Word chuyên nghiệp")
+        
+        # Pre-export analysis
+        if 'extracted_text' in st.session_state and 'extracted_images' in st.session_state:
+            text = st.session_state.extracted_text
+            images = st.session_state.extracted_images
+            
+            marker_pattern = r'!\[Hình\s*(\d+)\]\([^)]*\)'
+            found_markers = re.findall(marker_pattern, text, re.IGNORECASE)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**📊 Thống kê xuất:**")
+                st.write(f"• Ảnh có sẵn: {len(images)}")
+                st.write(f"• Markers tìm thấy: {len(found_markers)}")
+            
+            with col2:
+                st.write("**🎯 Tình trạng:**")
+                if len(images) == len(found_markers) and len(found_markers) > 0:
+                    st.success("✅ Perfect match!")
+                elif len(found_markers) == 0:
+                    st.warning("⚠️ Không có markers")
+                elif len(images) < len(found_markers):
+                    st.error("❌ Thiếu ảnh")
+                else:
+                    st.info("ℹ️ Thừa ảnh")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            include_stats = st.checkbox("Thêm thống kê chi tiết", value=True)
+        with col2:
+            st.info("🚀 Xuất với tính năng nâng cao")
+        
+        if st.button("📄 Tạo Word nâng cao", type="primary"):
+            with st.spinner("📝 Đang tạo file Word..."):
+                try:
+                    exporter = WordExporter()
+                    
+                    images_to_export = st.session_state.get('extracted_images', [])
+                    exporter.add_content(st.session_state.extracted_text, images_to_export)
+                    
+                    if include_stats:
+                        exporter.add_statistics(images_to_export, st.session_state.extracted_text)
+                    
+                    word_bytes = exporter.save()
+                    
+                    st.success("🎉 File Word đã được tạo thành công!")
+                    
+                    # Metrics
+                    col_a, col_b, col_c, col_d = st.columns(4)
+                    with col_a:
+                        st.metric("Văn bản", f"{len(st.session_state.extracted_text.split())} từ")
+                    with col_b:
+                        st.metric("LaTeX", count_formulas(st.session_state.extracted_text))
+                    with col_c:
+                        st.metric("Ảnh chèn", len(images_to_export))
+                    with col_d:
+                        st.metric("File size", f"{len(word_bytes)/1024:.1f} KB")
+                    
+                    # Download
+                    filename = f"OCR_Enhanced_{uploaded_file.name.split('.')[0]}.docx"
+                    st.download_button(
+                        label="⬇️ Tải file Word (Enhanced)",
+                        data=word_bytes,
+                        file_name=filename,
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+                    
+                    st.success("✅ **Tính năng đã áp dụng**: Cắt ảnh thông minh • LaTeX chính xác • Chèn đúng vị trí")
+                    
+                except Exception as e:
+                    st.error(f"❌ Lỗi tạo Word: {str(e)}")
+    
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style="text-align: center; color: #666; padding: 2rem;">
+        <p>🚀 <strong>P_OCR PDF AI 2025 - Enhanced Edition</strong></p>
+        <p>🎯 <strong>Smart Crop</strong> • 💯 <strong>LaTeX Accuracy</strong> • 📍 <strong>Precise Placement</strong></p>
+        <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main()
+, text)
+                st.write("**Công thức LaTeX:**")
+                for i, formula in enumerate(formula_matches[:3], 1):
+                    st.write(f"{i}. `{formula}`")
+                if len(formula_matches) > 3:
+                    st.write(f"... và {len(formula_matches) - 3} công thức khác")
+            
+            with col2:
+                image_matches = re.findall(r'!\[Hình\s*(\d+)\]', text)
+                st.write("**Markers ảnh:**")
+                for img_num in image_matches[:3]:
+                    st.write(f"• Hình {img_num}")
+                if len(image_matches) > 3:
+                    st.write(f"... và {len(image_matches) - 3} ảnh khác")
+            
+            with col3:
+                st.write("**Chất lượng OCR:**")
+                st.write(f"✅ {len(text.split())} từ")
+                st.write(f"🔢 {len(formula_matches)} công thức")
+                st.write(f"📷 {len(image_matches)} refs")
+                
+                # Validation
+                if 'extracted_images' in st.session_state:
+                    img_count = len(st.session_state.extracted_images)
+                    marker_count = len(image_matches)
+                    if img_count == marker_count and img_count > 0:
+                        st.success("🎯 Perfect!")
+                    elif marker_count == 0:
+                        st.error("❌ No markers!")
+                    elif img_count != marker_count:
+                        st.warning(f"⚠️ Mismatch!")
+        
+        # Images display
+        if 'extracted_images' in st.session_state and st.session_state.extracted_images:
+            with st.expander(f"🖼️ Ảnh minh họa ({len(st.session_state.extracted_images)} ảnh)", expanded=False):
+                for i, img in enumerate(st.session_state.extracted_images):
+                    col1, col2 = st.columns([1, 2])
+                    
+                    with col1:
+                        st.image(img, caption=f"Hình {i+1}", use_column_width=True)
+                    
+                    with col2:
+                        analysis = st.session_state.ocr_processor.image_processor.analyze_image_content(img)
+                        st.write(f"**Hình {i+1}:**")
+                        st.write(f"• Size: {img.width}×{img.height}px")
+                        st.write(f"• Ratio: {analysis['aspect_ratio']:.2f}")
+                        st.write(f"• Complexity: {analysis['complexity_score']:.3f}")
+                        st.write(f"• Contrast: {analysis['std_brightness']:.1f}")
+                    
+                    st.markdown("---")
+        
+        # Export section
+        st.markdown("---")
+        st.header("📤 Xuất Word chuyên nghiệp")
+        
+        # Pre-export analysis
+        if 'extracted_text' in st.session_state and 'extracted_images' in st.session_state:
+            text = st.session_state.extracted_text
+            images = st.session_state.extracted_images
+            
+            marker_pattern = r'!\[Hình\s*(\d+)\]\([^)]*\)'
+            found_markers = re.findall(marker_pattern, text, re.IGNORECASE)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**📊 Thống kê xuất:**")
+                st.write(f"• Ảnh có sẵn: {len(images)}")
+                st.write(f"• Markers tìm thấy: {len(found_markers)}")
+            
+            with col2:
+                st.write("**🎯 Tình trạng:**")
+                if len(images) == len(found_markers) and len(found_markers) > 0:
+                    st.success("✅ Perfect match!")
+                elif len(found_markers) == 0:
+                    st.warning("⚠️ Không có markers")
+                elif len(images) < len(found_markers):
+                    st.error("❌ Thiếu ảnh")
+                else:
+                    st.info("ℹ️ Thừa ảnh")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            include_stats = st.checkbox("Thêm thống kê chi tiết", value=True)
+        with col2:
+            st.info("🚀 Xuất với tính năng nâng cao")
+        
+        if st.button("📄 Tạo Word nâng cao", type="primary"):
+            with st.spinner("📝 Đang tạo file Word..."):
+                try:
+                    exporter = WordExporter()
+                    
+                    images_to_export = st.session_state.get('extracted_images', [])
+                    exporter.add_content(st.session_state.extracted_text, images_to_export)
+                    
+                    if include_stats:
+                        exporter.add_statistics(images_to_export, st.session_state.extracted_text)
+                    
+                    word_bytes = exporter.save()
+                    
+                    st.success("🎉 File Word đã được tạo thành công!")
+                    
+                    # Metrics
+                    col_a, col_b, col_c, col_d = st.columns(4)
+                    with col_a:
+                        st.metric("Văn bản", f"{len(st.session_state.extracted_text.split())} từ")
+                    with col_b:
+                        st.metric("LaTeX", count_formulas(st.session_state.extracted_text))
+                    with col_c:
+                        st.metric("Ảnh chèn", len(images_to_export))
+                    with col_d:
+                        st.metric("File size", f"{len(word_bytes)/1024:.1f} KB")
+                    
+                    # Download
+                    filename = f"OCR_Enhanced_{uploaded_file.name.split('.')[0]}.docx"
+                    st.download_button(
+                        label="⬇️ Tải file Word (Enhanced)",
+                        data=word_bytes,
+                        file_name=filename,
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+                    
+                    st.success("✅ **Tính năng đã áp dụng**: Cắt ảnh thông minh • LaTeX chính xác • Chèn đúng vị trí")
+                    
+                except Exception as e:
+                    st.error(f"❌ Lỗi tạo Word: {str(e)}")
+    
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style="text-align: center; color: #666; padding: 2rem;">
+        <p>🚀 <strong>P_OCR PDF AI 2025 - Enhanced Edition</strong></p>
+        <p>🎯 <strong>Smart Crop</strong> • 💯 <strong>LaTeX Accuracy</strong> • 📍 <strong>Precise Placement</strong></p>
+        <p>🤖 Powered by Mistral AI & Advanced Image Processing</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main()
+, text))  # Use non-capturing pattern for counting
+
+def count_image_markers(text: str) -> int:
+    """Count image markers in text"""
+    return len(re.findall(r'!\[Hình\s*\d+\]', text))  # Use non-capturing pattern for counting
 
 def main():
     """Main application"""
